@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - /model: steervit_dino
+  - /data: gqa
+  - /task: classification
+  - /training: default
+
+data:
+  batch_size: 32
+  val_batch_size: 256
+
+task:
+  num_answers: 1500
+
+training:
+  epochs: 20

@@ -1,0 +1,6 @@
+# @package _global_
+defaults:
+  - /model: steervit_dino
+  - /data: clevr
+  - /task: decoder
+  - /training: default

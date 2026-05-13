@@ -1,0 +1,9 @@
+epochs: 10
+lr: 2.0e-5
+weight_decay: 0.01
+warmup_epochs: 1
+grad_clip: 1.0
+mixed_precision: bf16
+log_every: 100
+save_every: 5
+eval_every_steps: null

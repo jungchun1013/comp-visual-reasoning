@@ -1,0 +1,4 @@
+type: classification
+num_answers: 28
+hidden_dim: 1024
+dropout: 0.3

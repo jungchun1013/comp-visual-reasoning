@@ -1,0 +1,9 @@
+checkpoint: steervit_mae_base.pth
+backbone_name: vit_base_patch16_mae
+resolution: 224
+use_steering: true
+feature_pool: cls
+text_only: false
+unfreeze_gca: true
+unfreeze_connector: true
+cross_attn_layers: null

@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /model: steervit_dino
+  - /data: clevr
+  - /task: classification
+  - /training: default
+
+task:
+  num_answers: 28

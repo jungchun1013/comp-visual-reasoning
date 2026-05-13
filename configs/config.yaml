@@ -1,0 +1,13 @@
+defaults:
+  - model: steervit_dino
+  - data: clevr
+  - task: classification
+  - training: default
+  - _self_
+
+seed: 42
+
+wandb:
+  project: steervit
+  enabled: true
+  name: null  # auto-generated if null
