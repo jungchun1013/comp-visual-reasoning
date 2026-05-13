@@ -1,9 +1,9 @@
 # @package _global_
 defaults:
-  - /model: steervit_dino
-  - /data: clevr
-  - /task: classification
-  - /training: default
+  - override /model: steervit_dino
+  - override /data: clevr
+  - override /task: classification
+  - override /training: default
 
 task:
   num_answers: 28
