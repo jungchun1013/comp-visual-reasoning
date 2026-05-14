@@ -221,6 +221,22 @@ def main(cfg: DictConfig):
         print(f"Epoch {epoch} | Loss: {train_metrics['train_loss']:.4f} | "
               f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s{cache_info}", flush=True)
 
+        # Save last.pt BEFORE validation (protect against eval interruption)
+        ckpt_data = {
+            "epoch": epoch,
+            "model_state_dict": {
+                k: v for k, v in model.state_dict().items()
+                if any(p.data_ptr() == v.data_ptr()
+                       for p in model.parameters() if p.requires_grad)
+            },
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
+            "best_acc": best_acc,
+            "config": OmegaConf.to_container(cfg, resolve=True),
+        }
+        torch.save(ckpt_data, output_dir / "last.pt")
+
         # Validate
         if task_type == "decoder":
             val_results = evaluate_decoder(model, val_loader, device, vocab)
@@ -230,6 +246,19 @@ def main(cfg: DictConfig):
         val_acc = val_results["accuracy"]
         print(f"Epoch {epoch} | Val acc: {val_acc:.4f}", flush=True)
         print(format_results(val_results), flush=True)
+
+        # Update last.pt with val results + save best/periodic
+        ckpt_data["val_acc"] = val_acc
+        torch.save(ckpt_data, output_dir / "last.pt")
+
+        if val_acc > best_acc:
+            best_acc = val_acc
+            ckpt_data["best_acc"] = best_acc
+            torch.save(ckpt_data, output_dir / "best.pt")
+            print(f"  New best: {best_acc:.4f}", flush=True)
+
+        if (epoch + 1) % save_every == 0:
+            torch.save(ckpt_data, output_dir / f"epoch_{epoch}.pt")
 
         # WandB epoch logging
         if wandb is not None and wandb.run is not None:
@@ -242,33 +271,6 @@ def main(cfg: DictConfig):
             for k, v in val_results.get("breakdown", {}).items():
                 log_data[f"val/acc_{k}"] = v["accuracy"]
             wandb.log(log_data, step=global_step)
-
-        # Checkpoints
-        ckpt_data = {
-            "epoch": epoch,
-            "model_state_dict": {
-                k: v for k, v in model.state_dict().items()
-                if any(p.data_ptr() == v.data_ptr()
-                       for p in model.parameters() if p.requires_grad)
-            },
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "scaler_state_dict": scaler.state_dict(),
-            "val_acc": val_acc,
-            "best_acc": best_acc,
-            "config": OmegaConf.to_container(cfg, resolve=True),
-        }
-
-        torch.save(ckpt_data, output_dir / "last.pt")
-
-        if val_acc > best_acc:
-            best_acc = val_acc
-            ckpt_data["best_acc"] = best_acc
-            torch.save(ckpt_data, output_dir / "best.pt")
-            print(f"  New best: {best_acc:.4f}", flush=True)
-
-        if (epoch + 1) % save_every == 0:
-            torch.save(ckpt_data, output_dir / f"epoch_{epoch}.pt")
 
         # JSON log
         log_entry = {
