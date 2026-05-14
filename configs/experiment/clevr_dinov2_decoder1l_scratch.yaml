@@ -17,4 +17,4 @@ task:
     num_layers: 1
 
 training:
-  epochs: 10
+  epochs: 16
