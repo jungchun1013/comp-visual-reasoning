@@ -132,11 +132,6 @@ def build_dataloaders(cfg: DictConfig, transform):
 def main(cfg: DictConfig):
     log.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
-    # Output dir (Hydra auto-creates one, but we also save explicitly)
-    output_dir = Path(hydra.utils.get_original_cwd()) / "outputs" / (cfg.wandb.get("name") or "default")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    OmegaConf.save(cfg, output_dir / "config.yaml")
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info(f"Device: {device}")
 
@@ -146,12 +141,23 @@ def main(cfg: DictConfig):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-    # WandB
+    # Run naming: {experiment_name}_s{seed}
+    exp_name = cfg.wandb.get("name") or "run"
+    run_name = f"{exp_name}_s{seed}"
+
+    # Output dir with seed
+    output_dir = Path(hydra.utils.get_original_cwd()) / "outputs" / run_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, output_dir / "config.yaml")
+    log.info(f"Run: {run_name} -> {output_dir}")
+
+    # WandB with group for multi-seed aggregation
     if wandb is not None and cfg.wandb.get("enabled", True):
         wandb.init(
             project=cfg.wandb.project,
             entity=cfg.wandb.get("entity"),
-            name=cfg.wandb.get("name"),
+            name=run_name,
+            group=exp_name,
             config=OmegaConf.to_container(cfg, resolve=True),
         )
 

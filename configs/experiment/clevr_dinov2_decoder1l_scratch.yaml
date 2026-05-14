@@ -12,6 +12,9 @@ model:
   unfreeze_gca: true
   unfreeze_connector: true
 
+data:
+  val_batch_size: 512
+
 task:
   decoder:
     num_layers: 1
