@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -65,6 +67,7 @@ def train_one_epoch(
     grad_clip = cfg.training.get("grad_clip", 1.0)
     log_every = cfg.training.get("log_every", 100)
     use_amp = cfg.training.get("mixed_precision", "bf16") != "none"
+    t_epoch_start = time.time()
 
     for step, batch in enumerate(dataloader):
         images = batch["image"].to(device)
@@ -128,7 +131,9 @@ def train_one_epoch(
                 w_acc = window_correct / max(window_samples, 1)
                 w_loss = window_loss / max(window_samples, 1)
 
-            print(f"  Epoch {epoch} | Step {step+1} | Loss: {w_loss:.4f} | Acc: {w_acc:.4f}",
+            elapsed = time.time() - t_epoch_start
+            mins, secs = divmod(int(elapsed), 60)
+            print(f"  Epoch {epoch} | Step {step+1} | Loss: {w_loss:.4f} | Acc: {w_acc:.4f} | {mins}:{secs:02d}",
                   flush=True)
 
             if wandb is not None and wandb.run is not None:
