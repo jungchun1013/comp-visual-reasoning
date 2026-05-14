@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 import torch
@@ -9,6 +10,8 @@ import torch.nn as nn
 from omegaconf import DictConfig
 from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
+
+log = logging.getLogger(__name__)
 
 try:
     import wandb
@@ -133,8 +136,7 @@ def train_one_epoch(
 
             elapsed = time.time() - t_epoch_start
             mins, secs = divmod(int(elapsed), 60)
-            print(f"  Epoch {epoch} | Step {step+1} | Loss: {w_loss:.4f} | Acc: {w_acc:.4f} | {mins}:{secs:02d}",
-                  flush=True)
+            log.info(f"Epoch {epoch} | Step {step+1} | Loss: {w_loss:.4f} | Acc: {w_acc:.4f} | {mins}:{secs:02d}")
 
             if wandb is not None and wandb.run is not None:
                 wandb.log({

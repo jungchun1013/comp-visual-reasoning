@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import time
 from pathlib import Path
@@ -19,6 +20,8 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 from torch.amp import GradScaler
 from torch.utils.data import DataLoader
+
+log = logging.getLogger(__name__)
 
 # Add src/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -40,13 +43,13 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
         cross_attn_layers = list(cross_attn_layers)
         backbone = cfg.model.backbone_name
         resolution = cfg.model.get("resolution", 224)
-        print(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}", flush=True)
+        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}")
         steervit = CrossAttnViT.from_config(backbone, device=device,
                                          cross_attn_layers=cross_attn_layers,
                                          resolution=resolution)
     else:
         checkpoint = cfg.model.checkpoint
-        print(f"CrossAttnViT from_pretrained: {checkpoint}", flush=True)
+        log.info(f"CrossAttnViT from_pretrained: {checkpoint}")
         steervit = CrossAttnViT.from_pretrained(checkpoint, device=device)
     return steervit
 
@@ -121,13 +124,13 @@ def build_dataloaders(cfg: DictConfig, transform):
         prefetch_factor=4 if num_workers > 0 else None,
     )
 
-    print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}", flush=True)
+    log.info(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
     return train_loader, val_loader
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
-    print(f"Config:\n{OmegaConf.to_yaml(cfg)}", flush=True)
+    log.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
     # Output dir (Hydra auto-creates one, but we also save explicitly)
     output_dir = Path(hydra.utils.get_original_cwd()) / "outputs" / (cfg.wandb.get("name") or "default")
@@ -135,7 +138,7 @@ def main(cfg: DictConfig):
     OmegaConf.save(cfg, output_dir / "config.yaml")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}", flush=True)
+    log.info(f"Device: {device}")
 
     # Seed
     seed = cfg.get("seed", 42)
@@ -164,16 +167,16 @@ def main(cfg: DictConfig):
         text_cache = TextCache(steervit, max_size=cfg.get("text_cache_size", 200_000))
         raw = model.module if hasattr(model, "module") else model
         raw.set_text_cache(text_cache)
-        print("Text cache enabled", flush=True)
+        log.info("Text cache enabled")
 
     # torch.compile (optional, ~19% speedup on ViT forward)
     if cfg.get("compile", False):
         steervit.vision_model = torch.compile(steervit.vision_model, mode="reduce-overhead")
-        print("torch.compile enabled on vision_model", flush=True)
+        log.info("torch.compile enabled on vision_model")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Trainable: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.2f}%)", flush=True)
+    log.info(f"Trainable: {trainable_params:,} / {total_params:,} ({100*trainable_params/total_params:.2f}%)")
 
     # Data
     train_loader, val_loader = build_dataloaders(cfg, transform)
@@ -219,8 +222,8 @@ def main(cfg: DictConfig):
         cache_info = ""
         if cfg.get("text_cache", True) and text_cache.cache_size > 0:
             cache_info = f" | Cache: {text_cache.cache_size:,} keys, {text_cache.hit_rate:.0%} hit"
-        print(f"Epoch {epoch} | Loss: {train_metrics['train_loss']:.4f} | "
-              f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s{cache_info}", flush=True)
+        log.info(f"Epoch {epoch} | Loss: {train_metrics['train_loss']:.4f} | "
+                 f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s{cache_info}")
 
         # Save last.pt BEFORE validation (protect against eval interruption)
         ckpt_data = {
@@ -245,8 +248,8 @@ def main(cfg: DictConfig):
             val_results = evaluate_classification(model, val_loader, device)
 
         val_acc = val_results["accuracy"]
-        print(f"Epoch {epoch} | Val acc: {val_acc:.4f}", flush=True)
-        print(format_results(val_results), flush=True)
+        log.info(f"Epoch {epoch} | Val acc: {val_acc:.4f}")
+        log.info(format_results(val_results))
 
         # Update last.pt with val results + save best/periodic
         ckpt_data["val_acc"] = val_acc
@@ -256,7 +259,7 @@ def main(cfg: DictConfig):
             best_acc = val_acc
             ckpt_data["best_acc"] = best_acc
             torch.save(ckpt_data, output_dir / "best.pt")
-            print(f"  New best: {best_acc:.4f}", flush=True)
+            log.info(f"  New best: {best_acc:.4f}")
 
         if (epoch + 1) % save_every == 0:
             torch.save(ckpt_data, output_dir / f"epoch_{epoch}.pt")
@@ -282,7 +285,7 @@ def main(cfg: DictConfig):
         with open(output_dir / "train_log.jsonl", "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 
-    print(f"\nDone. Best val acc: {best_acc:.4f}", flush=True)
+    log.info(f"\nDone. Best val acc: {best_acc:.4f}")
     if wandb is not None and wandb.run is not None:
         wandb.finish()
 
