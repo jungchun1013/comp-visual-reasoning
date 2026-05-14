@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 # Add src/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from steervit import SteerViT
+from model import SteerViT
 from evaluator import evaluate_classification, evaluate_decoder, format_results
 
 

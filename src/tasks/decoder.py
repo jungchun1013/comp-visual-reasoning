@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from steervit.crossattention import GatedCrossAttention
+from model.crossattention import GatedCrossAttention
 
 
 class VQADecoderLayer(nn.Module):

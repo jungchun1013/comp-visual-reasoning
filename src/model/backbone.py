@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import types
 import timm
-from steervit.crossattention import GatedCrossAttention, attn_forward_wrapper
+from model.crossattention import GatedCrossAttention, attn_forward_wrapper
 
 
 def block_forward(self, x):
