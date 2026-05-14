@@ -57,8 +57,15 @@ class ClassificationModel(nn.Module):
         self.use_steering = use_steering
         self.feature_pool = feature_pool
         self.text_only = text_only
+        self.text_cache = None  # set via set_text_cache()
+
+    def set_text_cache(self, text_cache):
+        """Attach a TextCache for lazy RoBERTa caching."""
+        self.text_cache = text_cache
 
     def _get_question_encoding(self, questions: list[str]) -> torch.Tensor:
+        if self.text_cache is not None:
+            return self.text_cache.get_cls_tokens(questions)
         with torch.no_grad():
             roberta_dict = self.steervit.tokenizer(
                 questions, padding=True, truncation=True, max_length=512, return_tensors="pt"
@@ -71,8 +78,12 @@ class ClassificationModel(nn.Module):
         if self.text_only:
             return torch.zeros(images.size(0), self.steervit.visual_dim, device=images.device)
 
-        steering_text = prompts if self.use_steering else None
-        feats = self.steervit.forward(images, steering_text)
+        if prompts is not None and self.use_steering and self.text_cache is not None:
+            text_feats, attn_mask, _ = self.text_cache.encode_text(prompts)
+            feats = self.steervit.forward_with_conditioning(images, text_feats, attn_mask)
+        else:
+            steering_text = prompts if self.use_steering else None
+            feats = self.steervit.forward(images, steering_text)
 
         if self.feature_pool == "cls":
             return feats[:, 0, :]

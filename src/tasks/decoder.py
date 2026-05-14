@@ -105,16 +105,30 @@ class DecoderModel(nn.Module):
         self.vocab = vocab
         self.inv_vocab = {v: k for k, v in vocab.items()}
         self.use_steering = use_steering
+        self.text_cache = None  # set via set_text_cache()
+
+    def set_text_cache(self, text_cache):
+        """Attach a TextCache for lazy RoBERTa caching."""
+        self.text_cache = text_cache
 
     def _encode(self, images, questions):
-        steer_q = questions if self.use_steering else None
-        feats = self.steervit.forward(images, steer_q)
         prefix = self.steervit.vision_model.trunk.num_prefix_tokens
+
+        if questions is not None and self.use_steering and self.text_cache is not None:
+            text_feats_gca, attn_mask, _ = self.text_cache.encode_text(questions)
+            feats = self.steervit.forward_with_conditioning(images, text_feats_gca, attn_mask)
+        else:
+            steer_q = questions if self.use_steering else None
+            feats = self.steervit.forward(images, steer_q)
+
         patches = feats[:, prefix:, :]
 
         text_feats = None
         if self.decoder.use_text_gca and questions is not None:
-            text_feats, _, _ = self.steervit.encode_text(questions)
+            if self.text_cache is not None:
+                text_feats, _, _ = self.text_cache.encode_text(questions)
+            else:
+                text_feats, _, _ = self.steervit.encode_text(questions)
             text_feats = text_feats.detach()
 
         return patches, text_feats

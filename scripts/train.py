@@ -98,22 +98,27 @@ def build_dataloaders(cfg: DictConfig, transform):
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
+    num_workers = cfg.data.get("num_workers", 8)
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.data.batch_size,
         shuffle=True,
-        num_workers=cfg.data.get("num_workers", 8),
+        num_workers=num_workers,
         collate_fn=collate_fn,
         pin_memory=True,
         drop_last=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.data.get("val_batch_size", cfg.data.batch_size),
         shuffle=False,
-        num_workers=cfg.data.get("num_workers", 8),
+        num_workers=num_workers,
         collate_fn=collate_fn,
         pin_memory=True,
+        persistent_workers=num_workers > 0,
+        prefetch_factor=4 if num_workers > 0 else None,
     )
 
     print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}", flush=True)
@@ -151,6 +156,19 @@ def main(cfg: DictConfig):
     transform = steervit.get_transforms()
     model = build_model(steervit, cfg)
     model = model.to(device)
+
+    # Lazy text encoding cache (saves ~23% of forward time from epoch 2+)
+    if cfg.get("text_cache", True):
+        from text_cache import TextCache
+        text_cache = TextCache(steervit, max_size=cfg.get("text_cache_size", 200_000))
+        raw = model.module if hasattr(model, "module") else model
+        raw.set_text_cache(text_cache)
+        print("Text cache enabled", flush=True)
+
+    # torch.compile (optional, ~19% speedup on ViT forward)
+    if cfg.get("compile", False):
+        steervit.vision_model = torch.compile(steervit.vision_model, mode="reduce-overhead")
+        print("torch.compile enabled on vision_model", flush=True)
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
@@ -197,8 +215,11 @@ def main(cfg: DictConfig):
         scheduler.step()
 
         elapsed = time.time() - t0
+        cache_info = ""
+        if cfg.get("text_cache", True) and text_cache.cache_size > 0:
+            cache_info = f" | Cache: {text_cache.cache_size:,} keys, {text_cache.hit_rate:.0%} hit"
         print(f"Epoch {epoch} | Loss: {train_metrics['train_loss']:.4f} | "
-              f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s", flush=True)
+              f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s{cache_info}", flush=True)
 
         # Validate
         if task_type == "decoder":
