@@ -18,22 +18,22 @@ from torch.utils.data import DataLoader
 # Add src/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from model import SteerViT
+from model import CrossAttnViT
 from evaluator import evaluate_classification, evaluate_decoder, format_results
 
 
-def load_steervit(cfg, device):
-    """Load SteerViT from config."""
+def load_model(cfg, device):
+    """Load CrossAttnViT from config."""
     cross_attn_layers = cfg.model.get("cross_attn_layers", None)
     if cross_attn_layers is not None:
         cross_attn_layers = list(cross_attn_layers)
         backbone = cfg.model.backbone_name
         resolution = cfg.model.get("resolution", 224)
-        steervit = SteerViT.from_config(backbone, device=device,
-                                         cross_attn_layers=cross_attn_layers,
-                                         resolution=resolution)
+        steervit = CrossAttnViT.from_config(backbone, device=device,
+                                             cross_attn_layers=cross_attn_layers,
+                                             resolution=resolution)
     else:
-        steervit = SteerViT.from_pretrained(cfg.model.checkpoint, device=device)
+        steervit = CrossAttnViT.from_pretrained(cfg.model.checkpoint, device=device)
     return steervit
 
 
@@ -91,7 +91,7 @@ def main(cfg: DictConfig):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    steervit = load_steervit(cfg, device)
+    steervit = load_model(cfg, device)
     transform = steervit.get_transforms()
     model = build_model(steervit, cfg)
     model = model.to(device)

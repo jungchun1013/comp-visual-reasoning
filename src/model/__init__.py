@@ -1,3 +1,6 @@
-from .model import SteerViT
+from .model import CrossAttnViT
 
-__all__ = ["SteerViT"]
+# Legacy alias for checkpoint compatibility
+SteerViT = CrossAttnViT
+
+__all__ = ["CrossAttnViT", "SteerViT"]

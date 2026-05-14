@@ -10,7 +10,7 @@ from timm.data import resolve_data_config, create_transform
 from model.backbone import ViTBackbone
 from model.utils import TCAttentionExtract
 
-class SteerViT(nn.Module):
+class CrossAttnViT(nn.Module):
     def __init__(self, config):
         super().__init__()
 

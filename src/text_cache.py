@@ -23,7 +23,7 @@ class TextCache:
     Stored on CPU to avoid GPU memory pressure. Moved to GPU in batches.
 
     Args:
-        steervit: SteerViT model (uses its tokenizer, text_model, connector).
+        steervit: CrossAttnViT model (uses its tokenizer, text_model, connector).
         max_size: Max cached questions. 0 = unlimited. Default 200k (~16GB CPU).
     """
 

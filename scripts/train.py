@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 # Add src/ to path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from model import SteerViT
+from model import CrossAttnViT
 from trainer import train_one_epoch, get_scheduler
 from evaluator import evaluate_classification, evaluate_decoder, format_results
 
@@ -33,25 +33,25 @@ except ImportError:
     wandb = None
 
 
-def load_steervit(cfg: DictConfig, device: torch.device) -> SteerViT:
-    """Load SteerViT from config."""
+def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
+    """Load CrossAttnViT from config."""
     cross_attn_layers = cfg.model.get("cross_attn_layers", None)
     if cross_attn_layers is not None:
         cross_attn_layers = list(cross_attn_layers)
         backbone = cfg.model.backbone_name
         resolution = cfg.model.get("resolution", 224)
-        print(f"SteerViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}", flush=True)
-        steervit = SteerViT.from_config(backbone, device=device,
+        print(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}", flush=True)
+        steervit = CrossAttnViT.from_config(backbone, device=device,
                                          cross_attn_layers=cross_attn_layers,
                                          resolution=resolution)
     else:
         checkpoint = cfg.model.checkpoint
-        print(f"SteerViT from_pretrained: {checkpoint}", flush=True)
-        steervit = SteerViT.from_pretrained(checkpoint, device=device)
+        print(f"CrossAttnViT from_pretrained: {checkpoint}", flush=True)
+        steervit = CrossAttnViT.from_pretrained(checkpoint, device=device)
     return steervit
 
 
-def build_model(steervit: SteerViT, cfg: DictConfig):
+def build_model(steervit: CrossAttnViT, cfg: DictConfig):
     """Build task-specific model from config."""
     task_type = cfg.task.type
 
@@ -152,7 +152,7 @@ def main(cfg: DictConfig):
         )
 
     # Build model
-    steervit = load_steervit(cfg, device)
+    steervit = load_model(cfg, device)
     transform = steervit.get_transforms()
     model = build_model(steervit, cfg)
     model = model.to(device)

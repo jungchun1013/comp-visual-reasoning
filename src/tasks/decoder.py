@@ -96,7 +96,7 @@ class VQADecoder(nn.Module):
 
 
 class DecoderModel(nn.Module):
-    """SteerViT + transformer decoder for generative VQA."""
+    """CrossAttnViT + transformer decoder for generative VQA."""
 
     def __init__(self, steervit, decoder, vocab, use_steering=True):
         super().__init__()

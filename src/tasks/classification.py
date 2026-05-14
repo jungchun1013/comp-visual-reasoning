@@ -38,7 +38,7 @@ class VQAHead(nn.Module):
 
 
 class ClassificationModel(nn.Module):
-    """SteerViT + VQA classification head.
+    """CrossAttnViT + VQA classification head.
 
     Supports: steered, unsteered, text_only, oracle modes.
     """
