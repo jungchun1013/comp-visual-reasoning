@@ -147,6 +147,7 @@ def main(cfg: DictConfig):
     if wandb is not None and cfg.wandb.get("enabled", True):
         wandb.init(
             project=cfg.wandb.project,
+            entity=cfg.wandb.get("entity"),
             name=cfg.wandb.get("name"),
             config=OmegaConf.to_container(cfg, resolve=True),
         )

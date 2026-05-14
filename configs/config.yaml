@@ -8,6 +8,7 @@ defaults:
 seed: 42
 
 wandb:
-  project: steervit
+  project: comp-visual-reasoning
+  entity: jungchun-university-of-michigan
   enabled: true
   name: null  # auto-generated if null
