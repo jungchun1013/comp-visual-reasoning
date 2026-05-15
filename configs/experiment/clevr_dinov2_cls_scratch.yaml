@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - override /model: steervit_dino
+  - override /data: clevr
+  - override /task: classification
+  - override /training: default
+
+model:
+  checkpoint: null
+  cross_attn_layers: [1, 3, 5, 7, 9, 11]
+  resolution: 336
+  use_steering: true
+  feature_pool: cls
+  unfreeze_gca: true
+  unfreeze_connector: true
+
+data:
+  val_batch_size: 512
+
+task:
+  num_answers: 28
+
+training:
+  epochs: 16
