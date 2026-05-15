@@ -117,20 +117,46 @@ class TextCache:
             cls_tokens: (B, text_dim)
         """
         device = self.steervit.text_model.device
+        B = len(questions)
 
-        # Ensure all questions are cached
-        uncached = [q for q in questions if q not in self._cache]
-        if uncached:
-            # Batch-encode uncached questions to populate cache
-            self.encode_text(uncached)
+        # Split into cached vs uncached
+        cls_tokens = [None] * B
+        uncached_indices = []
+        for i, q in enumerate(questions):
+            if q in self._cache:
+                raw_feats_q, _ = self._cache[q]
+                cls_tokens[i] = raw_feats_q[0]
+                self._cache.move_to_end(q)
+                self.hits += 1
+            else:
+                uncached_indices.append(i)
+                self.misses += 1
 
-        # Extract CLS tokens from cache
-        cls_list = []
-        for q in questions:
-            raw_feats_q, _ = self._cache[q]
-            cls_list.append(raw_feats_q[0])  # position 0 = CLS
+        # Compute uncached directly
+        if uncached_indices:
+            uncached_qs = [questions[i] for i in uncached_indices]
+            with torch.no_grad():
+                roberta_dict = self.steervit.tokenizer(
+                    uncached_qs, padding=True, truncation=True,
+                    max_length=512, return_tensors="pt",
+                )
+                roberta_dict = {k: v.to(device) for k, v in roberta_dict.items()}
+                raw_out = self.steervit.text_model(**roberta_dict).last_hidden_state
+                mask = roberta_dict["attention_mask"]
 
-        return torch.stack(cls_list).to(device)
+            for batch_idx, orig_idx in enumerate(uncached_indices):
+                q = questions[orig_idx]
+                seq_len = mask[batch_idx].sum().item()
+                cls_tokens[orig_idx] = raw_out[batch_idx, 0, :].cpu()
+                # Also cache for encode_text reuse
+                self._cache[q] = (
+                    raw_out[batch_idx, :seq_len, :].cpu(),
+                    seq_len,
+                )
+                if self.max_size > 0 and len(self._cache) > self.max_size:
+                    self._cache.popitem(last=False)
+
+        return torch.stack(cls_tokens).to(device)
 
     @property
     def cache_size(self) -> int:
