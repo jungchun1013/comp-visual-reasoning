@@ -43,10 +43,12 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
         cross_attn_layers = list(cross_attn_layers)
         backbone = cfg.model.backbone_name
         resolution = cfg.model.get("resolution", 224)
-        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}")
+        feature_pool = cfg.model.get("feature_pool", None)
+        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}")
         steervit = CrossAttnViT.from_config(backbone, device=device,
                                          cross_attn_layers=cross_attn_layers,
-                                         resolution=resolution)
+                                         resolution=resolution,
+                                         feature_aggregation=feature_pool)
     else:
         checkpoint = cfg.model.checkpoint
         log.info(f"CrossAttnViT from_pretrained: {checkpoint}")

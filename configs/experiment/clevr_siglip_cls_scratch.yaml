@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - override /model: siglip
+  - override /data: clevr
+  - override /task: classification
+  - override /training: default
+
+data:
+  val_batch_size: 512
+
+task:
+  num_answers: 28
+
+training:
+  epochs: 16

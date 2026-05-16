@@ -90,8 +90,8 @@ class CrossAttnViT(nn.Module):
 
     @classmethod
     def from_config(cls, backbone_name, device=None, cross_attn_layers=None,
-                    resolution=336):
-        """Initialize SteerViT from backbone name (no pretrained GCA).
+                    resolution=336, feature_aggregation=None):
+        """Initialize from backbone name (no pretrained GCA).
 
         Args:
             backbone_name: timm model name.
@@ -99,20 +99,26 @@ class CrossAttnViT(nn.Module):
             cross_attn_layers: list of layer indices for GCA.
                                Default: every other layer [1,3,5,...].
             resolution: input image resolution.
+            feature_aggregation: "cls" or "mean". Auto-detected if None
+                                 (mean for models without CLS token).
         """
         import timm as _timm
         tmp = _timm.create_model(backbone_name, pretrained=False)
         num_blocks = len(tmp.blocks)
+        has_cls = tmp.num_prefix_tokens > 0
         del tmp
 
         if cross_attn_layers is None:
             cross_attn_layers = list(range(1, num_blocks, 2))
 
+        if feature_aggregation is None:
+            feature_aggregation = "cls" if has_cls else "mean"
+
         config = {
             "vision_encoder": {
                 "model_name": backbone_name,
                 "resolution": resolution,
-                "feature_aggregation": "cls",
+                "feature_aggregation": feature_aggregation,
                 "cross_attn_layers": cross_attn_layers,
                 "use_ffn": False,
                 "cross_attn_ffn_mult": 2,
