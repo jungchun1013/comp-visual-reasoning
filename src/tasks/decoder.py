@@ -216,5 +216,8 @@ def build_decoder_model(steervit, cfg) -> DecoderModel:
     if cfg.model.get("unfreeze_connector", True):
         for p in steervit.connector.parameters():
             p.requires_grad = True
+    if cfg.model.get("unfreeze_backbone", False):
+        for p in steervit.vision_model.parameters():
+            p.requires_grad = True
 
     return model

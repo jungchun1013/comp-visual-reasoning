@@ -1,0 +1,9 @@
+checkpoint: null
+backbone_name: null
+resolution: 224
+use_steering: false
+feature_pool: null
+text_only: false
+unfreeze_gca: false
+unfreeze_connector: false
+cross_attn_layers: null

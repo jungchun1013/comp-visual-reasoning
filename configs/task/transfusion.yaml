@@ -1,0 +1,6 @@
+type: transfusion
+transfusion:
+  dim: 512
+  depth: 12
+  heads: 8
+  patch_size: 16

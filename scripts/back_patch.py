@@ -59,14 +59,14 @@ class GCAHook:
             self._handle.remove()
 
 
-def find_wrong_samples(model, dataloader, device, vocab, qtype, n_samples=50):
-    """Find questions of the specified type that the model gets wrong."""
+def find_samples(model, dataloader, device, vocab, qtype, n_correct=100, n_wrong=100):
+    """Find both correct and wrong questions of the specified type."""
     model.eval()
     raw = model.module if hasattr(model, "module") else model
     inv_vocab = {v: k for k, v in vocab.items() if v >= 3}
 
-    wrong_indices = []
-    wrong_info = []
+    correct_indices, correct_info = [], []
+    wrong_indices, wrong_info = [], []
 
     for batch_idx, batch in enumerate(dataloader):
         images = batch["image"].to(device)
@@ -82,17 +82,22 @@ def find_wrong_samples(model, dataloader, device, vocab, qtype, n_samples=50):
         for i, (pred, gt, qt) in enumerate(zip(pred_texts, gt_texts, qtypes)):
             if qt != qtype:
                 continue
-            if pred.strip().lower() != gt.strip().lower():
-                global_idx = batch_idx * dataloader.batch_size + i
-                wrong_indices.append(global_idx)
-                wrong_info.append({
-                    "idx": global_idx,
-                    "question": questions[i],
-                    "gt": gt,
-                    "pred": pred,
-                })
-                if len(wrong_indices) >= n_samples:
-                    return wrong_indices, wrong_info
+            global_idx = batch_idx * dataloader.batch_size + i
+            info = {"idx": global_idx, "question": questions[i], "gt": gt, "pred": pred}
+
+            if pred.strip().lower() == gt.strip().lower():
+                if len(correct_indices) < n_correct:
+                    correct_indices.append(global_idx)
+                    correct_info.append(info)
+            else:
+                if len(wrong_indices) < n_wrong:
+                    wrong_indices.append(global_idx)
+                    wrong_info.append(info)
+
+            if len(correct_indices) >= n_correct and len(wrong_indices) >= n_wrong:
+                return correct_indices, correct_info, wrong_indices, wrong_info
+
+    return correct_indices, correct_info, wrong_indices, wrong_info
 
     return wrong_indices, wrong_info
 
@@ -195,45 +200,64 @@ def main():
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False,
                         collate_fn=clevr_collate_fn, num_workers=4)
 
-    # Find wrong samples for the specified qtype
-    print(f"\nFinding {args.n_samples} wrong '{args.qtype}' questions...")
-    wrong_indices, wrong_info = find_wrong_samples(
-        model, loader, device, vocab, qtype=args.qtype, n_samples=args.n_samples
+    # Find correct + wrong samples
+    n_each = args.n_samples // 2
+    print(f"\nFinding {n_each} correct + {n_each} wrong '{args.qtype}' questions...")
+    correct_indices, correct_info, wrong_indices, wrong_info = find_samples(
+        model, loader, device, vocab, qtype=args.qtype,
+        n_correct=n_each, n_wrong=n_each,
     )
-    print(f"Found {len(wrong_indices)} wrong '{args.qtype}' questions")
+    print(f"Found {len(correct_indices)} correct, {len(wrong_indices)} wrong")
 
-    if not wrong_indices:
-        print("No wrong samples found!")
+    if not correct_indices and not wrong_indices:
+        print("No samples found!")
         return
 
-    # Run patching
-    print(f"\nRunning back-patching L{args.source_layer} → L{args.target_layer} on {len(wrong_indices)} samples...")
-    results = run_patching(
+    # Run patching on wrong samples
+    print(f"\nPatching {len(wrong_indices)} WRONG samples (L{args.source_layer} → L{args.target_layer})...")
+    wrong_results = run_patching(
         model, dataset, wrong_indices, device, vocab,
         source_layer=args.source_layer, target_layer=args.target_layer,
     )
 
+    # Run patching on correct samples
+    print(f"Patching {len(correct_indices)} CORRECT samples (L{args.source_layer} → L{args.target_layer})...")
+    correct_results = run_patching(
+        model, dataset, correct_indices, device, vocab,
+        source_layer=args.source_layer, target_layer=args.target_layer,
+    )
+
     # Report
-    n_flipped = sum(r["flipped"] for r in results)
-    n_total = len(results)
+    n_wrong_flipped = sum(r["flipped"] for r in wrong_results)  # wrong → correct
+    n_correct_broken = sum(r["clean_correct"] and not r["patched_correct"] for r in correct_results)  # correct → wrong
 
     print(f"\n{'='*60}")
     print(f"BACK-PATCHING: L{args.source_layer} → L{args.target_layer} | qtype={args.qtype}")
     print(f"{'='*60}")
-    print(f"Samples: {n_total} (all originally wrong)")
-    print(f"Flipped to correct: {n_flipped}/{n_total} ({n_flipped/n_total*100:.1f}%)")
-    print(f"Still wrong: {n_total - n_flipped}/{n_total}")
+    print(f"\n  WRONG samples ({len(wrong_results)}):")
+    print(f"    Fixed (wrong → correct): {n_wrong_flipped}/{len(wrong_results)} ({n_wrong_flipped/max(len(wrong_results),1)*100:.1f}%)")
+    print(f"    Still wrong:             {len(wrong_results) - n_wrong_flipped}/{len(wrong_results)}")
+    print(f"\n  CORRECT samples ({len(correct_results)}):")
+    print(f"    Broken (correct → wrong): {n_correct_broken}/{len(correct_results)} ({n_correct_broken/max(len(correct_results),1)*100:.1f}%)")
+    print(f"    Still correct:            {len(correct_results) - n_correct_broken}/{len(correct_results)}")
+    print(f"\n  NET EFFECT: +{n_wrong_flipped} fixed, -{n_correct_broken} broken = net {n_wrong_flipped - n_correct_broken:+d}")
     print()
 
     # Show examples
-    flipped = [r for r in results if r["flipped"]]
+    flipped = [r for r in wrong_results if r["flipped"]]
     if flipped:
-        print("Examples (wrong → correct after patching):")
-        for r in flipped[:10]:
+        print("Examples fixed (wrong → correct):")
+        for r in flipped[:5]:
             print(f"  Q: {r['question'][:80]}")
             print(f"     GT={r['gt']}, Clean={r['clean_pred']}, Patched={r['patched_pred']}")
-    else:
-        print("No samples flipped.")
+        print()
+
+    broken = [r for r in correct_results if r["clean_correct"] and not r["patched_correct"]]
+    if broken:
+        print("Examples broken (correct → wrong):")
+        for r in broken[:5]:
+            print(f"  Q: {r['question'][:80]}")
+            print(f"     GT={r['gt']}, Clean={r['clean_pred']}, Patched={r['patched_pred']}")
 
     # Save
     output_path = Path(args.checkpoint).parent / f"back_patch_L{args.source_layer}_to_L{args.target_layer}_{args.qtype}.json"
@@ -243,15 +267,21 @@ def main():
                 "source_layer": args.source_layer,
                 "target_layer": args.target_layer,
                 "qtype": args.qtype,
-                "n_samples": n_total,
+                "n_correct": len(correct_results),
+                "n_wrong": len(wrong_results),
                 "checkpoint": args.checkpoint,
             },
             "summary": {
-                "flipped": n_flipped,
-                "total": n_total,
-                "flip_rate": n_flipped / n_total if n_total > 0 else 0,
+                "wrong_fixed": n_wrong_flipped,
+                "wrong_total": len(wrong_results),
+                "fix_rate": n_wrong_flipped / max(len(wrong_results), 1),
+                "correct_broken": n_correct_broken,
+                "correct_total": len(correct_results),
+                "break_rate": n_correct_broken / max(len(correct_results), 1),
+                "net_effect": n_wrong_flipped - n_correct_broken,
             },
-            "results": results,
+            "wrong_results": wrong_results,
+            "correct_results": correct_results,
         }, f, indent=2)
     print(f"\nSaved: {output_path}")
 

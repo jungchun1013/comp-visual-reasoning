@@ -90,7 +90,7 @@ class CrossAttnViT(nn.Module):
 
     @classmethod
     def from_config(cls, backbone_name, device=None, cross_attn_layers=None,
-                    resolution=336, feature_aggregation=None):
+                    resolution=336, feature_aggregation=None, pretrained=True):
         """Initialize from backbone name (no pretrained GCA).
 
         Args:
@@ -122,6 +122,7 @@ class CrossAttnViT(nn.Module):
                 "cross_attn_layers": cross_attn_layers,
                 "use_ffn": False,
                 "cross_attn_ffn_mult": 2,
+                "pretrained": pretrained,
             },
             "text_encoder": "roberta-large",
         }

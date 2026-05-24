@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - override /model: steervit_sup
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+data:
+  val_batch_size: 512
+
+task:
+  decoder:
+    num_layers: 1
+
+training:
+  epochs: 16

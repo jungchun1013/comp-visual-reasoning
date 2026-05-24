@@ -1,6 +1,6 @@
 checkpoint: null
-backbone_name: vit_base_patch16_224.mae
-resolution: 224
+backbone_name: vit_base_patch16_384.augreg_in21k_ft_in1k
+resolution: 384
 use_steering: true
 feature_pool: cls
 text_only: false

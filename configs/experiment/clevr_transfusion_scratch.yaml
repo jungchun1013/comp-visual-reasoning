@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - override /model: transfusion
+  - override /data: clevr
+  - override /task: transfusion
+  - override /training: default
+
+data:
+  val_batch_size: 128
+
+training:
+  epochs: 16
+  lr: 3e-4

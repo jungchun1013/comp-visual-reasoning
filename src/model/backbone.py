@@ -45,7 +45,7 @@ class ViTBackbone(nn.Module):
         self.resolution = config["resolution"]
         self.trunk = timm.create_model(
             config["model_name"],
-            pretrained=True,
+            pretrained=config.get("pretrained", True),
             img_size=self.resolution,
         )
         self.trunk.attn_pool = None

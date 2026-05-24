@@ -1,0 +1,7 @@
+type: mot
+mot:
+  dim: 512
+  depth: 12
+  heads: 8
+  ff_mult: 4
+  patch_size: 16

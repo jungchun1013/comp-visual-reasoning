@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - override /model: dinov2_scratch
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+data:
+  val_batch_size: 512
+
+task:
+  decoder:
+    num_layers: 1
+
+training:
+  epochs: 16
+  lr: 3e-4

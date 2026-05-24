@@ -44,11 +44,13 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
         backbone = cfg.model.backbone_name
         resolution = cfg.model.get("resolution", 224)
         feature_pool = cfg.model.get("feature_pool", None)
-        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}")
+        pretrained = cfg.model.get("pretrained", True)
+        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}, pretrained={pretrained}")
         steervit = CrossAttnViT.from_config(backbone, device=device,
                                          cross_attn_layers=cross_attn_layers,
                                          resolution=resolution,
-                                         feature_aggregation=feature_pool)
+                                         feature_aggregation=feature_pool,
+                                         pretrained=pretrained)
     else:
         checkpoint = cfg.model.checkpoint
         log.info(f"CrossAttnViT from_pretrained: {checkpoint}")
@@ -56,7 +58,7 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
     return steervit
 
 
-def build_model(steervit: CrossAttnViT, cfg: DictConfig):
+def build_model(steervit: CrossAttnViT | None, cfg: DictConfig):
     """Build task-specific model from config."""
     task_type = cfg.task.type
 
@@ -66,6 +68,12 @@ def build_model(steervit: CrossAttnViT, cfg: DictConfig):
     elif task_type == "decoder":
         from tasks.decoder import build_decoder_model
         return build_decoder_model(steervit, cfg)
+    elif task_type == "transfusion":
+        from tasks.transfusion_vqa import build_transfusion_model
+        return build_transfusion_model(cfg)
+    elif task_type == "mot":
+        from tasks.mot_vqa import build_mot_model
+        return build_mot_model(cfg)
     else:
         raise ValueError(f"Unknown task type: {task_type}")
 
@@ -147,9 +155,12 @@ def main(cfg: DictConfig):
     exp_name = cfg.wandb.get("name") or "run"
     run_name = f"{exp_name}_s{seed}"
 
-    # Output dir with seed
-    output_dir = Path(hydra.utils.get_original_cwd()) / "outputs" / run_name
+    # Output dirs: model (checkpoints) + log (train_log.jsonl)
+    base = Path(hydra.utils.get_original_cwd()) / "outputs"
+    output_dir = base / "model" / run_name
+    log_dir = base / "log" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, output_dir / "config.yaml")
     log.info(f"Run: {run_name} -> {output_dir}")
 
@@ -164,23 +175,32 @@ def main(cfg: DictConfig):
         )
 
     # Build model
-    steervit = load_model(cfg, device)
-    transform = steervit.get_transforms()
-    model = build_model(steervit, cfg)
-    model = model.to(device)
+    task_type = cfg.task.type
+    text_cache = None
+    if task_type in ("transfusion", "mot"):
+        # Early fusion models: no separate vision backbone
+        model = build_model(None, cfg)
+        model = model.to(device)
+        transform = model.get_transforms()
+        log.info(f"{task_type} model (early fusion, no backbone)")
+    else:
+        steervit = load_model(cfg, device)
+        transform = steervit.get_transforms()
+        model = build_model(steervit, cfg)
+        model = model.to(device)
 
-    # Lazy text encoding cache (saves ~23% of forward time from epoch 2+)
-    if cfg.get("text_cache", True):
-        from text_cache import TextCache
-        text_cache = TextCache(steervit, max_size=cfg.get("text_cache_size", 200_000))
-        raw = model.module if hasattr(model, "module") else model
-        raw.set_text_cache(text_cache)
-        log.info("Text cache enabled")
+        # Lazy text encoding cache (saves ~23% of forward time from epoch 2+)
+        if cfg.get("text_cache", True):
+            from text_cache import TextCache
+            text_cache = TextCache(steervit, max_size=cfg.get("text_cache_size", 200_000))
+            raw = model.module if hasattr(model, "module") else model
+            raw.set_text_cache(text_cache)
+            log.info("Text cache enabled")
 
-    # torch.compile (optional, ~19% speedup on ViT forward)
-    if cfg.get("compile", False):
-        steervit.vision_model = torch.compile(steervit.vision_model, mode="reduce-overhead")
-        log.info("torch.compile enabled on vision_model")
+        # torch.compile (optional, ~19% speedup on ViT forward)
+        if cfg.get("compile", False):
+            steervit.vision_model = torch.compile(steervit.vision_model, mode="reduce-overhead")
+            log.info("torch.compile enabled on vision_model")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
@@ -199,9 +219,16 @@ def main(cfg: DictConfig):
     scheduler = get_scheduler(optimizer, cfg)
 
     # Loss
-    task_type = cfg.task.type
     vocab = None
     if task_type == "decoder":
+        raw = model.module if hasattr(model, "module") else model
+        vocab = raw.vocab
+        criterion = nn.CrossEntropyLoss(ignore_index=vocab["<pad>"])
+    elif task_type == "transfusion":
+        raw = model.module if hasattr(model, "module") else model
+        vocab = raw.vocab
+        criterion = None  # Transfusion computes its own loss
+    elif task_type == "mot":
         raw = model.module if hasattr(model, "module") else model
         vocab = raw.vocab
         criterion = nn.CrossEntropyLoss(ignore_index=vocab["<pad>"])
@@ -210,12 +237,26 @@ def main(cfg: DictConfig):
 
     scaler = GradScaler("cuda", enabled=cfg.training.get("mixed_precision", "bf16") != "none")
 
-    # Training loop
+    # Resume from checkpoint
+    start_epoch = 0
     best_acc = 0.0
     global_step = 0
+    resume_path = cfg.training.get("resume", None)
+    if resume_path:
+        resume_ckpt = torch.load(resume_path, map_location=device, weights_only=False)
+        model.load_state_dict(resume_ckpt["model_state_dict"], strict=False)
+        optimizer.load_state_dict(resume_ckpt["optimizer_state_dict"])
+        scheduler.load_state_dict(resume_ckpt["scheduler_state_dict"])
+        scaler.load_state_dict(resume_ckpt["scaler_state_dict"])
+        start_epoch = resume_ckpt["epoch"] + 1
+        best_acc = resume_ckpt.get("best_acc", 0.0)
+        global_step = resume_ckpt.get("global_step", start_epoch * len(train_loader))
+        log.info(f"Resumed from {resume_path} (epoch {resume_ckpt['epoch']}, best_acc={best_acc:.4f})")
+
+    # Training loop
     save_every = cfg.training.get("save_every", 5)
 
-    for epoch in range(cfg.training.epochs):
+    for epoch in range(start_epoch, cfg.training.epochs):
         t0 = time.time()
 
         train_metrics = train_one_epoch(
@@ -228,7 +269,7 @@ def main(cfg: DictConfig):
 
         elapsed = time.time() - t0
         cache_info = ""
-        if cfg.get("text_cache", True) and text_cache.cache_size > 0:
+        if task_type not in ("transfusion", "mot") and cfg.get("text_cache", True) and text_cache.cache_size > 0:
             cache_info = f" | Cache: {text_cache.cache_size:,} keys, {text_cache.hit_rate:.0%} hit"
         log.info(f"Epoch {epoch} | Loss: {train_metrics['train_loss']:.4f} | "
                  f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s{cache_info}")
@@ -250,7 +291,7 @@ def main(cfg: DictConfig):
         torch.save(ckpt_data, output_dir / "last.pt")
 
         # Validate
-        if task_type == "decoder":
+        if task_type in ("decoder", "transfusion", "mot"):
             val_results = evaluate_decoder(model, val_loader, device, vocab)
         else:
             val_results = evaluate_classification(model, val_loader, device)
@@ -290,7 +331,7 @@ def main(cfg: DictConfig):
             "val_acc": val_acc,
             "epoch": epoch,
         }
-        with open(output_dir / "train_log.jsonl", "a") as f:
+        with open(log_dir / "train_log.jsonl", "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 
     log.info(f"\nDone. Best val acc: {best_acc:.4f}")

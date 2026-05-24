@@ -1,9 +1,11 @@
 checkpoint: null
-backbone_name: vit_base_patch16_224.mae
-resolution: 224
+backbone_name: vit_base_patch14_dinov2.lvd142m
+resolution: 336
 use_steering: true
 feature_pool: cls
 text_only: false
+pretrained: false
 unfreeze_gca: true
 unfreeze_connector: true
+unfreeze_backbone: true
 cross_attn_layers: [1, 3, 5, 7, 9, 11]
