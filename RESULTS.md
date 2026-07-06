@@ -320,8 +320,38 @@ and the answer level **Retrieval (answer)** — both sub-signals of the Retrieva
 stage. Labels updated in conditional_rsa / tsne_viz / grounding_manipulation; the
 tables above use the stored JSON condition names (existing outputs never renamed).
 
-## 10. E3, E8, E10 — pending
+## 10. Cross-backbone circuit replication (E3, SigLIP patching) — landed 11:30 07-06
 
-Placeholders: E3 SigLIP patching (running since 11:00) · E8 raw-backbone substrate ·
-E10 grounding_manipulation replots. Side queues: T2I PixArt probe (sklearn stage) →
-SteerViT-legacy E7+E5 → Flamingo(4/16-epoch, qualitative-only) E7.
+Artifacts: `outputs/analysis/activation_patching/clevr_siglip_decoder1l_scratch/`
+(same pipeline/settings as the DINOv2 reference run; n=50/category, denoising).
+
+Top recovered heads (mean recovery), DINOv2 → SigLIP:
+
+| signal | DINOv2 | SigLIP |
+|---|---|---|
+| color (described) | GCA L3H1 +0.77 | GCA L5H11 +1.08 |
+| material (described) | GCA L9H10 +0.81 | GCA L5H12 +1.25 |
+| size (described) | GCA L5H13 +0.93 | GCA L5H9 +0.93 |
+| shape (described) | GCA L7H9 +0.57 | GCA **L7H9** +0.34 |
+| query routing (shared) | GCA L7H2/H3, L9H15 | GCA L7H1/H14/H15 |
+| query-side SA | L10–L11 (SA11 dominant) | L10–L11 (L11H10/H2, L10H6) |
+| described-side SA | concentrated L11 | mid layers (L3–L7: L3H5, L7H6) |
+
+**A4.3 verdict: the circuit motif REPLICATES.** SigLIP shows the same three
+structural signatures: (1) sparse, attribute-specialized GCA binding heads in the
+mid-layer window (top head 3–7× the runner-up; all in L3–L7), (2) a small set of
+shared query-routing GCA heads at L7, (3) query-side SA effects concentrated in the
+last two layers. Head identities are backbone-specific (as expected), with one
+coincidence-grade exception: the shape head lands on L7H9 in both backbones.
+
+One reportable deviation: for described-attribute recovery, SigLIP's SA effects sit
+in mid layers rather than piling onto L11 — retrieval-side integration appears more
+distributed than in DINOv2. The Binding-stage picture (specialized mid-layer GCA
+heads) is unchanged; the deviation is confined to where SA re-integrates.
+
+## 11. E8, E10 — pending
+
+E8 raw-backbone probes running (dinov2 done, siglip done, sup-vit/mae queued) ·
+E10 grounding_manipulation replots (now with the "Retrieval (object/answer)" labels).
+Side queues: T2I PixArt probe (sklearn stage) → SteerViT-legacy E7+E5 →
+Flamingo (4/16-epoch, qualitative-only) E7.
