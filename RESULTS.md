@@ -153,8 +153,45 @@ cross-attention (Binding), image-side perturbations through late self-attention
 (Retrieval-side integration)" — supported; the absolute phrasing "A only affects CA,
 C only affects SA" is not.
 
-## 7–10. E3–E8, E10 — pending
+## 7. Failure modes (E5) — concat main model landed; H1–H3 adjudicated
 
-Placeholders: E3 SigLIP patching · E4 GCA-decoder probe/RSA · E5 failure modes +
-autonomous diagnosis · E7 add-object hallucination · E8 raw-backbone substrate ·
-E10 2-stage replots.
+Artifacts: `outputs/analysis/failure_modes/clevr_dinov2_concat_decoder1l_scratch_s42/`
+(records.jsonl n=37,498 stride=4; overall 0.9240 ≈ full-val 0.9237 — subsample faithful).
+Pre-registered hypotheses (docs/paper_v2_outline.md):
+
+- **H2 (answer-prior collapse on yes/no): REFUTED.** pred-no rate 0.504 vs gt-no 0.503;
+  confusion symmetric (yes→no 710 / no→yes 690); yes/no acc 0.9075. No majority-class
+  bias whatsoever — the draft's "worst = yes/no because prior" story is dead.
+- **H3 (counting off-by-one): CONFIRMED.** Of 1,315 counting errors, 86.9% are ±1
+  (−1: 586 / +1: 557 — symmetric). Approximate-numerosity behavior, not random guessing.
+  Drift: '0' underpredicted (−63) — the model dislikes answering zero.
+- **H1 (two-referent chains): CONFIRMED, refined.** The 8 worst families are ALL
+  two-set cardinality questions: count-over-union ("what number of things are either X
+  or Y" — fam 67/71/70, acc 0.52–0.64), compare-counts ("are there an equal number of
+  X and Y" — fam 6/7/3, acc 0.61–0.74), count-over-intersection (fam 31/25). The
+  failure is not the yes/no format and not counting per se — it is **enumerating and
+  combining MULTIPLE referent sets**.
+
+**Headline finding — the difficulty axis is referent multiplicity, NOT program depth**
+(per-depth × qtype table in records.jsonl):
+
+- query_attribute (one referent chain) is **flat 0.97–1.00 from depth 4 to depth 20** —
+  productivity along single-referent composition is fully achieved.
+- count 0.99→0.69 and compare_integer 0.91→0.74 as depth grows; equal_attribute
+  1.00→0.88; exist decays only past depth ~11 (where deep exist = union constructs).
+- The aggregate depth curve is non-monotonic (dip 0.85 at depth 9–11, recovery to
+  0.92+ at 13+) — a pure composition artifact: deep buckets are dominated by
+  single-chain query_attribute, mid buckets by multi-referent types.
+
+v2 wording: "Program depth costs nothing when the program narrows a single referent
+set; accuracy is set by how many referent sets must be independently bound and then
+combined (two counts, a union, an intersection). This locates the bottleneck in the
+query mechanism — one query binds one referent set — rather than in language
+understanding of long programs." Bridges to MAE's EqAttr collapse (§5) and A6
+substitutivity-vs-systematicity framing. GCA-decoder E5 pending (same diagnosis will
+be run for cross-readout consistency).
+
+## 8–10. E3, E4, E7, E8, E10 — pending
+
+Placeholders: E3 SigLIP patching · E4 GCA-decoder probe/RSA · E7 add-object
+hallucination · E8 raw-backbone substrate · E10 2-stage replots.
