@@ -349,9 +349,49 @@ in mid layers rather than piling onto L11 — retrieval-side integration appears
 distributed than in DINOv2. The Binding-stage picture (specialized mid-layer GCA
 heads) is unchanged; the deviation is confined to where SA re-integrates.
 
-## 11. E8, E10 — pending
+## 11. Raw-substrate probing (E8) — 3/4 backbones landed 14:12 07-06
 
-E8 raw-backbone probes running (dinov2 done, siglip done, sup-vit/mae queued) ·
-E10 grounding_manipulation replots (now with the "Retrieval (object/answer)" labels).
-Side queues: T2I PixArt probe (sklearn stage) → SteerViT-legacy E7+E5 →
-Flamingo (4/16-epoch, qualitative-only) E7.
+Artifacts: `outputs/analysis/raw_backbone_probe/<backbone>/` (300 multi-object
+scenes, 1,917 objects; fresh zero-gated GCA = pure pretrained ViT forward; 3×3
+patch pooling at each object's pixel_coords; 5-fold logistic regression per block).
+
+Per-object attribute decodability (peak over blocks):
+
+| backbone | color | material | shape | size |
+|---|---|---|---|---|
+| DINOv2 | 0.966 (B7) | 0.987 (B10) | 0.986 (B11) | 0.997 (B8) |
+| SigLIP | 0.932 (B2) | 0.953 (B8) | 0.951 (B8) | 0.983 (B3) |
+| sup-ViT | 0.938 (B2) | 0.934 (B2) | 0.924 (B7) | 0.983 (B6) |
+| MAE | running | | | |
+
+**A1.2 CONFIRMED: the raw substrate encodes attributes per-object in multi-object
+scenes** — 0.92–1.00 across all attributes and all landed backbones, before any
+language conditioning or task training. What the raw backbone lacks is not
+information but *selection*.
+
+### The fixation triangle (A1→A2) — CLOSED
+
+| corner | evidence | reading |
+|---|---|---|
+| raw substrate (E8) | per-object decodability 0.92–1.00 | information present, no selector |
+| −CA trained (E5/E7 nogca, §8b) | bait steals 24–59%; 100% of color errors are other in-scene objects | selection broken, encoding intact |
+| +CA trained (E7, §8/§8c) | bait steals 0–7% (main model AND legacy SteerViT) | selection works |
+
+Grounding's causal contribution is precisely the Binding/selection step: the
+substrate supplies per-object attributes for free; language conditioning picks
+which object the readout sees.
+
+### 8c → recorded here: E7 on legacy SteerViT (cross-generation replication)
+
+`odd_scratch_decoder_1l/best.pt` (legacy ancestor of the mechanistic model), same
+E7 pairs: hallucination color 0.02 / material 0.02 / shape 0.00 / size 0.07;
+acc_base→added flat (0.98→0.98, 0.99→0.98, 0.99→1.00, 0.93→0.93); errors
+bait-shaped where present. The trained-fixation-robustness profile replicates in a
+separately-trained model generation, size again weakest.
+
+## 12. Pending
+
+E8 MAE (running) · E10 grounding_manipulation replots (with "Retrieval
+(object/answer)" labels) · T2I timestep sweep t=261/400 (queued; first round at
+t=100 failed both pre-registered criteria — see §13 when written) · E5-on-SteerViT
+(running) · Flamingo E7 (queued, qualitative-only).
