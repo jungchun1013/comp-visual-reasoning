@@ -287,7 +287,39 @@ GCA, fixation on the described object is robust (≤6% capture); (iii) E8 — do
 raw substrate encode attributes per-object (info present, selection absent)? If yes,
 grounding's causal contribution is precisely the selection/fixation step.
 
-## 9–10. E3, E4, E8, E10 — pending
+## 9. Probe + RSA on the mechanistic model (E4) — landed 11:00 07-06
 
-Placeholders: E3 SigLIP patching (running) · E4 GCA-decoder probe/RSA (probe done,
-RSA running) · E8 raw-backbone substrate · E10 grounding_manipulation replots.
+Artifacts: `outputs/analysis/linear_probe/clevr_dinov2_decoder1l_scratch/` and
+`outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch/<cat>/` (GCA layers
+1,3,5,7,9,11; 12 ViT layers + decoder probe).
+
+Layer geometry (per-layer f1 / RSA mean, attr_query_direct):
+
+| signal | half-rise | peak |
+|---|---|---|
+| probe answer_decode | L1 (0.66 right after first GCA) → 0.92 plateau L8–11 | L11 0.92 |
+| RSA Binding \| All | L7 | L11 0.76 |
+| probe answer_match | L5 | L11 0.77 |
+| RSA Retrieval \| Binding | L9 | L11 0.57 |
+
+**A2↔A4 lock: CONFIRMED.** The correlational stage geometry on the SAME model the
+patching ran on reproduces the causal localization: Binding rises through the exact
+mid-layer window where patching's binding heads live (CA L3–L9: L5H0 color, L7H9
+material, L7H11 size, L7H3 shape), and Retrieval separates only late (L9–L11),
+where patching puts the retrieval end (SA11). Ordering is strict at every category:
+Binding half-rise precedes Retrieval half-rise by 2 layers.
+
+Relational categories add a sequencing detail: in `same`/`spatial`, **anchor**
+binding peaks at L8 then collapses by L12 (0.42→0.11) while **target** binding keeps
+climbing to L11 — a visible anchor→target handoff, i.e., relational chaining is
+implemented as sequential re-binding, consistent with E5's finding that relational
+localization is cheap (each step is one more binding pass) while enumeration is not.
+
+Naming note: the RSA output's middle-stage label is still "Object match" (old
+grammar) inside condition names; figure relabel decision is with the user.
+
+## 10. E3, E8, E10 — pending
+
+Placeholders: E3 SigLIP patching (running since 11:00) · E8 raw-backbone substrate ·
+E10 grounding_manipulation replots. Side queues: T2I PixArt probe (sklearn stage) →
+SteerViT-legacy E7+E5 → Flamingo(4/16-epoch, qualitative-only) E7.
