@@ -238,45 +238,71 @@ def extract(args, out_dir: Path):
     print(f"[extract] wrote {out_dir}/features.npz  n={len(samples)}")
 
 
+ATTR_VALUES = {
+    "color": {"gray", "red", "blue", "green", "brown", "purple", "cyan", "yellow"},
+    "material": {"rubber", "metal"},
+    "shape": {"cube", "sphere", "cylinder"},
+    "size": {"large", "small"},
+}
+
+
 def probe(args, out_dir: Path):
+    """Per-attribute probing (protocol aligned with raw_backbone_probe/E8).
+
+    One probe per attribute type pooled across the 3 categories (2-8 classes;
+    a 15-class mixed-answer probe dilutes signal and burns lbfgs iterations).
+    liblinear dual form: n << p, so solve the n-dim dual (~100x faster, still
+    L2 logistic regression).
+    """
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import StratifiedKFold, cross_val_score
+    from sklearn.multiclass import OneVsRestClassifier
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
 
     d = np.load(out_dir / "features.npz", allow_pickle=False)
     answers, cats = d["answers"], d["categories"]
     n_blocks = d["feats_global"].shape[1]
-    results = {"timestep": int(d["timestep"]), "per_category": {}}
+    attr_of = {v: a for a, vals in ATTR_VALUES.items() for v in vals}
+    attr_types = np.array([attr_of[a] for a in answers])
+    results = {"timestep": int(d["timestep"]), "per_attribute": {},
+               "per_category_ca": {}}
 
-    for cat in CATEGORIES:
-        m = cats == cat
+    for attr in ATTR_VALUES:
+        m = attr_types == attr
         y = answers[m]
         classes, counts = np.unique(y, return_counts=True)
-        keep = np.isin(y, classes[counts >= 5])
-        chance = counts[counts >= 5].max() / counts[counts >= 5].sum()
-        entry = {"n": int(keep.sum()), "n_classes": int((counts >= 5).sum()),
+        chance = counts.max() / counts.sum()
+        entry = {"n": int(m.sum()), "n_classes": len(classes),
                  "majority_baseline": float(chance)}
         for feat_key in ("feats_global", "feats_local"):
             accs = []
             for bi in range(n_blocks):
-                X = d[feat_key][m][keep][:, bi].astype(np.float32)
-                clf = make_pipeline(StandardScaler(),
-                                    LogisticRegression(max_iter=2000, C=1.0))
+                X = d[feat_key][m][:, bi].astype(np.float32)
+                clf = make_pipeline(StandardScaler(), OneVsRestClassifier(
+                    LogisticRegression(solver="liblinear", dual=True,
+                                       C=1.0, max_iter=2000)))
                 cv = StratifiedKFold(5, shuffle=True, random_state=0)
                 accs.append(float(np.mean(
-                    cross_val_score(clf, X, y[keep], cv=cv, scoring="accuracy"))))
+                    cross_val_score(clf, X, y, cv=cv, scoring="accuracy"))))
             entry[feat_key] = accs
-        entry["ca_mass_mean"] = d["ca_mass"][m].mean(axis=0).tolist()
-        entry["ca_mass_chance"] = float(
-            np.mean(d["windows_len"][m]) / (LATENT_GRID * LATENT_GRID))
-        results["per_category"][cat] = entry
-        print(f"[probe] {cat}: local best "
+        results["per_attribute"][attr] = entry
+        print(f"[probe] {attr}: n={entry['n']} local best "
               f"{max(entry['feats_local']):.3f} @ block "
               f"{int(np.argmax(entry['feats_local']))} "
-              f"(majority {chance:.3f}) | CA mass peak "
-              f"{max(entry['ca_mass_mean']):.4f} vs chance "
-              f"{entry['ca_mass_chance']:.4f}")
+              f"(majority {chance:.3f})", flush=True)
+
+    for cat in CATEGORIES:
+        m = cats == cat
+        results["per_category_ca"][cat] = {
+            "ca_mass_mean": d["ca_mass"][m].mean(axis=0).tolist(),
+            "ca_mass_chance": float(
+                np.mean(d["windows_len"][m]) / (LATENT_GRID * LATENT_GRID)),
+        }
+        e = results["per_category_ca"][cat]
+        print(f"[probe] CA {cat}: peak {max(e['ca_mass_mean']):.4f} "
+              f"@ block {int(np.argmax(e['ca_mass_mean']))} vs chance "
+              f"{e['ca_mass_chance']:.4f}", flush=True)
 
     (out_dir / "probe_results.json").write_text(json.dumps(results, indent=2))
 
@@ -287,16 +313,17 @@ def probe(args, out_dir: Path):
 
     apply_style()
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
-    for cat in CATEGORIES:
-        e = results["per_category"][cat]
-        axes[0].plot(e["feats_local"], label=f"{cat} (local)")
-        axes[0].plot(e["feats_global"], ls="--", alpha=0.6, label=f"{cat} (global)")
+    for attr, e in results["per_attribute"].items():
+        line, = axes[0].plot(e["feats_local"], label=f"{attr} (local)")
+        axes[0].plot(e["feats_global"], ls="--", alpha=0.5, color=line.get_color())
+        axes[0].axhline(e["majority_baseline"], color=line.get_color(),
+                        ls=":", alpha=0.4)
+    for cat, e in results["per_category_ca"].items():
         axes[1].plot(e["ca_mass_mean"], label=cat)
-    axes[0].axhline(results["per_category"][CATEGORIES[0]]["majority_baseline"],
-                    color="gray", ls=":", label="majority")
     axes[0].set(xlabel="DiT block", ylabel="probe accuracy",
-                title="Answer decodability (PixArt-Sigma, 1 denoise step)")
-    axes[1].axhline(results["per_category"][CATEGORIES[0]]["ca_mass_chance"],
+                title="Attribute decodability (PixArt-Sigma, 1 denoise step)\n"
+                      "solid=referent-local, dashed=global, dotted=majority")
+    axes[1].axhline(results["per_category_ca"][CATEGORIES[0]]["ca_mass_chance"],
                     color="gray", ls=":", label="chance")
     axes[1].set(xlabel="DiT block", ylabel="CA mass on referent",
                 title="Cross-attn localization on referent")
