@@ -254,6 +254,39 @@ substrate (before language conditioning) has the fixation problem is exactly wha
 adjudicates — if raw probes confuse objects that trained binding separates, the
 grounding mechanism is what fixes fixation, completing the A1→A2 arc.
 
+### 8b. The −CA ablation fails BY fixation (E7+E5 on nogca, landed 09:06 07-06)
+
+Same E7 pairs run on `clevr_dinov2_concat_decoder1l_nogca_scratch_s42` (−CA: no
+language conditioning in the trunk; question enters only through the concat readout):
+
+| queried attr | acc_base | acc_added | hallucination_rate | bait_share_of_errors |
+|---|---|---|---|---|
+| color | 0.34 | 0.28 | 0.24 | 0.33 |
+| material | 0.55 | 0.45 | 0.55 | 1.00 |
+| shape | 0.46 | 0.39 | 0.46 | 0.75 |
+| size | 0.46 | 0.41 | 0.59 | 1.00 |
+
+Causal contrast on identical stimuli: the bait captures the −CA model's answer
+24–59% of the time vs 0–6% for the GCA model — a ~10× hallucination gap
+attributable to the single added object.
+
+E5-on-nogca supplies the observational counterpart (records at
+`outputs/analysis/failure_modes/clevr_dinov2_concat_decoder1l_nogca_scratch_s42/`).
+Classifying all 6,516 query_attribute errors against scene ground truth: **98.6% are
+another scene object's attribute value**; out-of-scene hallucination is 1/6516.
+Restricting to color (8 values, so in-scene membership is non-trivial): **100.0% of
+2,276 wrong colors are present in the scene** vs a 52.3% chance baseline for a
+random wrong color. The −CA model reads out a *real* object — just not the described
+one: attribute encoding is intact, selection is broken. (The trained model's rare
+errors have the same in-scene structure, 131/133 — the failure mode is shared; GCA
+changes its *rate* by ~50×: qryattr error rate 48.6% → 1.0%.)
+
+**Fixation triangle (A1→A2, closes when E8 lands):** (i) E5/E7-on-nogca — without
+GCA, failure is object mis-selection, not encoding loss; (ii) E7-on-trained — with
+GCA, fixation on the described object is robust (≤6% capture); (iii) E8 — does the
+raw substrate encode attributes per-object (info present, selection absent)? If yes,
+grounding's causal contribution is precisely the selection/fixation step.
+
 ## 9–10. E3, E4, E8, E10 — pending
 
 Placeholders: E3 SigLIP patching (running) · E4 GCA-decoder probe/RSA (probe done,

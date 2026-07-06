@@ -24,6 +24,8 @@
 - **D2 lastep landed**: learned_text last.pt(ep15) independent eval = 0.1974 ≠ training-log 0.2456 ≠ paper 24.6 provenance assumption. Same qualitative collapse as best.pt (QryAttr 0.000, Count 0.003, binary at chance). Paper cell is protocol-dependent → new TODO for camera-ready decision.
 - Side queue (E7 evals + D2) finished 03:51 — ran concurrently with pipeline E4 on the single healthy GPU (46GB, pipeline peaks ~8GB); pipeline will SKIP E7 via its own done_markers. E4 linear_probe done (02:57–07:03, exit=0); conditional_rsa running since 07:03.
 - Journal day rotation performed (08:00 boundary).
+- **nogca fixation leg (user-requested E5↔E8 alignment) landed 09:06, RESULTS.md §8b**: E7-on-nogca hallucination 0.24–0.59 vs trained 0–0.06 (~10× causal gap on identical stimuli); E5-on-nogca qryattr errors 98.6% = another scene object's value (color-only: 100.0% of 2,276 vs 52.3% chance), out-of-scene 1/6516. −CA fails by object mis-selection with intact attribute encoding → fixation. Triangle closes when E8 lands (raw substrate per-object decodability).
+- **T2I prioritized by user (over OpenFlamingo)**: diffusers 0.39.0 installed to vault-root `deps-t2i/` via pip --target (legacy venv untouched, PYTHONPATH overlay; verified PixArtSigmaPipeline imports with venv torch 2.11). PixArt-Sigma-XL-2-512-MS transformer downloaded (2.3G); companion repo `pixart_sigma_sdxlvae_T5_diffusers` (T5-XXL+VAE) downloading in background. GPU phase queued behind E3+E8.
 
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.
