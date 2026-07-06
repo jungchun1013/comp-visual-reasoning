@@ -124,10 +124,9 @@ within-backbone trends are the claim.
 α-sweep 50, cogent-zs 30/cat, E7 100/attr, E5 stride-4 ≈37k). Fine as estimators —
 every figure caption must state its n (aggregate_results records them).
 
-**D7 [minor, being fixed] Two CLEVR data roots in code**: most scripts use
-`/home/jungchun/data/clevr/CLEVR_v1.0`; `linear_probe_multi.py` defaults to
-`/nfs/turbo/.../jungchun/data/clevr/CLEVR_v1.0`. Verify they are the same dataset
-copy; P2 (running) standardizes on `CLEVR_ROOT`.
+**D7 [RESOLVED 2026-07-05] Two CLEVR data roots in code**: verified identical copies
+(val-questions md5 match). P2 standardized all code on `CLEVR_ROOT` (release/public,
+commit 4e41c8a).
 
 **D8 [decision pending] Seed claim**: paper says 3 seeds; artifacts support s42 only
 (s43 incomplete, s44 absent). Either E1c reruns or v2 states single-seed.

@@ -57,6 +57,11 @@
 - **Fable pre-registration written** (`docs/paper_v2_outline.md`): A1–A5 claim registry with exact v2 wording, evidence artifact, and status per claim; wording constraints from R0/E9 (no "A only affects CA" absolutes; bait_share_of_errors as E7 headline; single-provenance table rule); E5 autonomous-diagnosis hypotheses H1–H3 with their tests — any model can execute the diagnosis from this file once E5 tables land.
 - E8 implemented (`scripts/analysis/raw_backbone_probe.py`): per-object patch-pooled attribute probes on multi-object scenes from the raw backbone (fresh zero-gated GCA = pure ViT, verified crossattention.py:95,106). Chained to run on 4 backbones after the main GPU queue.
 
+- Alignment audit delivered: `docs/experiment_registry.md` (X1–X15 + D1–D11). D7 RESOLVED same-copy (md5); learned_text best/last divergence verified (only affected run); E7 families == attr_query_direct exactly.
+- E10 done (subagent): figure labels → v2 naming ("Object match" chosen for the old middle-stage measurement, pending user confirm); 9 conditional-RSA figures replotted into `conditional_rsa_v2names/`; linear_probe/grounding_manipulation have no GPU-free replot path (labels fixed for next GPU run).
+- P2/P4 done (subagent): `release/public` branch commit 4e41c8a — all personal paths → env vars (CLEVR_ROOT etc.), `grep /home/jungchun` empty, CLAUDE.md untracked there. Worktree kept in scratchpad.
+- **E1b first results**: dinov2 concat overall 0.9237 == ckpt val_acc == paper 92.4 (independent protocol reproduces the number — D10 closed). Per-qtype: QryAttr 0.991 / Exist 0.961 / EqAttr 0.925 / Count 0.853 / CmpInt 0.785; SigLIP profile nearly identical. Failure ordering (CmpInt < Count) confirms A5.1's direction; numbers are within ~1pt of the draft's legacy-derived cells → camera-ready table barely moves.
+
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.
 
