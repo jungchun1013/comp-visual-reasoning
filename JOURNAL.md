@@ -63,6 +63,9 @@
 - P2/P4 done (subagent): `release/public` branch commit 4e41c8a — all personal paths → env vars (CLEVR_ROOT etc.), `grep /home/jungchun` empty, CLAUDE.md untracked there. Worktree kept in scratchpad.
 - **E1b first results**: dinov2 concat overall 0.9237 == ckpt val_acc == paper 92.4 (independent protocol reproduces the number — D10 closed). Per-qtype: QryAttr 0.991 / Exist 0.961 / EqAttr 0.925 / Count 0.853 / CmpInt 0.785; SigLIP profile nearly identical. Failure ordering (CmpInt < Count) confirms A5.1's direction; numbers are within ~1pt of the draft's legacy-derived cells → camera-ready table barely moves.
 
+- **Night pipeline daemonized** (2026-07-05 23:19): earlier background jobs were parented to the claude CLI (would die on disconnect) — stopped cleanly and relaunched via `setsid nohup` (PPID=1). Monitor from ANY terminal: `tail -f main/outputs/analysis/metadata/night_pipeline.log`; stages log `[pipeline] ... done`, finishes with `ALL STAGES DONE`. Stage order: E1b remainder → E5 failure_modes ×2 → E4 probe+RSA (dinov2 GCA-decoder) → E7 add-object eval ×4 → E3 SigLIP patching → E8 raw-backbone probes ×4. All idempotent; per-experiment logs in outputs/analysis/metadata/.
+- E1b 9/13 harvested (2026-07-06 early): sup concat deficit is UNIFORM across qtypes (readout-sensitive, not counting-specific — A3.2 revised); **MAE two-referent collapse** (QryAttr 0.921 vs EqAttr 0.586) bridges A3.1 substrate claim to H1; SigLIP cls reversal (needs decoder readout). RESULTS.md §5.
+
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.
 

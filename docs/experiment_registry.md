@@ -79,8 +79,27 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 - **Design**: per-question dump (stride 4), per-family acc, yes/no confusion, signed count errors; then pre-registered H1–H3 (paper_v2_outline §A5).
 - **Status**: ⏳ (queued, concat main + GCA-decoder).
 
-### X14. Baselines
-- MoT ✅ 0.7483 (keep). Flamingo-style: last.pt only, no eval — drop or eval on request. LLaVA-style: empty. Transfusion: config only ❌ (user decision: retrain or drop).
+### X14. Baselines → mechanism-transfer baselines (redesigned 2026-07-05, survey-backed)
+- MoT ✅ 0.7483 (keep). LLaVA-style: empty, drop. From-scratch flamingo/transfusion
+  attempts: superseded by the pretrained plan below.
+- **Transfusion: NO public weights anywhere** (Meta paper-only; lucidrains repo
+  code-only; no HF checkpoints; no replication releases as of 2026-07) → dropped.
+- **I2T (reviewer-requested, priority)**: OpenFlamingo — `openflamingo/OpenFlamingo-9B-vitl-mpt7b`
+  (MIT/Apache stack, ~18–20GB bf16; CA+resampler ≈1.3B pretrained on LAION-2B+MMC4;
+  gated cross-attn every 4th layer — same lineage as our GCA). Smaller:
+  `-4B-vitl-rpj3b`, `-3B-vitl-mpt1b`. Plan: zero-shot mechanism analysis first
+  (patching/RSA on its GCA — do binding-head structures exist without CLEVR
+  training?), zero/4-shot accuracy second, readout-finetune optional.
+  Replication option: `HuggingFaceM4/idefics-9b` (Llama-gated license; IDEFICS2
+  does NOT fit — dropped cross-attn for early fusion).
+- **T2I**: PixArt-Σ — `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS` (OpenRAIL++; DiT 0.6B
+  + frozen T5-XXL-encoder ≈4.3B). DIFT-style small-t features; (a) per-block probing
+  (3 attr_query categories), (b) frozen 1-layer decoder readout (Table-1-protocol
+  comparable), (c) cross-attn map localization (zero-shot Binding evidence).
+  Not fitting: SD3/FLUX (MM-DiT joint attn, no CA module), Show-o/Janus/Emu/
+  Chameleon/LlamaGen (early fusion).
+- Full survey with sources in session transcript 2026-07-05; details above suffice
+  to implement. See paper_v2_outline.md §A6 for the claims each baseline serves.
 
 ### X15. E10 2-stage-name replots
 - **Status**: 🔄 (agent replotting GPU-free figures into `*_v2names/` dirs).
