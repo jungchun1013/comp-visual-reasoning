@@ -389,6 +389,14 @@ acc_base→added flat (0.98→0.98, 0.99→0.98, 0.99→1.00, 0.93→0.93); erro
 bait-shaped where present. The trained-fixation-robustness profile replicates in a
 separately-trained model generation, size again weakest.
 
+E5-on-SteerViT (overall 0.9247, qryattr 0.992, records at
+`outputs/analysis/failure_modes/odd_scratch_decoder_1l/`): family-accuracy Spearman
+ρ = 0.927 vs the concat main model and **0.953 vs the GCA-decoder** (89 families) —
+the same replication strength as the cross-readout comparison (§7). Worst families
+are again the two-set cardinality ones (count-union 67/70/71, compare-counts 6/8),
+so the referent-multiplicity failure signature is now confirmed across THREE
+independently trained models spanning two codebase generations.
+
 ## 12. Pending
 
 E8 MAE (running) · E10 grounding_manipulation replots (with "Retrieval
