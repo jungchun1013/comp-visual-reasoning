@@ -76,11 +76,36 @@ camera-ready uses the reproducible numbers above. Zero-shot compositional gap is
 | LLaVA-style (`clevr_llava_dinov2_lora_s42`) | dir empty | **drop** — attempted, no recoverable checkpoint |
 | Transfusion (`clevr_transfusion_scratch_s42`) | config only, never trained | **drop** (or retrain — user decision, JOURNAL TODO) |
 
-## 5. Per-question-type breakdown (E1b) — pending
+## 5. Per-question-type breakdown (E1b) — 9/13 landed 2026-07-06
 
-Batch running 2026-07-05 on GPU 1 (17 checkpoints → `outputs/analysis/generalization/<name>.json`).
-Will populate: Table 1–5 per-category cells (single-provenance), sup-ViT concat-vs-decoder
-diagnosis, and the E5 failure-mode baseline.
+Artifacts: `outputs/analysis/generalization/<run>.json` (single-provenance, concat/cls
+s42 best.pt = final epoch except learned_text, see registry D2).
+
+| run (concat) | overall | QryAttr | EqAttr | Exist | Count | CmpInt |
+|---|---|---|---|---|---|---|
+| dinov2 | 0.924 | 0.991 | 0.925 | 0.960 | 0.853 | 0.785 |
+| siglip | 0.926 | 0.990 | 0.921 | 0.964 | 0.863 | 0.786 |
+| sup | 0.866 | 0.940 | 0.839 | 0.914 | 0.792 | 0.742 |
+| mae | 0.748 | 0.921 | **0.586** | 0.777 | 0.603 | 0.718 |
+
+cls rows: dinov2 0.901 / siglip 0.847 / sup 0.866 / mae 0.770 (full breakdowns in the
+JSONs); −CA concat 0.459 (count 0.246, qryattr 0.516).
+
+**Findings (Fable interpretation):**
+1. **A3.2 prediction partially wrong — sup-ViT's concat deficit is UNIFORM, not
+   Count/CmpInt-concentrated** (loses ~5pts on every type incl. QryAttr 0.940 vs
+   0.991). Since sup reaches 0.938 with the GCA-decoder readout, the readout
+   interaction is real but the mechanism is a broad conditioning-quality drop with
+   the concat self-attn readout, which the GCA-decoder's extra cross-attn stage
+   compensates. v2 wording: "readout-sensitive", not "weak at counting".
+2. **MAE's failure is two-referent, not retrieval**: QryAttr 0.921 (single-referent
+   retrieval nearly fine) but EqAttr collapses to 0.586 and Count 0.603 —
+   reconstruction pretraining supports single-referent attribute retrieval yet fails
+   multi-referent binding/comparison. This is the substrate-quality claim (A3.1) AND
+   an H1-shaped failure at the substrate level — strong bridge between A3 and A5.
+3. **SigLIP needs the decoder**: cls reversal (dinov2 0.901 > siglip 0.847 despite
+   concat 0.926 > 0.924) — SigLIP's pooled features are weak for classification
+   readout; its strength is token-level, consumed by decoders.
 
 ## 6. A/B/C × {CA, SA} localization (E9) — first pass done
 
