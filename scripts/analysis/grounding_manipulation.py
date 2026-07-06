@@ -169,6 +169,17 @@ COND_BINDING = 1
 COND_GROUNDING = 2
 COND_ANSWER = 4
 
+# v2 naming (docs/legacy-reference.md §1.1): the 3-stage "binding -> object
+# grounding -> answer matching" pipeline is now 2-stage "Binding -> Retrieval";
+# "Grounding" names the whole language-conditioning mechanism, never a stage.
+# manip_type values ("grounding"/"answer"/"random") and JSON keys are
+# unchanged for schema compat -- this only maps them to figure-visible text.
+MANIP_DISPLAY_NAME = {
+    "grounding": "Object match",
+    "answer": "Retrieval",
+    "random": "Random",
+}
+
 
 def apply_grounding_manipulation(feats_np, cond_labels):
     """Shift grounding-match answer images toward non-grounding answer images.
@@ -399,7 +410,7 @@ def plot_results(results, output_dir):
 
         ax.set_xlabel("Manipulation Layer")
         ax.set_ylabel("Spearman ρ")
-        label = "Grounding|Binding" if "grounding" in metric else "Answer|Binding"
+        label = "Object match|Binding" if "grounding" in metric else "Retrieval|Binding"
         ax.set_title(f"{label} RSA")
         ax.set_xticks(x)
         ax.set_xticklabels([str(l) for l in layers])
@@ -407,7 +418,8 @@ def plot_results(results, output_dir):
         ax.axhline(y=0, color="gray", linewidth=0.5)
 
     # Intentional: smaller suptitle than PLOT_STYLE (14 vs 20) for wide 2-panel bar chart
-    fig.suptitle(f"Manipulation: {manip_type}", fontsize=14)
+    fig.suptitle(f"Manipulation: {MANIP_DISPLAY_NAME.get(manip_type, manip_type)}",
+                 fontsize=14)
     fig.tight_layout()
     out = output_dir / f"manipulation_{manip_type}.png"
     fig.savefig(str(out), dpi=PLOT_STYLE["dpi"], bbox_inches="tight")
@@ -435,7 +447,8 @@ def plot_retrieval(results, output_dir):
 
     ax.set_xlabel("Manipulation Layer")
     ax.set_ylabel("Retrieval Accuracy")
-    ax.set_title(f"1-NN Retrieval Accuracy — {manip_type} manipulation")
+    ax.set_title(f"1-NN Retrieval Accuracy — "
+                 f"{MANIP_DISPLAY_NAME.get(manip_type, manip_type)} manipulation")
     ax.set_xticks(x)
     ax.set_xticklabels([str(l) for l in layers])
     ax.legend()
@@ -619,14 +632,14 @@ def plot_manipulation_tsne(steervit, retriever, dataset, device, query, scenes,
                markersize=7, label="Feature binding"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(FILL_COLORS[1]),
-               markersize=7, label="Object grounding"),
+               markersize=7, label="Object match"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=(0.75, 0.75, 0.75),
                markeredgecolor=tuple(ANSWER_MATCH_COLOR),
-               markeredgewidth=1.5, markersize=7, label="Answer match"),
+               markeredgewidth=1.5, markersize=7, label="Retrieval match"),
     ]
 
     q_short = question[:60] + "..." if len(question) > 60 else question
-    fig.suptitle(f"Last-layer t-SNE after grounding manipulation: {q_short} → {answer}",
+    fig.suptitle(f"Last-layer t-SNE after object match manipulation: {q_short} → {answer}",
                  fontsize=S_TSNE["suptitle_fontsize"])
     fig.subplots_adjust(hspace=0.12, wspace=0.08, top=0.90, bottom=0.00)
     fig.legend(handles=handles, loc="upper center",
@@ -759,13 +772,13 @@ def run_random_control(model, steervit, retriever, dataset, scenes,
 
     ax.errorbar(layers_x, r_means, yerr=r_stds, fmt="o-", color="gray",
                 label=f"Random (N={n_random})", capsize=4, markersize=6)
-    ax.plot(layers_x, g_accs, "s-", color="red", label="Grounding", markersize=8)
+    ax.plot(layers_x, g_accs, "s-", color="red", label="Object match", markersize=8)
     ax.axhline(y=1.0, color="black", linestyle="--", alpha=0.3, label="Clean")
     ax.set_xticks(layers_x)
     ax.set_xticklabels([str(l) for l in test_layers])
     ax.set_xlabel("Manipulation Layer")
     ax.set_ylabel("Val Accuracy")
-    ax.set_title("Grounding vs Random Direction Control")
+    ax.set_title("Object match vs Random Direction Control")
     ax.legend()
     ax.set_ylim(0, 1.05)
 

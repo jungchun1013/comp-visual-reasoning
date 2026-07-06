@@ -18,8 +18,8 @@
 - [ ] [data] E7: add-object hallucination (Blender smoke test first); E8: raw-backbone substrate probing
 - [ ] [plot] E9: A/B/C × {CA,SA} localization contrast table+figure; E10: 2-stage-label replots (new dirs)
 - [ ] [infra] W2: scripts/analysis/aggregate_results.py → docs/results_tables.md
-- [ ] [infra] L1–L6: legacy distillation (docs/legacy-reference.md, plot-style consolidation, checkpoint_io dedupe, BLENDER_TOOLS_ROOT, routing, scripts/ cleanup)
-- [ ] [infra] P1–P6: publish (commit WIP, release/public path refactor, README, LICENSE, smoke tests)
+- [x] [infra] L1–L6: legacy distillation COMPLETE (legacy-reference.md; plot-style: 7 scripts on plot_style.py, replot-verified; checkpoint_io dedupe; BLENDER_TOOLS_ROOT; CLAUDE.md routing; scripts/README.md — L6 verdict: no scripts moved, "duplicates" are distinct active pipelines)
+- [ ] [infra] P remaining: release/public branch path refactor (`src/model/model.py` hardcoded root top priority, `${oc.env:CLEVR_ROOT}` in configs), CLAUDE.md rm --cached on release branch, `grep -rn "/home/jungchun"` empty check. README/LICENSE/tests done on master.
 
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
@@ -48,6 +48,14 @@
 - E5 tooling ready: `scripts/analysis/failure_modes.py` (per-question dump → per-family acc, yes/no confusion + prior bias, counting signed-error hist, answer drift; `--stride` for subsampled runs). Runs when GPU frees up.
 - **E7 unblocked**: Blender 3.6.14 smoke render passed (96 single-object images via render_single_objects.py to scratchpad, CPU, ~minutes). Add-object pipeline design next.
 - E7 launched: new `scripts/analysis/render_add_object.py` (reuses render_visual_corruptions helpers; distractor = one described-attr flipped + bait value on queried attr; answer invariance verified by program execution; base re-render controls domain shift) + `add_object_eval.py` (acc_base/acc_added/hallucination_rate/bait_share_of_errors/flip_rate). Color 100 pairs rendering on CPU → outputs/analysis/add_object/color/.
+
+- E7 render bug fixed (is_simple_query rejected the final query_* step itself → 0 eligible; now ~1700 eligible per attribute). All 4 attributes rendering 100 pairs each on CPU → `outputs/analysis/add_object/<attr>/`.
+- L2/L6 complete (subagent): 7 plotting scripts consolidated onto `src/analysis/plot_style.py` (replot-verified GPU-free on conditional_rsa); L6 evidence verdict — `render_single_object` (pyrender)/`render_single_objects` (Blender), `linear_probe_{single,multi}`, `tsne_single_object` are distinct ACTIVE pipelines, not duplicates → nothing moved, `scripts/README.md` written instead.
+- P3/P5/P6 on master: README.md (paper overview + matrix table + regeneration pointer), LICENSE (MIT), tests/test_smoke.py — 4 backbones build+forward OK (dinov2/siglip/augreg/mae, pretrained=False). Committed (9b26242).
+- **Chained GPU queue launched**: waits for E1b, then E5 failure_modes (concat main + GCA-decoder, stride 4) → E4 probe+RSA (GCA-decoder, new dirs) → E7 add-object evals (4 attrs, main model) → E3 SigLIP decoder1l patching (A/B denoising). Everything idempotent, logs in outputs/analysis/metadata/.
+- E7 renders COMPLETE: 4 attributes × 100 pairs × 2 images; first pair visually verified (distractor correct, described referent still unique). Evals queued.
+- **Fable pre-registration written** (`docs/paper_v2_outline.md`): A1–A5 claim registry with exact v2 wording, evidence artifact, and status per claim; wording constraints from R0/E9 (no "A only affects CA" absolutes; bait_share_of_errors as E7 headline; single-provenance table rule); E5 autonomous-diagnosis hypotheses H1–H3 with their tests — any model can execute the diagnosis from this file once E5 tables land.
+- E8 implemented (`scripts/analysis/raw_backbone_probe.py`): per-object patch-pooled attribute probes on multi-object scenes from the raw backbone (fresh zero-gated GCA = pure ViT, verified crossattention.py:95,106). Chained to run on 4 backbones after the main GPU queue.
 
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.

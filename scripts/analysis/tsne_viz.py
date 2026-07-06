@@ -3,7 +3,11 @@
 Three modes:
   qtype       — Sample balanced questions, color by question type.
   steered     — Pick one query, steer N DB images, color by conditions
-                (feature binding / object grounding / answer match).
+                (feature binding / object match / retrieval match). v2 naming
+                (docs/legacy-reference.md §1.1): "Grounding" now names the
+                whole language-conditioning mechanism, never a stage; legend
+                text uses "Object match" / "Retrieval match" instead of the
+                old "object grounding" / "answer match" stage labels.
   cross_model — Load all available checkpoints, plot side-by-side t-SNE.
 
 Usage:
@@ -510,10 +514,10 @@ def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
                markersize=7, label=f"{role_prefix}Feature binding"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(fill_colors[1]),
-               markersize=7, label=f"{role_prefix}Object grounding"),
+               markersize=7, label=f"{role_prefix}Object match"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
                markeredgecolor=tuple(ANSWER_MATCH_COLOR),
-               markeredgewidth=1.5, markersize=7, label="Answer match"),
+               markeredgewidth=1.5, markersize=7, label="Retrieval match"),
     ]
 
     q_short = question[:65] + "..." if len(question) > 65 else question

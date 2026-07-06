@@ -4,6 +4,10 @@ For each ViT layer, train logistic regression to predict binding,
 grounding, and answer_match labels from mean-pooled patch features.
 One plot per question subcategory (direct / same / spatial).
 
+v2 naming (docs/legacy-reference.md §1.1): "answer matching" -> "Retrieval"
+in figure-visible text (legend labels); the answer_match variable/JSON key
+name is unchanged for schema compatibility.
+
 Usage:
     CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src python scripts/analysis/linear_probe.py \
         --checkpoint outputs/model/clevr_siglip_decoder1l_scratch_s42/best.pt
@@ -266,7 +270,10 @@ def plot_probe(results, num_layers, gca_layers, num_vit_layers, title, output_pa
     fig, ax = plt.subplots(figsize=(8, 4.5))
     layers = list(range(num_layers))
 
-    plot_labels = {"answer_match": "Answer Match (F1)",
+    # v2 naming (docs/legacy-reference.md §1.1): "answer matching" -> "Retrieval".
+    # variable/key names ("answer_match") stay for schema compat; only the
+    # figure-visible legend label text changes.
+    plot_labels = {"answer_match": "Retrieval (F1)",
                    "answer_decode": "Answer Decode (Acc)"}
     for label_name in LABEL_NAMES:
         f1s = [results[l][label_name]["f1"] for l in layers]
