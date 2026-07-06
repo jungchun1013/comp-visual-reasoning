@@ -315,8 +315,10 @@ climbing to L11 — a visible anchor→target handoff, i.e., relational chaining
 implemented as sequential re-binding, consistent with E5's finding that relational
 localization is cheap (each step is one more binding pass) while enumeration is not.
 
-Naming note: the RSA output's middle-stage label is still "Object match" (old
-grammar) inside condition names; figure relabel decision is with the user.
+Naming (user decision 2026-07-06): the middle chain level is **Retrieval (object)**
+and the answer level **Retrieval (answer)** — both sub-signals of the Retrieval
+stage. Labels updated in conditional_rsa / tsne_viz / grounding_manipulation; the
+tables above use the stored JSON condition names (existing outputs never renamed).
 
 ## 10. E3, E8, E10 — pending
 

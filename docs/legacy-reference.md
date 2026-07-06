@@ -14,8 +14,9 @@ Sources verified 2026-07-05 against the legacy files cited inline.
 | old (workshop paper, legacy figures) | v2 (use everywhere now) |
 |---|---|
 | 3-stage: binding → object grounding → answer matching | **2-stage: Binding → Retrieval** |
-| "object grounding" (middle stage) | deprecated — **Grounding** now names the WHOLE language-conditioning mechanism (CA routing + refocus) |
-| "answer matching" | **Retrieval** (old name was post-hoc, coined after the clustering was seen) |
+| "object grounding" (middle stage) | **Retrieval (object)** (user decision 2026-07-06) — a sub-signal of the Retrieval stage, never a stage of its own. **Grounding** names the WHOLE language-conditioning mechanism (CA routing + refocus) |
+| "answer matching" | **Retrieval** — as a sub-signal next to Retrieval (object) in the same legend, write **Retrieval (answer)** |
+| interim label "Object match" (early v2 figures) | superseded by **Retrieval (object)**; never use |
 
 Existing output files/dirs are NEVER renamed; only new code, docs, figures, and prose
 use v2 names.

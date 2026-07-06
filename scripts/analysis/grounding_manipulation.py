@@ -175,8 +175,8 @@ COND_ANSWER = 4
 # manip_type values ("grounding"/"answer"/"random") and JSON keys are
 # unchanged for schema compat -- this only maps them to figure-visible text.
 MANIP_DISPLAY_NAME = {
-    "grounding": "Object match",
-    "answer": "Retrieval",
+    "grounding": "Retrieval (object)",
+    "answer": "Retrieval (answer)",
     "random": "Random",
 }
 
@@ -410,7 +410,7 @@ def plot_results(results, output_dir):
 
         ax.set_xlabel("Manipulation Layer")
         ax.set_ylabel("Spearman ρ")
-        label = "Object match|Binding" if "grounding" in metric else "Retrieval|Binding"
+        label = "Retrieval (object)|Binding" if "grounding" in metric else "Retrieval (answer)|Binding"
         ax.set_title(f"{label} RSA")
         ax.set_xticks(x)
         ax.set_xticklabels([str(l) for l in layers])
@@ -632,14 +632,14 @@ def plot_manipulation_tsne(steervit, retriever, dataset, device, query, scenes,
                markersize=7, label="Feature binding"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(FILL_COLORS[1]),
-               markersize=7, label="Object match"),
+               markersize=7, label="Retrieval (object)"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=(0.75, 0.75, 0.75),
                markeredgecolor=tuple(ANSWER_MATCH_COLOR),
-               markeredgewidth=1.5, markersize=7, label="Retrieval match"),
+               markeredgewidth=1.5, markersize=7, label="Retrieval (answer)"),
     ]
 
     q_short = question[:60] + "..." if len(question) > 60 else question
-    fig.suptitle(f"Last-layer t-SNE after object match manipulation: {q_short} → {answer}",
+    fig.suptitle(f"Last-layer t-SNE after retrieval (object) manipulation: {q_short} → {answer}",
                  fontsize=S_TSNE["suptitle_fontsize"])
     fig.subplots_adjust(hspace=0.12, wspace=0.08, top=0.90, bottom=0.00)
     fig.legend(handles=handles, loc="upper center",
@@ -772,13 +772,13 @@ def run_random_control(model, steervit, retriever, dataset, scenes,
 
     ax.errorbar(layers_x, r_means, yerr=r_stds, fmt="o-", color="gray",
                 label=f"Random (N={n_random})", capsize=4, markersize=6)
-    ax.plot(layers_x, g_accs, "s-", color="red", label="Object match", markersize=8)
+    ax.plot(layers_x, g_accs, "s-", color="red", label="Retrieval (object)", markersize=8)
     ax.axhline(y=1.0, color="black", linestyle="--", alpha=0.3, label="Clean")
     ax.set_xticks(layers_x)
     ax.set_xticklabels([str(l) for l in test_layers])
     ax.set_xlabel("Manipulation Layer")
     ax.set_ylabel("Val Accuracy")
-    ax.set_title("Object match vs Random Direction Control")
+    ax.set_title("Retrieval (object) vs Random Direction Control")
     ax.legend()
     ax.set_ylim(0, 1.05)
 
