@@ -97,6 +97,7 @@ def main():
                     "q_idx": indices[cursor],
                     "family": q.get("question_family_index"),
                     "qtype": batch["question_type"][i],
+                    "depth": int(batch["program_depth"][i]),
                     "question": q["question"],
                     "gt": str(q.get("answer", "")).lower(),
                     "pred": pred,
@@ -117,6 +118,7 @@ def main():
 
     per_qtype = acc_table("qtype")
     per_family = acc_table("family")
+    per_depth = acc_table("depth")  # productivity axis: acc vs program depth
 
     yn = [r for r in records if r["gt"] in YESNO]
     yn_conf = Counter((r["gt"], r["pred"]) for r in yn)
@@ -139,6 +141,7 @@ def main():
         "overall_acc": sum(r["correct"] for r in records) / max(len(records), 1),
         "per_qtype": per_qtype,
         "per_family": per_family,
+        "per_depth": {str(k): v for k, v in sorted(per_depth.items())},
         "yesno": {
             "n": len(yn),
             "acc": sum(r["correct"] for r in yn) / max(len(yn), 1),
