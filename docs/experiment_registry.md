@@ -28,7 +28,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 ### X4. CoGenT (R3)
 - **Motivation**: compositional generalization beyond the training attribute pairing.
 - **Hypothesis**: grounding generalizes zero-shot with a small gap that closes with few B samples, without forgetting A.
-- **Status**: ✅ numbers extracted (94.5/89.5 zs; 50k-8ep ft → 92.4/92.7; sample-efficiency curve). ❌ paper's 92.4/88.0 unreproducible (legacy ep-11; ValB never persisted) — user decision pending on adopting main-repo numbers.
+- **Status**: ✅ RESOLVED (user 2026-07-05): the paper's 92.4/88.0 was a transcription error — camera-ready adopts the reproducible main-repo numbers: zero-shot ValA 94.5 / ValB 89.5, ft(50k,8ep) → ValB 92.7 (ValA 92.4 retained). Artifacts: `cogent_sample_efficiency/sample_efficiency.json` + `50k_8ep.log`.
 
 ### X5. Transfer (Humans / Math / CLOSURE, Table 6)
 - **Motivation**: does grounding transfer beyond CLEVR's synthetic language?

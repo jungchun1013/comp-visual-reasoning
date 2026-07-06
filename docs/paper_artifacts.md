@@ -122,11 +122,11 @@ the (non-standard) name `concat_decoder_1l` — E4's gap is only the *GCA-decode
    subdir.) The legacy `odd_scratch_decoder_1l` run (0.9248) is numerically close but
    NOT the source. Camera-ready action: none needed for the number; optionally clean up
    the contaminated dir listing in a README note (never delete the files).
-2. **CoGenT ValA 92.4 = legacy `cogent_odd_scratch_decoder_1l` at epoch 11** (not the
-   final epoch — ep15 reached 0.9449); **ValB 88.0 has no persisted artifact anywhere**
-   (the `--eval_only` valB stdout was never saved). The main-repo rerun gives 94.5/89.5
-   (`sample_efficiency.json` "before"). → camera-ready should adopt the reproducible
-   main-repo numbers (they are *better*) or rerun the legacy eval.
+2. **CoGenT — RESOLVED (user 2026-07-05)**: the draft's 92.4/88.0 was a transcription
+   error (traceable only to a legacy ep-11 checkpoint; ValB never persisted).
+   Camera-ready adopts the reproducible main-repo numbers: zero-shot ValA 0.94466 /
+   ValB 0.89479 (`sample_efficiency.json` "before"), ft 50k/8ep → ValB 92.7 with
+   ValA 92.4 retained (`50k_8ep.log`).
 3. **Seed coverage**: paper claims 3 seeds (42/43/44). Repo has **no s44 anywhere**;
    MAE has only s42. Existing s43 runs are anomalous: `clevr_dinov2_decoder1l_scratch_s43`
    train_log stale at ep7 (0.8295), `clevr_siglip_decoder1l_scratch_s43` stale at ep3

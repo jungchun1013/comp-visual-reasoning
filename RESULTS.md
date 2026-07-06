@@ -63,9 +63,9 @@ Main-repo numbers (all reproducible):
 | ValB after 50k/8ep ft on B | 0.927 (ValA 0.924 retained) | `cogent_sample_efficiency/50k_8ep.log` |
 | Sample efficiency (1k–50k, 4ep) | valB 0.904 → 0.926, valA stable 0.92± | `sample_efficiency.json` "runs" |
 
-Paper printed 92.4/88.0 from a legacy epoch-11 checkpoint (ValB never persisted) — see
-`docs/paper_artifacts.md` §8.2. The reproducible numbers are *better*: zero-shot
-compositional gap is only ~5 pts (94.5→89.5) and closes to ~2 pts with 50k B-samples.
+DECIDED (user 2026-07-05): the draft's 92.4/88.0 was a transcription error;
+camera-ready uses the reproducible numbers above. Zero-shot compositional gap is only
+~5 pts (94.5→89.5) and closes to ~2 pts with 50k B-samples.
 
 ## 4. Baseline triage (R4)
 

@@ -6,7 +6,8 @@
 
 - [ ] [main flow] Confirm EXPERIMENT.md objective with user (initialized 2026-07-05 from the user's v2 outline)
 - [x] [paper] R0 residual: resolve DINOv2 92.4 + CoGenT 92.4/88.0 provenance (RESOLVED; see docs/paper_artifacts.md §8)
-- [ ] [paper] Camera-ready: CoGenT ValB 88.0 unreproducible — adopt main-repo 94.5/89.5 or rerun legacy eval — user decision
+- [x] [paper] Camera-ready CoGenT: DECIDED (user 2026-07-05) — draft 92.4/88.0 was a transcription error; adopt main-repo 94.5/89.5 (zs) and 92.7 (ft). Apply when editing the camera-ready text.
+- [ ] [paper] Baseline survey: pretrained cross-attn from image-generation research as baseline (Transfusion weights? SD/PixArt/OpenFlamingo?) — survey running, then user picks
 - [ ] [paper] E1c seed decision — paper claims seeds 42/43/44; repo has no s44, concat variant s42 only → user decides: run seeds or note single-seed
 - [ ] [paper] R4: transfusion baseline has no checkpoint — retrain or drop from baseline table? (user decision)
 - [ ] [metrics] E1b per-qtype breakdowns: running in background at low priority (user 2026-07-05: E1 可以慢慢跑不佔主線). PAPER MODELS ONLY, 13 ckpts, order = Table 1 concat → Table 4 cls → ablations → mechanistic decoder1l → MoT. Idempotent resume: `bash <scratchpad>/run_e1_evals.sh`.
