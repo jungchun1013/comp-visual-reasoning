@@ -203,8 +203,20 @@ enumerate (each relational region-constraint compounds the cost), or several set
 be enumerated and combined (worst). Program depth and relational vocabulary per se
 cost nothing — the bottleneck is the query mechanism's one-referent-at-a-time
 binding, not language understanding of long or relational programs." Bridges to MAE's
-EqAttr collapse (§5) and A6 substitutivity-vs-systematicity framing. GCA-decoder E5
-pending (same diagnosis will be run for cross-readout consistency).
+EqAttr collapse (§5) and A6 substitutivity-vs-systematicity framing.
+
+**Cross-readout replication (GCA-decoder, landed 03:09)** —
+`outputs/analysis/failure_modes/clevr_dinov2_decoder1l_scratch_s42/` (overall 0.9074
+≈ full-val 0.9095): the failure structure is **mechanism-level, not readout-level**.
+Per-family accuracy Spearman ρ = **0.927** across 89 families vs the concat model;
+same top-4 worst families {67, 70, 71, 6}; deep qryattr chains 0.994; single-set
+count by #relations 0.977→0.736→0.710→0.594 (same monotone collapse, slightly
+steeper); off-by-one = 87.9% of counting errors, symmetric (−1: 645 / +1: 648).
+Readout-level differences (the only ones): (a) the generative decoder shows a mild
+"no" bias absent in the classification readout (pred-no 0.512 vs gt 0.503, drift
+no +142 / yes −142; yes/no acc 0.879 vs 0.908) — autoregressive calibration is
+slightly worse, still nowhere near H2 collapse; (b) zero non-numeric outputs on
+counting — the decoder's answer vocabulary is well-behaved.
 
 ## 8–10. E3, E4, E7, E8, E10 — pending
 
