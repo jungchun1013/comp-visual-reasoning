@@ -33,34 +33,18 @@ from analysis.patching_sampling import (
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from matplotlib.lines import Line2D
 from sklearn.manifold import TSNE
 
 
-# ── Style (match tsne_viz.py) ────────────────────────────────────
+# ── Style ────────────────────────────────────────────────────────
 
-S = {
-    "tick_labelsize": 14,
-    "label_fontsize": 16,
-    "legend_fontsize": 12,
-    "subplot_title_fontsize": 16,
-    "suptitle_fontsize": 16,
-    "dpi": 150,
-}
+from analysis.plot_style import PLOT_STYLE, apply_style
 
-def apply_style():
-    mpl.rcParams.update({
-        "axes.labelsize": S["label_fontsize"],
-        "axes.titlesize": S["subplot_title_fontsize"],
-        "xtick.labelsize": S["tick_labelsize"],
-        "ytick.labelsize": S["tick_labelsize"],
-        "legend.fontsize": S["legend_fontsize"],
-        "figure.dpi": S["dpi"],
-        "savefig.dpi": S["dpi"],
-        "savefig.bbox": "tight",
-        "font.family": "sans-serif",
-    })
+# Intentional overrides vs PLOT_STYLE: smaller legend (12) and titles (16)
+# for the dense 3-panel clean/corrupt/patched layout.
+S = dict(PLOT_STYLE, legend_fontsize=12,
+         subplot_title_fontsize=16, suptitle_fontsize=16)
 
 # Answer colors (tab10-based for consistency)
 _tab10 = plt.cm.tab10.colors
@@ -321,6 +305,8 @@ def main():
     parser.add_argument("--visual-pairs-dir", type=str,
                         default="outputs/analysis/visual_corruptions")
     args = parser.parse_args()
+
+    apply_style()
 
     import random
     random.seed(args.seed)

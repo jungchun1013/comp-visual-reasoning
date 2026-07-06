@@ -36,7 +36,8 @@ from torch.amp import autocast
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib as mpl
+
+from analysis.plot_style import apply_style, line_kwargs
 
 ATTR_KEYS = ("color", "shape", "material", "size")
 LABEL_NAMES = ["answer_match", "answer_decode"]
@@ -260,8 +261,8 @@ def probe_per_layer(all_feats, answer_match, answer_class, num_layers, seed):
 
 
 def plot_probe(results, num_layers, gca_layers, num_vit_layers, title, output_path):
-    mpl.rcParams.update({"font.family": "sans-serif", "figure.dpi": 150,
-                         "savefig.dpi": 150, "savefig.bbox": "tight"})
+    # Intentional overrides vs PLOT_STYLE: wide figsize, smaller fonts
+    # (labels 14, title 16, ticks 10, legend 12) so 13 layer ticks fit.
     fig, ax = plt.subplots(figsize=(8, 4.5))
     layers = list(range(num_layers))
 
@@ -269,8 +270,9 @@ def plot_probe(results, num_layers, gca_layers, num_vit_layers, title, output_pa
                    "answer_decode": "Answer Decode (Acc)"}
     for label_name in LABEL_NAMES:
         f1s = [results[l][label_name]["f1"] for l in layers]
-        ax.plot(layers, f1s, "o-", color=LABEL_COLORS[label_name],
-                label=plot_labels[label_name], markersize=5, linewidth=2)
+        ax.plot(layers, f1s,
+                **line_kwargs(label=plot_labels[label_name],
+                              color=LABEL_COLORS[label_name], markersize=5))
 
     for gl in gca_layers:
         ax.axvline(gl, color="gray", linestyle="--", alpha=0.2, linewidth=0.8)
@@ -304,6 +306,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default=None)
     args = parser.parse_args()
+
+    apply_style()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

@@ -24,10 +24,14 @@ try:
 except ImportError:
     INSIDE_BLENDER = False
 
-# CLEVR generation utilities
-CLEVR_GEN_DIR = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), '..', '..', '..',
-    'SteerViT-legacy', 'tools', 'clevr-dataset-gen', 'image_generation'))
+# CLEVR generation utilities — the single remaining legacy runtime dependency
+# (docs/legacy-reference.md §6). Override with BLENDER_TOOLS_ROOT.
+_BLENDER_TOOLS_ROOT = os.environ.get(
+    'BLENDER_TOOLS_ROOT',
+    os.path.abspath(os.path.join(
+        os.path.dirname(__file__), '..', '..', '..',
+        'SteerViT-legacy', 'tools', 'clevr-dataset-gen')))
+CLEVR_GEN_DIR = os.path.join(_BLENDER_TOOLS_ROOT, 'image_generation')
 sys.path.insert(0, CLEVR_GEN_DIR)
 
 if INSIDE_BLENDER:

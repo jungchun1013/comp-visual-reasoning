@@ -56,7 +56,6 @@ from omegaconf import OmegaConf
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from matplotlib.lines import Line2D
 
 
@@ -94,28 +93,11 @@ WRONG_COLOR = (0.75, 0.75, 0.75)
 ATTR_KEYS = ("color", "shape", "material", "size")
 SHAPE_MARKERS = {"sphere": "o", "cylinder": "^", "cube": "s"}
 
-S = {
-    "tick_labelsize": 14,
-    "label_fontsize": 16,
-    "legend_fontsize": 14,
-    "subplot_title_fontsize": 18,
-    "suptitle_fontsize": 18,
-    "dpi": 150,
-}
+from analysis.plot_style import PLOT_STYLE, apply_style
 
-
-def apply_style():
-    mpl.rcParams.update({
-        "axes.labelsize": S["label_fontsize"],
-        "axes.titlesize": S["subplot_title_fontsize"],
-        "xtick.labelsize": S["tick_labelsize"],
-        "ytick.labelsize": S["tick_labelsize"],
-        "legend.fontsize": S["legend_fontsize"],
-        "figure.dpi": S["dpi"],
-        "savefig.dpi": S["dpi"],
-        "savefig.bbox": "tight",
-        "font.family": "sans-serif",
-    })
+# Intentional overrides vs PLOT_STYLE: smaller legend (14 vs 16) for dense
+# scatter legends, smaller suptitle (18 vs 20) for multi-panel t-SNE grids.
+S = dict(PLOT_STYLE, legend_fontsize=14, suptitle_fontsize=18)
 
 
 # ── Feature extraction ───────────────────────────────────────────────

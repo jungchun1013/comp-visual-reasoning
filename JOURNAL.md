@@ -43,6 +43,12 @@
 - E1a done: dinov2_mean last.pt is **epoch 0** (crashed run) — acc 0.218 meaningless; cell marked unrecoverable-without-retrain.
 - Per user instruction, **stopped the E1b batch** (was on checkpoint 1/17) and recorded it as a TODO with a resume command; GPU is now free.
 
+- L4 done (BLENDER_TOOLS_ROOT env override in both render scripts); L5 done (routing lines in both CLAUDE.md files, backups in .claude/backups/; legacy-headwise memory now points at docs/legacy-reference.md §3).
+- P1 done: 3 logical commits on master (configs+training-core / analysis+eval suite / docs+journal+checkpoint_io). Stray root `eval_results.json` (my E1a epoch-0 output) moved to outputs/analysis/metadata/; `/data/` + `/eval_results.json` gitignored.
+- E5 tooling ready: `scripts/analysis/failure_modes.py` (per-question dump → per-family acc, yes/no confusion + prior bias, counting signed-error hist, answer drift; `--stride` for subsampled runs). Runs when GPU frees up.
+- **E7 unblocked**: Blender 3.6.14 smoke render passed (96 single-object images via render_single_objects.py to scratchpad, CPU, ~minutes). Add-object pipeline design next.
+- E7 launched: new `scripts/analysis/render_add_object.py` (reuses render_visual_corruptions helpers; distractor = one described-attr flipped + bait value on queried attr; answer invariance verified by program execution; base re-render controls domain shift) + `add_object_eval.py` (acc_base/acc_added/hallucination_rate/bait_share_of_errors/flip_rate). Color 100 pairs rendering on CPU → outputs/analysis/add_object/color/.
+
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.
 

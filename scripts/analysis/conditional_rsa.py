@@ -49,28 +49,8 @@ from omegaconf import OmegaConf
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 
-# ── Plot style (from legacy plot_style.py) ───────────────────────
-
-S = {
-    "linewidth": 2, "tick_width": 2, "tick_labelsize": 14,
-    "label_fontsize": 16, "legend_fontsize": 16,
-    "subplot_title_fontsize": 18, "marker": "o", "markersize": 6, "dpi": 150,
-}
-
-def apply_style():
-    mpl.rcParams.update({
-        "axes.labelsize": S["label_fontsize"],
-        "axes.titlesize": S["subplot_title_fontsize"],
-        "xtick.labelsize": S["tick_labelsize"],
-        "ytick.labelsize": S["tick_labelsize"],
-        "xtick.major.width": S["tick_width"],
-        "ytick.major.width": S["tick_width"],
-        "legend.fontsize": S["legend_fontsize"],
-        "figure.dpi": S["dpi"], "savefig.dpi": S["dpi"],
-        "savefig.bbox": "tight", "font.family": "sans-serif",
-    })
+from analysis.plot_style import PLOT_STYLE as S, apply_style
 
 
 # ── Chain definitions ────────────────────────────────────────────
@@ -227,7 +207,7 @@ def plot(stats, output_dir):
     colors = CHAIN_SPATIAL_COLORS if is_spatial else CHAIN_DIRECT_COLORS
     gca_layers = stats.get("gca_layers", [1, 3, 5, 7, 9, 11])
 
-    fig, ax = plt.subplots(1, 1, figsize=(6.4, 4.8))
+    fig, ax = plt.subplots(1, 1, figsize=S["subplot_size"])
 
     # Unsteered (dashed)
     unsteered = stats.get("conditional_rsa_unsteered", [])

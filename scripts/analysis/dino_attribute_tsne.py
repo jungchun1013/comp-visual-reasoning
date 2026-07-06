@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import timm
@@ -27,29 +27,15 @@ from sklearn.manifold import TSNE
 from timm.data import resolve_data_config
 from torchvision import transforms
 
-# ── Plot style (match tsne_viz.py) ──────────────────────────────
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-S = {
-    "tick_labelsize": 14,
-    "label_fontsize": 16,
-    "legend_fontsize": 14,
-    "subplot_title_fontsize": 18,
-    "dpi": 150,
-}
+from analysis.plot_style import PLOT_STYLE, apply_style
 
+# ── Plot style ──────────────────────────────────────────────────
 
-def apply_style():
-    mpl.rcParams.update({
-        "axes.labelsize": S["label_fontsize"],
-        "axes.titlesize": S["subplot_title_fontsize"],
-        "xtick.labelsize": S["tick_labelsize"],
-        "ytick.labelsize": S["tick_labelsize"],
-        "legend.fontsize": S["legend_fontsize"],
-        "figure.dpi": S["dpi"],
-        "savefig.dpi": S["dpi"],
-        "savefig.bbox": "tight",
-        "font.family": "sans-serif",
-    })
+# Intentional override vs PLOT_STYLE: smaller legend (14 vs 16) for the
+# dense per-attribute scatter legends (matches tsne_viz.py).
+S = dict(PLOT_STYLE, legend_fontsize=14)
 
 
 # ── CLEVR attribute colors for plotting ─────────────────────────
@@ -158,6 +144,8 @@ def plot_attribute_tsne(emb: np.ndarray, metadata: list[dict],
 # ── Main ────────────────────────────────────────────────────────
 
 def main():
+    apply_style()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--image-dir", required=True)
     parser.add_argument("--metadata", required=True)

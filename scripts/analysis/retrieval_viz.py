@@ -14,41 +14,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import matplotlib as mpl
 import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
-S = {
-    "tick_labelsize": 12,
-    "label_fontsize": 14,
-    "legend_fontsize": 14,
-    "subplot_title_fontsize": 16,
-    "suptitle_fontsize": 16,
-    "dpi": 150,
-}
+from analysis.plot_style import PLOT_STYLE, apply_style
 
-
-def apply_style():
-    mpl.rcParams.update({
-        "axes.labelsize": S["label_fontsize"],
-        "axes.titlesize": S["subplot_title_fontsize"],
-        "xtick.labelsize": S["tick_labelsize"],
-        "ytick.labelsize": S["tick_labelsize"],
-        "legend.fontsize": S["legend_fontsize"],
-        "figure.dpi": S["dpi"],
-        "savefig.dpi": S["dpi"],
-        "savefig.bbox": "tight",
-        "font.family": "sans-serif",
-    })
+# Intentional overrides vs PLOT_STYLE: the image-grid retrieval figure uses
+# smaller text throughout (12/14/16 vs 14/16/18/20) so labels fit the thumbnails.
+S = dict(PLOT_STYLE, tick_labelsize=12, label_fontsize=14, legend_fontsize=14,
+         subplot_title_fontsize=16, suptitle_fontsize=16)
 
 
 def load_image(path, width=150):

@@ -46,8 +46,9 @@ from omegaconf import OmegaConf
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib as mpl
 from matplotlib.lines import Line2D
+
+from analysis.plot_style import PLOT_STYLE, apply_style
 
 
 # ── Reuse model loading & feature extraction from conditional_rsa ─
@@ -405,10 +406,11 @@ def plot_results(results, output_dir):
         ax.legend()
         ax.axhline(y=0, color="gray", linewidth=0.5)
 
+    # Intentional: smaller suptitle than PLOT_STYLE (14 vs 20) for wide 2-panel bar chart
     fig.suptitle(f"Manipulation: {manip_type}", fontsize=14)
     fig.tight_layout()
     out = output_dir / f"manipulation_{manip_type}.png"
-    fig.savefig(str(out), dpi=150, bbox_inches="tight")
+    fig.savefig(str(out), dpi=PLOT_STYLE["dpi"], bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out}")
 
@@ -441,7 +443,7 @@ def plot_retrieval(results, output_dir):
 
     fig.tight_layout()
     out = output_dir / f"retrieval_{manip_type}.png"
-    fig.savefig(str(out), dpi=150, bbox_inches="tight")
+    fig.savefig(str(out), dpi=PLOT_STYLE["dpi"], bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out}")
 
@@ -450,28 +452,15 @@ def plot_retrieval(results, output_dir):
 
 _tab10 = plt.cm.tab10.colors
 
-S_TSNE = {
-    "tick_labelsize": 14, "label_fontsize": 16, "legend_fontsize": 14,
-    "subplot_title_fontsize": 18, "suptitle_fontsize": 18, "dpi": 150,
-}
+# Intentional overrides vs PLOT_STYLE: smaller legend (14 vs 16) and
+# suptitle (18 vs 20) for the t-SNE grids (matches tsne_viz.py).
+S_TSNE = dict(PLOT_STYLE, legend_fontsize=14, suptitle_fontsize=18)
 
 FILL_COLORS = [
     np.array(_tab10[0][:3]),   # blue  — feature binding
     np.array(_tab10[1][:3]),   # orange — object grounding
 ]
 ANSWER_MATCH_COLOR = np.array(_tab10[3][:3])  # red
-
-
-def _apply_tsne_style():
-    mpl.rcParams.update({
-        "axes.labelsize": S_TSNE["label_fontsize"],
-        "axes.titlesize": S_TSNE["subplot_title_fontsize"],
-        "xtick.labelsize": S_TSNE["tick_labelsize"],
-        "ytick.labelsize": S_TSNE["tick_labelsize"],
-        "legend.fontsize": S_TSNE["legend_fontsize"],
-        "figure.dpi": S_TSNE["dpi"], "savefig.dpi": S_TSNE["dpi"],
-        "savefig.bbox": "tight", "font.family": "sans-serif",
-    })
 
 
 def _plot_one_tsne_panel(ax, emb, cond_labels, title_str):
@@ -543,7 +532,7 @@ def plot_manipulation_tsne(steervit, retriever, dataset, device, query, scenes,
       - Show t-SNE of the resulting last-layer features vs clean
     This matches what the decoder sees, unifying t-SNE with val acc measurement.
     """
-    _apply_tsne_style()
+    apply_style()
 
     question = query["question"]
     answer = query["answer"]
@@ -761,7 +750,7 @@ def run_random_control(model, steervit, retriever, dataset, scenes,
     print(f"Saved: {out_path}")
 
     # Plot
-    _apply_tsne_style()
+    apply_style()
     fig, ax = plt.subplots(1, 1, figsize=(8, 5))
     layers_x = list(range(len(test_layers)))
     g_accs = [results[str(l)]["grounding_acc"] for l in test_layers]
@@ -781,7 +770,7 @@ def run_random_control(model, steervit, retriever, dataset, scenes,
     ax.set_ylim(0, 1.05)
 
     out_plot = output_dir / "random_control.png"
-    fig.savefig(str(out_plot), dpi=150, bbox_inches="tight")
+    fig.savefig(str(out_plot), dpi=PLOT_STYLE["dpi"], bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_plot}")
 
@@ -812,6 +801,8 @@ def main():
                    help="Only generate t-SNE plots, skip RSA/acc analysis.")
     p.add_argument("--perplexity", type=float, default=30)
     args = p.parse_args()
+
+    apply_style()
 
     ckpt_dir = Path(args.checkpoint).parent
     model_name = ckpt_dir.name.replace("_s42", "")

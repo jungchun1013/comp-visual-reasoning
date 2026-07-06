@@ -3,6 +3,15 @@
 Vault-root `../CLAUDE.md` has the full environment facts, pre-flight checklists,
 and playbook routing — read it first. This file only holds main/-specific notes.
 
+Before opening `../SteerViT-legacy/`, read `docs/legacy-reference.md` — naming,
+patching methodology, plot style, checkpoint format are all distilled there; the
+legacy tree is needed only for Blender tooling (`BLENDER_TOOLS_ROOT`).
+Paper-number provenance + regenerating commands: `docs/paper_artifacts.md`.
+Results narrative: `RESULTS.md`; generated tables: `docs/results_tables.md`
+(`scripts/analysis/aggregate_results.py`). Journal: `JOURNAL.md` (research-journal
+skill). Checkpoint loading: always `src/model/checkpoint_io.py:load_any_checkpoint`
+— never write a new loader.
+
 ## Environment
 - Python interpreter (absolute — there is NO `.venv` under `main/`):
   `/nfs/turbo/coe-chaijy/jungchun/vault/a-concept/comp-visual-reasoning/SteerViT-legacy/.venv-aspen/bin/python`
