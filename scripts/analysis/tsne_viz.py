@@ -164,7 +164,8 @@ class GCALayerRetriever:
             batch_imgs = torch.stack(
                 [dataset[indices[i]]["image"] for i in range(start, end)]
             ).to(device)
-            feats = self.extract(batch_imgs, questions[start:end])
+            q = questions[start:end] if questions is not None else None
+            feats = self.extract(batch_imgs, q)
             for l in range(self.num_layers):
                 all_feats[l].append(feats[l])
             if end % 200 == 0 or end == N:
@@ -381,14 +382,12 @@ def check_conditions(db_objs, described_attrs, anchor_4attrs, program, gt_answer
     return [binding, grounding, answer_match]
 
 
-# ── Plotting: qtype ─────────────────────────────────────────────────
+# ── Plotting: shared layout ─────────────────────────────────────────
 
-def plot_qtype_tsne(embeddings, qtypes, show_layers, title, output_path):
+def _make_layer_grid(n_panels, ncols=3, cell=2.8):
+    """Create a grid of subplots for per-layer visualization."""
     apply_style()
-    n_layers = len(show_layers)
-    ncols = min(4, n_layers)
-    nrows = (n_layers + ncols - 1) // ncols
-    cell = 2.8
+    nrows = (n_panels + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols,
                              figsize=(cell * ncols + 1, cell * nrows + 1))
     if nrows == 1 and ncols == 1:
@@ -396,6 +395,37 @@ def plot_qtype_tsne(embeddings, qtypes, show_layers, title, output_path):
     if nrows == 1:
         axes = axes.reshape(1, -1)
     axes = axes.flatten()
+    # Hide unused panels
+    for pi in range(n_panels, len(axes)):
+        axes[pi].set_visible(False)
+    return fig, axes
+
+
+def _finish_plot(fig, title, handles, output_path, ncol_legend=3):
+    """Add suptitle, legend, save and close."""
+    fig.suptitle(title, fontsize=S["suptitle_fontsize"])
+    fig.subplots_adjust(hspace=0.08, wspace=0.08, top=0.90, bottom=0.00)
+    fig.legend(handles=handles, loc="upper center",
+               bbox_to_anchor=(0.5, 0.016), ncol=ncol_legend,
+               fontsize=S["legend_fontsize"], frameon=False)
+    fig.savefig(str(output_path), dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {output_path}")
+
+
+def _style_ax(ax, layer_idx):
+    """Apply common axis styling."""
+    ax.set_title(f"L{layer_idx}", fontsize=S["subplot_title_fontsize"])
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_box_aspect(1)
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.5)
+
+
+# ── Plotting: qtype ─────────────────────────────────────────────────
+
+def plot_qtype_tsne(embeddings, qtypes, show_layers, title, output_path):
+    fig, axes = _make_layer_grid(len(show_layers))
 
     qtypes_arr = np.array(qtypes)
     unique_qtypes = sorted(set(qtypes))
@@ -409,14 +439,7 @@ def plot_qtype_tsne(embeddings, qtypes, show_layers, title, output_path):
                        color=QTYPE_COLORS.get(qt, (0.5, 0.5, 0.5)),
                        s=6, alpha=0.6, label=qt if pi == 0 else "",
                        edgecolors="none", rasterized=True)
-        ax.set_title(f"L{l}", fontsize=S["subplot_title_fontsize"])
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.set_box_aspect(1)
-        for spine in ax.spines.values():
-            spine.set_linewidth(1.5)
-
-    for pi in range(len(show_layers), len(axes)):
-        axes[pi].set_visible(False)
+        _style_ax(ax, l)
 
     handles = [
         Line2D([0], [0], marker="o", color="w",
@@ -424,14 +447,7 @@ def plot_qtype_tsne(embeddings, qtypes, show_layers, title, output_path):
                markersize=7, label=qt)
         for qt in unique_qtypes
     ]
-    fig.suptitle(title, fontsize=S["suptitle_fontsize"])
-    fig.subplots_adjust(hspace=0.08, wspace=0.08, top=0.90, bottom=0.00)
-    fig.legend(handles=handles, loc="upper center",
-               bbox_to_anchor=(0.5, 0.016), ncol=3,
-               fontsize=S["legend_fontsize"], frameon=False)
-    fig.savefig(str(output_path), dpi=S["dpi"], bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {output_path}")
+    _finish_plot(fig, title, handles, output_path, ncol_legend=3)
 
 
 # ── Plotting: steered ────────────────────────────────────────────────
@@ -481,48 +497,30 @@ def _plot_steered_axes(ax, emb, labels, db_shapes, query_pt, fill_colors):
     bind_ans = has_binding & answer_mask
     _scatter_shaped(ax, emb, bind_ans, point_colors, 22, db_shapes,
                     edge_color=ANSWER_MATCH_COLOR, edge_width=1.2)
-    # Query star
-    if query_pt is not None:
-        ax.scatter(query_pt[0], query_pt[1], c="gold", s=120, marker="*",
-                   edgecolors="black", linewidths=0.8, zorder=10)
+    # Query star (disabled — query point not needed)
+    # if query_pt is not None:
+    #     ax.scatter(query_pt[0], query_pt[1], c="gold", s=120, marker="*",
+    #                edgecolors="black", linewidths=0.8, zorder=10)
 
 
 def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
                       question, answer, output_path, role=None,
                       fill_colors=None):
     """Plot steered t-SNE with condition coloring."""
-    apply_style()
     if fill_colors is None:
         fill_colors = FILL_COLORS
 
-    n_plot = len(show_layers)
-    ncols = 3
-    nrows = (n_plot + ncols - 1) // ncols
-    cell = 2.8
-    fig, axes = plt.subplots(nrows, ncols,
-                             figsize=(cell * ncols + 1, cell * nrows + 1))
-    if nrows == 1 and ncols == 1:
-        axes = np.array([axes])
-    if nrows == 1:
-        axes = axes.reshape(1, -1)
-    axes = axes.flatten()
+    fig, axes = _make_layer_grid(len(show_layers))
 
     for pi, l in enumerate(show_layers):
         ax = axes[pi]
         _plot_steered_axes(ax, embeddings[l], labels, db_shapes,
                            query_emb.get(l), fill_colors)
-        ax.set_title(f"L{l}", fontsize=S["subplot_title_fontsize"])
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.set_box_aspect(1)
-        for spine in ax.spines.values():
-            spine.set_linewidth(2)
-
-    for pi in range(n_plot, len(axes)):
-        axes[pi].set_visible(False)
+        _style_ax(ax, l)
 
     gray_rgba = (0.75, 0.75, 0.75)
     role_prefix = f"{role} " if role else ""
-    legend_handles = [
+    handles = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
                markersize=7, label="None"),
         Line2D([0], [0], marker="o", color="w",
@@ -539,14 +537,7 @@ def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
     q_short = question[:65] + "..." if len(question) > 65 else question
     title = f"[{role}] {q_short}  →  {answer}" if role else \
             f"{q_short}  →  {answer}"
-    fig.suptitle(title, fontsize=S["suptitle_fontsize"])
-    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.90, bottom=0.00)
-    fig.legend(handles=legend_handles, loc="upper center",
-               bbox_to_anchor=(0.5, 0.016), ncol=2,
-               fontsize=S["legend_fontsize"], frameon=False)
-    fig.savefig(str(output_path), dpi=S["dpi"], bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved: {output_path}")
+    _finish_plot(fig, title, handles, output_path, ncol_legend=2)
 
 
 # ── Plotting: cross_model ───────────────────────────────────────────
@@ -736,7 +727,9 @@ def run_steered(args, device):
     else:
         output_dir = Path("outputs/analysis/tsne") / run_name / sub_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = output_dir / f"cache_q{qi}.npz"
+    no_ca = getattr(args, "no_ca", False)
+    cache_suffix = "_noca" if no_ca else ""
+    cache_path = output_dir / f"cache_q{qi}{cache_suffix}.npz"
 
     if not args.replot:
         # Sample DB
@@ -774,24 +767,31 @@ def run_steered(args, device):
         print(f"Anchor: {dict(zip(cond_names, labels.sum(axis=0).tolist()))}")
 
         # Extract features
-        print("Extracting DB features...", flush=True)
-        db_questions = [question] * N
-        db_answer_indices = [ANSWER_TO_IDX.get(gt_answer, 0)] * N
-        db_feats = retriever.extract_batched(
-            dataset, db_indices, db_questions, device,
-            batch_size=args.batch_size,
-            answer_indices=db_answer_indices, vocab=vocab)
+        if no_ca:
+            print("Extracting DB features (no-CA)...", flush=True)
+            db_feats = retriever.extract_batched(
+                dataset, db_indices, None, device,
+                batch_size=args.batch_size)
+        else:
+            print("Extracting DB features...", flush=True)
+            db_questions = [question] * N
+            db_answer_indices = [ANSWER_TO_IDX.get(gt_answer, 0)] * N
+            db_feats = retriever.extract_batched(
+                dataset, db_indices, db_questions, device,
+                batch_size=args.batch_size,
+                answer_indices=db_answer_indices, vocab=vocab)
 
         print("Extracting query features...", flush=True)
         query_img = dataset[query_dataset_idx]["image"].unsqueeze(0).to(device)
-        if model_type == "mot":
+        q_text = None if no_ca else [question]
+        if model_type == "mot" and not no_ca:
             from trainer import _answers_to_decoder_ids
             q_ans = torch.tensor(
                 [ANSWER_TO_IDX.get(gt_answer, 0)], dtype=torch.long, device=device)
             q_ans_ids = _answers_to_decoder_ids(q_ans, vocab)
             query_feats = retriever.extract(query_img, [question], answer_ids=q_ans_ids)
         else:
-            query_feats = retriever.extract(query_img, [question])
+            query_feats = retriever.extract(query_img, q_text)
         query_feats = {l: query_feats[l][0].cpu() for l in range(retriever.num_layers)}
 
         # Save cache (backward compat: write both show_layers and gca_layers)
@@ -848,23 +848,24 @@ def run_steered(args, device):
         print(f"  L{l} done")
 
     # Plot
+    tag = "unsteered" if no_ca else "steered"
     if not has_target:
         plot_steered_tsne(
             embeddings, labels, db_shapes, show_layers, query_emb,
             question, gt_answer,
-            output_dir / f"tsne_steered_q{qi}.png",
+            output_dir / f"tsne_{tag}_q{qi}.png",
         )
     else:
         plot_steered_tsne(
             embeddings, labels, db_shapes, show_layers, query_emb,
             question, gt_answer,
-            output_dir / f"tsne_steered_q{qi}_anchor.png",
+            output_dir / f"tsne_{tag}_q{qi}_anchor.png",
             role="Anchor", fill_colors=ANCHOR_FILL_COLORS,
         )
         plot_steered_tsne(
             embeddings, target_labels, db_shapes, show_layers, query_emb,
             question, gt_answer,
-            output_dir / f"tsne_steered_q{qi}_target.png",
+            output_dir / f"tsne_{tag}_q{qi}_target.png",
             role="Target", fill_colors=TARGET_FILL_COLORS,
         )
 
@@ -987,6 +988,8 @@ def main():
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--replot", action="store_true")
     parser.add_argument("--compute-only", action="store_true")
+    parser.add_argument("--no-ca", action="store_true",
+                        help="Extract features without text (no cross-attention)")
     # qtype args
     parser.add_argument("--n-samples", type=int, default=500)
     # steered args
