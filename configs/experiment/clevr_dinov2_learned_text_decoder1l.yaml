@@ -1,18 +1,16 @@
 # @package _global_
 defaults:
-  - override /model: siglip
+  - override /model: dinov2_learned_text
   - override /data: clevr
-  - override /task: classification
+  - override /task: decoder
   - override /training: default
 
 data:
   val_batch_size: 512
 
 task:
-  num_answers: 28
-
-wandb:
-  name: clevr_siglip_cls_scratch
+  decoder:
+    num_layers: 1
 
 training:
   epochs: 16

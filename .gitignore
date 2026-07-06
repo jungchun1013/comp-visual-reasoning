@@ -6,3 +6,5 @@ __pycache__/
 *.log
 .env*
 wandb/
+/data/
+/eval_results.json

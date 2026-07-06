@@ -1,27 +1,25 @@
 # @package _global_
+# Ablation: No GCA — pure DINOv2 backbone, no text conditioning
 defaults:
   - override /model: steervit_dino
   - override /data: clevr
-  - override /task: classification
+  - override /task: decoder
   - override /training: default
 
 model:
   checkpoint: null
   cross_attn_layers: [1, 3, 5, 7, 9, 11]
   resolution: 336
-  use_steering: true
-  feature_pool: cls
   unfreeze_gca: true
   unfreeze_connector: true
+  use_steering: false
 
 data:
   val_batch_size: 512
 
 task:
-  num_answers: 28
-
-wandb:
-  name: clevr_dinov2_cls_scratch
+  decoder:
+    num_layers: 1
 
 training:
   epochs: 16

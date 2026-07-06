@@ -1,0 +1,21 @@
+# @package _global_
+defaults:
+  - override /model: siglip
+  - override /data: gqa
+  - override /task: decoder
+  - override /training: default
+
+data:
+  batch_size: 32
+  val_batch_size: 256
+
+task:
+  decoder:
+    num_layers: 1
+  max_answers: 1500
+
+training:
+  epochs: 20
+
+wandb:
+  name: gqa_siglip_decoder1l_scratch

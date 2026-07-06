@@ -80,16 +80,19 @@ class GatedCrossAttention(nn.Module):
         use_ffn,
         head_dim=72,
         num_heads=16,
+        use_gate=True,
     ):
         super().__init__()
         self.layer_idx = layer_idx
-        
+
         self.cross_attn = MaskedCrossAttention(
-            dim, 
+            dim,
             head_dim,
             num_heads,
         )
-        self.attn_gate = nn.Parameter(torch.tensor([0.0]))
+        self.use_gate = use_gate
+        if self.use_gate:
+            self.attn_gate = nn.Parameter(torch.tensor([0.0]))
 
         self.use_ffn = use_ffn
         if use_ffn:
@@ -97,19 +100,55 @@ class GatedCrossAttention(nn.Module):
             self.ff_gate = nn.Parameter(torch.tensor([0.0]))
 
     def forward(self, x, text_feats, attn_mask):
-        
-        attn_gate = self.attn_gate.tanh()
-        x = x + attn_gate * (
-            self.cross_attn(
-                x,
-                text_feats,
-                attn_mask = attn_mask
-            )
-        )
+
+        ca_out = self.cross_attn(x, text_feats, attn_mask=attn_mask)
+        if self.use_gate:
+            x = x + self.attn_gate.tanh() * ca_out
+        else:
+            x = x + ca_out
             
         if self.use_ffn:        
             ff_gate = self.ff_gate.tanh()
             x = x + (ff_gate * self.ff(x))
+        return x
+
+
+class FiLMCondition(nn.Module):
+    """FiLM-style conditioning: x = x + tanh(gate) * (γ(text) * x + β(text))"""
+
+    def __init__(self, layer_idx, dim, ff_mult=2, use_ffn=False, **kwargs):
+        super().__init__()
+        self.layer_idx = layer_idx
+
+        self.norm = nn.LayerNorm(dim)
+        self.to_gamma = nn.Linear(dim, dim)
+        self.to_beta = nn.Linear(dim, dim)
+        self.film_gate = nn.Parameter(torch.tensor([0.0]))
+
+        # Init gamma to 1, beta to 0 (identity at start)
+        nn.init.ones_(self.to_gamma.weight)
+        nn.init.zeros_(self.to_gamma.bias)
+        nn.init.zeros_(self.to_beta.weight)
+        nn.init.zeros_(self.to_beta.bias)
+
+        self.use_ffn = use_ffn
+        if use_ffn:
+            self.ff = FeedForward(dim, mult=ff_mult)
+            self.ff_gate = nn.Parameter(torch.tensor([0.0]))
+
+    def forward(self, x, text_feats, attn_mask):
+        # Pool text features: (B, T, dim) → (B, dim)
+        text_pool = self.norm(text_feats.mean(dim=1))
+
+        gamma = self.to_gamma(text_pool).unsqueeze(1)  # (B, 1, dim)
+        beta = self.to_beta(text_pool).unsqueeze(1)     # (B, 1, dim)
+
+        gate = self.film_gate.tanh()
+        x = x + gate * (gamma * x + beta)
+
+        if self.use_ffn:
+            ff_gate = self.ff_gate.tanh()
+            x = x + ff_gate * self.ff(x)
         return x
 
 

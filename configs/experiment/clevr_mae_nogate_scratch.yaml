@@ -1,27 +1,28 @@
 # @package _global_
+# Ablation: MAE + GCA without tanh gating
 defaults:
-  - override /model: steervit_dino
+  - override /model: steervit_mae
   - override /data: clevr
-  - override /task: classification
+  - override /task: decoder
   - override /training: default
 
 model:
   checkpoint: null
   cross_attn_layers: [1, 3, 5, 7, 9, 11]
-  resolution: 336
-  use_steering: true
-  feature_pool: cls
+  resolution: 224
   unfreeze_gca: true
   unfreeze_connector: true
+  use_gate: false
 
 data:
-  val_batch_size: 512
+  val_batch_size: 128
 
 task:
-  num_answers: 28
+  decoder:
+    num_layers: 1
 
 wandb:
-  name: clevr_dinov2_cls_scratch
+  name: clevr_mae_nogate_scratch
 
 training:
   epochs: 16

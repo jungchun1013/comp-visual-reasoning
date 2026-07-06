@@ -33,18 +33,29 @@ class CrossAttnViT(nn.Module):
         
         #### Load Language Model ####
         text_encoder = config['text_encoder']
-        if "roberta" in text_encoder.lower():
+        self.text_encoder_type = text_encoder
+        self._word_vocab = None
+        self._word_embedding = None
+
+        if text_encoder == "learned":
+            # Shallow trainable word embedding (no pretrained text model)
+            import re
+            from collections import Counter
+            self.tokenizer = None
+            self.text_model = None
+            self.connector = None
+            self.text_dim = self.visual_dim  # embed directly to visual dim
+        elif "roberta" in text_encoder.lower():
             from transformers import RobertaTokenizer, RobertaModel
             self.tokenizer = RobertaTokenizer.from_pretrained(text_encoder)
             self.text_model = RobertaModel.from_pretrained(text_encoder).eval()
             self.text_dim = self.text_model.config.hidden_size
+            for p in self.text_model.parameters():
+                p.requires_grad = False
+            #### Load Language-Image Connector ####
+            self.connector = Connector(self.text_dim, self.visual_dim)
         else:
             raise NotImplementedError(f"Text encoder {text_encoder} currently not implemented")
-        for p in self.text_model.parameters():
-            p.requires_grad = False
-
-        #### Load Language-Image Connector ####
-        self.connector = Connector(self.text_dim, self.visual_dim)
 
         #### Load Segmentation Head ####
         self.lin_seg_head = nn.Linear(self.visual_dim, 1, bias = True)
@@ -52,11 +63,14 @@ class CrossAttnViT(nn.Module):
         nn.init.constant_(self.lin_seg_head.bias, 0)
 
     def to(self, device):
-        # super().to(device)
-        self.text_model = self.text_model.to(device)
         self.vision_model = self.vision_model.to(device)
-        self.connector = self.connector.to(device)
         self.lin_seg_head = self.lin_seg_head.to(device)
+        if self.text_model is not None:
+            self.text_model = self.text_model.to(device)
+        if self.connector is not None:
+            self.connector = self.connector.to(device)
+        if self._word_embedding is not None:
+            self._word_embedding = self._word_embedding.to(device)
         self._device = device
         return self
     
@@ -90,7 +104,9 @@ class CrossAttnViT(nn.Module):
 
     @classmethod
     def from_config(cls, backbone_name, device=None, cross_attn_layers=None,
-                    resolution=336, feature_aggregation=None, pretrained=True):
+                    resolution=336, feature_aggregation=None, pretrained=True,
+                    condition_type="gca", use_gate=True,
+                    text_encoder="roberta-large"):
         """Initialize from backbone name (no pretrained GCA).
 
         Args:
@@ -123,8 +139,10 @@ class CrossAttnViT(nn.Module):
                 "use_ffn": False,
                 "cross_attn_ffn_mult": 2,
                 "pretrained": pretrained,
+                "condition_type": condition_type,
+                "use_gate": use_gate,
             },
-            "text_encoder": "roberta-large",
+            "text_encoder": text_encoder,
         }
         model = cls(config)
         for param in model.parameters():
@@ -158,14 +176,72 @@ class CrossAttnViT(nn.Module):
         ])
         return transform
 
+    def _init_word_embedding(self, data_root=None):
+        """Lazily initialize learned word embedding from CLEVR vocab."""
+        import re
+        from collections import Counter
+
+        if data_root is None:
+            data_root = "/home/jungchun/data/clevr/CLEVR_v1.0"
+
+        vocab = {"<pad>": 0, "<unk>": 1}
+        q_path = os.path.join(data_root, "questions", "CLEVR_train_questions.json")
+        import json
+        with open(q_path) as f:
+            q_data = json.load(f)
+        for q in q_data["questions"]:
+            words = re.findall(r"[a-z0-9]+", q["question"].lower())
+            for w in words:
+                if w not in vocab:
+                    vocab[w] = len(vocab)
+
+        self._word_vocab = vocab
+        self._word_embedding = nn.Embedding(len(vocab), self.visual_dim,
+                                            padding_idx=0).to(self._device)
+
+    def _tokenize_words(self, texts: list[str]):
+        """Tokenize texts to word IDs with padding."""
+        import re
+        if self._word_vocab is None:
+            self._init_word_embedding()
+
+        pad_id = self._word_vocab["<pad>"]
+        unk_id = self._word_vocab["<unk>"]
+        all_ids = []
+        for t in texts:
+            words = re.findall(r"[a-z0-9]+", t.lower())
+            ids = [self._word_vocab.get(w, unk_id) for w in words]
+            all_ids.append(ids)
+
+        max_len = max(len(ids) for ids in all_ids)
+        padded = torch.full((len(texts), max_len), pad_id, dtype=torch.long,
+                            device=self._device)
+        mask = torch.zeros(len(texts), max_len, dtype=torch.bool,
+                           device=self._device)
+        for i, ids in enumerate(all_ids):
+            padded[i, :len(ids)] = torch.tensor(ids, dtype=torch.long)
+            mask[i, :len(ids)] = True
+        return padded, mask
+
     def encode_text(self, texts: list[str]):
         """Encode text to conditioning space.
 
         Returns:
             text_feats: (B, T, visual_dim) projected text features for GCA.
             attn_mask: (B, num_img_tokens + T) attention mask with image prefix.
-            raw_text_feats: (B, T, text_dim) raw RoBERTa outputs (for downstream heads).
+            raw_text_feats: (B, T, text_dim) raw text outputs.
         """
+        if self.text_encoder_type == "learned":
+            # Shallow trainable word embedding
+            token_ids, word_mask = self._tokenize_words(texts)
+            text_feats = self._word_embedding(token_ids)  # (B, T, visual_dim)
+            attn_mask = torch.cat(
+                (torch.ones(text_feats.size(0), self.num_img_tokens,
+                            dtype=torch.bool, device=word_mask.device),
+                 word_mask), dim=-1)
+            return text_feats, attn_mask, text_feats
+
+        # RoBERTa path
         roberta_dict = self.tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors='pt')
         roberta_dict = {k: v.to(self.text_model.device) for k, v in roberta_dict.items()}
         raw_text_feats = self.text_model(**roberta_dict).last_hidden_state

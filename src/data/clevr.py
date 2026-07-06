@@ -47,14 +47,17 @@ class CLEVRVQADataset(Dataset):
         transform=None,
         use_oracle: bool = False,
         max_samples: int | None = None,
+        questions_file: str | Path | None = None,
+        image_dir: str | Path | None = None,
     ):
         self.root = Path(root)
         self.split = split
         self.transform = transform
         self.use_oracle = use_oracle
-        self.image_dir = self.root / "images" / split
+        self.image_dir = Path(image_dir) if image_dir else self.root / "images" / split
 
-        q_path = self.root / "questions" / f"CLEVR_{split}_questions.json"
+        q_path = Path(questions_file) if questions_file else \
+            self.root / "questions" / f"CLEVR_{split}_questions.json"
         with open(q_path) as f:
             q_data = json.load(f)
         self.questions = q_data["questions"]

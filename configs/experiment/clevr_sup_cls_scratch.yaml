@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /model: siglip
+  - override /model: steervit_sup
   - override /data: clevr
   - override /task: classification
   - override /training: default
@@ -12,7 +12,7 @@ task:
   num_answers: 28
 
 wandb:
-  name: clevr_siglip_cls_scratch
+  name: clevr_sup_cls_scratch
 
 training:
   epochs: 16

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import types
 import timm
-from model.crossattention import GatedCrossAttention, attn_forward_wrapper
+from model.crossattention import GatedCrossAttention, FiLMCondition, attn_forward_wrapper
 
 
 def block_forward(self, x):
@@ -51,15 +51,24 @@ class ViTBackbone(nn.Module):
         self.trunk.attn_pool = None
         self.trunk.forward_features = types.MethodType(forward_features, self.trunk) #self -> timm.VisionTransformer
 
+        condition_type = config.get("condition_type", "gca")
         for layer_idx, blk in enumerate(self.trunk.blocks):
             #each block's a diff object
             blk.forward = types.MethodType(block_forward, blk)
             if (layer_idx in config["cross_attn_layers"]):
-                blk.gated_cross_attn = GatedCrossAttention(layer_idx, 
-                                                        dim=self.trunk.embed_dim,
-                                                        ff_mult=config["cross_attn_ffn_mult"],
-                                                        use_ffn=config["use_ffn"],
-                                                        )
+                if condition_type == "film":
+                    blk.gated_cross_attn = FiLMCondition(
+                        layer_idx, dim=self.trunk.embed_dim,
+                        ff_mult=config["cross_attn_ffn_mult"],
+                        use_ffn=config["use_ffn"],
+                    )
+                else:
+                    blk.gated_cross_attn = GatedCrossAttention(
+                        layer_idx, dim=self.trunk.embed_dim,
+                        ff_mult=config["cross_attn_ffn_mult"],
+                        use_ffn=config["use_ffn"],
+                        use_gate=config.get("use_gate", True),
+                    )
             else:
                 blk.gated_cross_attn = None
             blk.attn.forward = types.MethodType(attn_forward_wrapper, blk.attn)

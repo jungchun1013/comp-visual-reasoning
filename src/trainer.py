@@ -55,7 +55,8 @@ def train_one_epoch(
     raw = model.module if hasattr(model, "module") else model
     if hasattr(raw, "steervit"):
         raw.steervit.vision_model.eval()
-        raw.steervit.text_model.eval()
+        if raw.steervit.text_model is not None:
+            raw.steervit.text_model.eval()
 
     total_loss = 0.0
     total_correct = 0

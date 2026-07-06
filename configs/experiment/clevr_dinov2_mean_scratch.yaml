@@ -1,4 +1,5 @@
 # @package _global_
+# DINOv2 + GCA + mean pool classifier (instead of CLS token)
 defaults:
   - override /model: steervit_dino
   - override /data: clevr
@@ -10,7 +11,7 @@ model:
   cross_attn_layers: [1, 3, 5, 7, 9, 11]
   resolution: 336
   use_steering: true
-  feature_pool: cls
+  feature_pool: mean
   unfreeze_gca: true
   unfreeze_connector: true
 
@@ -21,7 +22,7 @@ task:
   num_answers: 28
 
 wandb:
-  name: clevr_dinov2_cls_scratch
+  name: clevr_dinov2_mean_scratch
 
 training:
   epochs: 16

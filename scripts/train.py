@@ -45,12 +45,18 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
         resolution = cfg.model.get("resolution", 224)
         feature_pool = cfg.model.get("feature_pool", None)
         pretrained = cfg.model.get("pretrained", True)
-        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}, pretrained={pretrained}")
+        condition_type = cfg.model.get("condition_type", "gca")
+        use_gate = cfg.model.get("use_gate", True)
+        text_encoder = cfg.model.get("text_encoder", "roberta-large")
+        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}, pretrained={pretrained}, cond={condition_type}, gate={use_gate}, text={text_encoder}")
         steervit = CrossAttnViT.from_config(backbone, device=device,
                                          cross_attn_layers=cross_attn_layers,
                                          resolution=resolution,
                                          feature_aggregation=feature_pool,
-                                         pretrained=pretrained)
+                                         pretrained=pretrained,
+                                         condition_type=condition_type,
+                                         use_gate=use_gate,
+                                         text_encoder=text_encoder)
     else:
         checkpoint = cfg.model.checkpoint
         log.info(f"CrossAttnViT from_pretrained: {checkpoint}")
@@ -85,12 +91,14 @@ def build_dataloaders(cfg: DictConfig, transform):
     if dataset_name == "clevr":
         from data.clevr import CLEVRVQADataset, clevr_collate_fn
         use_oracle = cfg.model.get("use_oracle", False)
+        train_split = cfg.data.get("train_split", "train")
+        val_split = cfg.data.get("val_split", "val")
         train_dataset = CLEVRVQADataset(
-            cfg.data.root, "train", transform, use_oracle=use_oracle,
+            cfg.data.root, train_split, transform, use_oracle=use_oracle,
             max_samples=cfg.data.get("max_train_samples"),
         )
         val_dataset = CLEVRVQADataset(
-            cfg.data.root, "val", transform, use_oracle=use_oracle,
+            cfg.data.root, val_split, transform, use_oracle=use_oracle,
             max_samples=cfg.data.get("max_val_samples"),
         )
         collate_fn = clevr_collate_fn
@@ -190,7 +198,8 @@ def main(cfg: DictConfig):
         model = model.to(device)
 
         # Lazy text encoding cache (saves ~23% of forward time from epoch 2+)
-        if cfg.get("text_cache", True):
+        # Not applicable for learned text encoder (no RoBERTa to cache)
+        if cfg.get("text_cache", True) and cfg.model.get("text_encoder", "roberta-large") != "learned":
             from text_cache import TextCache
             text_cache = TextCache(steervit, max_size=cfg.get("text_cache_size", 200_000))
             raw = model.module if hasattr(model, "module") else model
@@ -269,7 +278,7 @@ def main(cfg: DictConfig):
 
         elapsed = time.time() - t0
         cache_info = ""
-        if task_type not in ("transfusion", "mot") and cfg.get("text_cache", True) and text_cache.cache_size > 0:
+        if task_type not in ("transfusion", "mot") and text_cache is not None and text_cache.cache_size > 0:
             cache_info = f" | Cache: {text_cache.cache_size:,} keys, {text_cache.hit_rate:.0%} hit"
         log.info(f"Epoch {epoch} | Loss: {train_metrics['train_loss']:.4f} | "
                  f"Acc: {train_metrics['train_acc']:.4f} | Time: {elapsed:.1f}s{cache_info}")
