@@ -183,13 +183,28 @@ Pre-registered hypotheses (docs/paper_v2_outline.md):
   0.92+ at 13+) — a pure composition artifact: deep buckets are dominated by
   single-chain query_attribute, mid buckets by multi-referent types.
 
-v2 wording: "Program depth costs nothing when the program narrows a single referent
-set; accuracy is set by how many referent sets must be independently bound and then
-combined (two counts, a union, an intersection). This locates the bottleneck in the
-query mechanism — one query binds one referent set — rather than in language
-understanding of long programs." Bridges to MAE's EqAttr collapse (§5) and A6
-substitutivity-vs-systematicity framing. GCA-decoder E5 pending (same diagnosis will
-be run for cross-readout consistency).
+**Autonomous-diagnosis follow-up — relations are free for localization, costly for
+enumeration** (same records.jsonl, question-text stratification):
+
+- Deep query_attribute chains (depth ≥18, 3–4 spatial hops, e.g. "the tiny gray object
+  left of the tiny green ball in front of the small gray thing that is left of…"):
+  **acc 0.992 (n=498)**. Relational-chain *localization of one object* is at ceiling.
+- Single-set count stratified by number of spatial relations: 0 rel 0.982 → 1 rel
+  0.789 → 2 rel 0.767 → 3 rel 0.656. The SAME relation vocabulary that costs nothing
+  in query_attribute collapses counting — because there the relation defines a
+  *region* (a half-plane of variable cardinality) whose members must all be bound,
+  not a stepping stone to one object.
+- count substructure: single-set chain 0.929 > union (either/or) 0.763 > intersection
+  0.662. equal_attribute by relations: 0 rel 0.976 → 2 rel 0.819.
+
+Refined v2 wording: "Difficulty is set by the cardinality of what a query step must
+bind: one object (ceiling accuracy at any program depth), a variable-size set to
+enumerate (each relational region-constraint compounds the cost), or several sets to
+be enumerated and combined (worst). Program depth and relational vocabulary per se
+cost nothing — the bottleneck is the query mechanism's one-referent-at-a-time
+binding, not language understanding of long or relational programs." Bridges to MAE's
+EqAttr collapse (§5) and A6 substitutivity-vs-systematicity framing. GCA-decoder E5
+pending (same diagnosis will be run for cross-readout consistency).
 
 ## 8–10. E3, E4, E7, E8, E10 — pending
 
