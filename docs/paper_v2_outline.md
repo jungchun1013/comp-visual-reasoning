@@ -121,6 +121,64 @@ concat main + GCA-decoder (per-family tables, confusion, signed count errors).
 
 ---
 
+## A6 (pre-registered 2026-07-05) — Compositionality taxonomy & the understanding-vs-query decomposition
+
+User framing (verbatim intent): the architecture achieves **substitutivity**;
+**systematicity** and **productivity** lean on language understanding; and since our
+"visual reasoning" = *querying language to adjust visual representations*, CLOSURE
+failures must be attributed to either **(i) understanding** (frozen encoder cannot
+compose the novel template) or **(ii) query limitation** (representation fine; the
+learned GCA query/routing is template-specialized and cannot express the novel
+composition).
+
+Taxonomy mapping:
+- **Substitutivity ✅**: CoGenT zs 89.5 (novel attribute pairings), perturbation
+  triad (value swaps repaired head-locally), E7 (referent stability under scene edits).
+- **Systematicity**: CLOSURE (template recombination) — currently zs 0.579 / ft-all
+  0.703; per-type worst = compare_* (0.62–0.67).
+- **Productivity**: accuracy-vs-program-depth axis (now recorded per-question in E5's
+  `per_depth`). Note: CLEVR val depth is within the training distribution — this
+  measures within-distribution depth robustness; true beyond-depth productivity needs
+  generated deeper questions (future work, one line in limitations).
+
+### Discriminating experiments for (i) understanding vs (ii) query limitation
+
+| # | Test | Verdict rule | Cost |
+|---|---|---|---|
+| T1 | **Text-side probe transfer** (encoder only, no vision): train probes on CLEVR-template sentence reprs to decode program structure (queried attr, anchor attrs, relation, comparison type); test on CLOSURE sentences | transfer holds → understanding intact → (ii); breaks → (i) | tiny (CPU-class) |
+| T2 | **Encoder capacity axis**: learned-text → RoBERTa-L → t5-large → t5-xl (param-matched at the low end), eval IID + Humans-zs + CLOSURE-zs per type | CLOSURE flat across capacity → (ii); rises → (i) partial | 2–3 training runs |
+| T3 | **Freeze-mode CLOSURE recovery**: closure ft with connector-only vs gca+connector vs all (ft_all=0.703 exists; other two are cheap) | connector-only recovers most → interface remap suffices, understanding fine → (ii) at the encoder→query interface; needs GCA → routing itself template-specialized | 2 short ft runs |
+| T4 | **Binding-stage inspection on CLOSURE items**: do binding heads land on the correct referents for novel templates (attention maps / patching vs matched CLEVR questions)? | mislands → (ii) at Binding; lands correctly but answer wrong → break downstream, links to H1 compare-chain | analysis-only |
+
+Pre-registered predictions: T1 transfers (understanding intact); T2 CLOSURE mostly
+flat except embed_* (+3–5) with compare_* immobile (±1); T3 connector-only recovers
+a large fraction of ft_all's gain; T4 binding lands correctly on embed_*, breaks on
+compare_* → overall verdict "query/routing limitation, concentrated at the
+two-referent comparison chain" (consistent with H1). If T1 breaks instead, A6 flips
+to an understanding-bottleneck story and T2's capacity axis becomes the headline.
+
+### T5-vs-RoBERTa pre-registration (capacity axis, controlled)
+Fixed grounding architecture; text encoder ∈ {learned (24.6 ✅), roberta-large
+(92.4 ✅), t5-large-encoder (~335M, param-matched), t5-xl-encoder, (opt) flan-t5-xl}.
+Predictions: IID saturates at roberta (≤1pt differences); Humans-zs rises with
+capacity; convergence speed + binding-head sharpness favor T5 (its encoder was
+consumed by cross-attention during pretraining — "CA-ready" K/V); CLOSURE per §A6.
+Mechanistic add-on: compare binding-head concentration across encoders.
+
+### Baseline reframe (X14 → mechanism-transfer baselines; Transfusion has NO public weights anywhere — dropped)
+- **I2T zero-shot mechanism analysis (priority)**: OpenFlamingo-9B/3B (open licenses;
+  gated CA same lineage as ours) — port patching/RSA onto its GCA; question: do
+  binding-head-like structures exist zero-shot in scale-pretrained CA? If yes, the
+  mechanism is a general property of language conditioning, not a CLEVR-training
+  artifact (kills the overfit objection).
+- **T2I analysis**: PixArt-Σ (DiT 0.6B + frozen T5) — DIFT-style small-t feature
+  extraction; (a) per-block probing on the 3 attr_query categories, (b) frozen
+  1-layer decoder readout (Table-1-protocol comparable), (c) cross-attn map
+  localization on the referent (zero-shot Binding evidence). Caveat: questions ≠
+  captions (domain mismatch, state in text).
+- Scale disclosure: OpenFlamingo CA ≈1.3B vs ours ≈0.1B — comparison axis is
+  *origin of cross-attention*, not parameter-matched performance.
+
 ## Number-consistency rules (from R0 — apply to every draft revision)
 
 1. Every number in the paper must match a row in `docs/paper_artifacts.md`; new
