@@ -116,6 +116,13 @@ which is the A3 "all three components necessary" claim with mechanism-level sign
    stored windowed acc says 0.4667 — one more reason the paper cell must come from the
    last-epoch rerun (registry D2 action item, still open).
 
+D2 lastep rerun (landed 03:51,
+`generalization/clevr_dinov2_learned_text_decoder1l_lastep_s42.json`): last.pt(ep15)
+independent eval = **0.1974** — same qualitative collapse (QryAttr 0.000, Count 0.003,
+binary types at chance ~0.48). The paper cell 24.6 therefore matches only the
+training-loop log (0.2456), not the independent protocol (0.197). Camera-ready needs
+either a footnote (protocol difference) or renumbering to 19.7 — user decision (TODO).
+
 **Findings (Fable interpretation):**
 1. **A3.2 prediction partially wrong — sup-ViT's concat deficit is UNIFORM, not
    Count/CmpInt-concentrated** (loses ~5pts on every type incl. QryAttr 0.940 vs
@@ -218,7 +225,36 @@ no +142 / yes −142; yes/no acc 0.879 vs 0.908) — autoregressive calibration 
 slightly worse, still nowhere near H2 collapse; (b) zero non-numeric outputs on
 counting — the decoder's answer vocabulary is well-behaved.
 
-## 8–10. E3, E4, E7, E8, E10 — pending
+## 8. Add-object hallucination (E7) — landed 03:51
 
-Placeholders: E3 SigLIP patching · E4 GCA-decoder probe/RSA · E7 add-object
-hallucination · E8 raw-backbone substrate · E10 2-stage replots.
+Artifacts: `outputs/analysis/add_object/<attr>/add_object_eval_clevr_dinov2_concat_decoder1l_scratch_s42.json`
+(n=100 pairs/attr; distractor = one described-attr flipped + bait value on the queried
+attr; answer invariance verified by program execution; base re-render controls the
+render-domain shift).
+
+| queried attr | acc_base | acc_added | hallucination_rate | bait_share_of_errors | flip_rate |
+|---|---|---|---|---|---|
+| color | 0.98 | 0.97 | 0.02 | 0.67 | 0.02 |
+| material | 1.00 | 1.00 | 0.00 | — (0 errors) | 0.00 |
+| shape | 1.00 | 0.98 | 0.01 | 0.50 | 0.02 |
+| size | 0.90 | 0.94 | 0.06 | 1.00 | 0.04 |
+
+**Finding (reframes A1's bottleneck story): trained binding fixation is ROBUST.**
+An adversarial lure that matches the description except one attribute and carries a
+bait value on the queried attribute captures the query in ≤6% of cases; accuracy
+moves ≤2 pts (size +4 is n=100 noise). The few errors that DO occur are bait-shaped
+(bait_share 0.5–1.0), so the failure mode exists — it is just rare. Size is the
+weakest attribute throughout (lowest acc_base 0.90, highest hallucination 0.06 —
+consistent with size being the least separable probe attribute).
+
+v2 wording: the multi-object "fixation" problem the paper motivated A1 with is
+*solved by the trained grounding mechanism* for direct queries; the remaining
+multi-object bottleneck is set enumeration/combination (E5, §7). Whether the RAW
+substrate (before language conditioning) has the fixation problem is exactly what E8
+adjudicates — if raw probes confuse objects that trained binding separates, the
+grounding mechanism is what fixes fixation, completing the A1→A2 arc.
+
+## 9–10. E3, E4, E8, E10 — pending
+
+Placeholders: E3 SigLIP patching (running) · E4 GCA-decoder probe/RSA (probe done,
+RSA running) · E8 raw-backbone substrate · E10 grounding_manipulation replots.
