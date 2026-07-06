@@ -89,7 +89,32 @@ s42 best.pt = final epoch except learned_text, see registry D2).
 | mae | 0.748 | 0.921 | **0.586** | 0.777 | 0.603 | 0.718 |
 
 cls rows: dinov2 0.901 / siglip 0.847 / sup 0.866 / mae 0.770 (full breakdowns in the
-JSONs); −CA concat 0.459 (count 0.246, qryattr 0.516).
+JSONs).
+
+Ablation rows (landed 2026-07-06, same artifact dir):
+
+| run | overall | QryAttr | EqAttr | Exist | Count | CmpInt | paper cell |
+|---|---|---|---|---|---|---|---|
+| −CA (`nogca`) | 0.459 | 0.516 | 0.522 | 0.570 | **0.246** | 0.501 | 49.4 = ckpt best_acc 0.4945 ✓ |
+| scratch-ViT (`gca_scratch`) | 0.528 | 0.490 | 0.517 | 0.664 | 0.459 | 0.672 | 52.8 = eval 0.5277 EXACT ✓ |
+| learned-text (best.pt **ep2**) | 0.207 | **0.000** | 0.512 | 0.505 | 0.0004 | 0.511 | ⚠ paper 24.6 = last.pt ep15 (D2) |
+
+**Findings (Fable interpretation) — the three ablations fail in three different ways,
+which is the A3 "all three components necessary" claim with mechanism-level signatures:**
+4. **Remove CA → counting dies first** (0.246, far below the 0.50-ish answer-prior
+   plateau the other types sit at). Text at the readout without CA supports
+   prior-matching but nothing that requires iterating over visual tokens.
+5. **Remove visual pretraining (scratch-ViT, CA intact) → binding survives, retrieval
+   starves**: binary types recover above prior (Exist 0.664, CmpInt 0.672 — the CA
+   mechanism still routes) but QryAttr stays at 0.490 — there is no structured
+   substrate to retrieve from. Mirror image of MAE's failure (substrate fine for
+   retrieval, weak for multi-referent binding).
+6. **Remove language pretraining → generation collapses to closed-set types**:
+   QryAttr exactly 0.0 and Count 0.0004 — the decoder emits degenerate strings for
+   open-vocabulary answers; only binary types land at chance (~0.51). Provenance
+   caveat: this row is best.pt(ep2); full-val eval of that ckpt gives 0.207 while its
+   stored windowed acc says 0.4667 — one more reason the paper cell must come from the
+   last-epoch rerun (registry D2 action item, still open).
 
 **Findings (Fable interpretation):**
 1. **A3.2 prediction partially wrong — sup-ViT's concat deficit is UNIFORM, not
