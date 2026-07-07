@@ -155,7 +155,7 @@ class FlamingoModel(nn.Module):
 
     def __init__(self, llm_name="meta-llama/Llama-3.2-1B",
                  dinov2_dim=768, gca_layers=None, lora_r=16,
-                 use_lora=True, device="cuda"):
+                 use_lora=True, freeze_llm=False, device="cuda"):
         super().__init__()
         if gca_layers is None:
             gca_layers = [1, 4, 7, 10, 13, 15]  # every ~3rd for 16-layer LLaMA
@@ -197,8 +197,11 @@ class FlamingoModel(nn.Module):
             self.gca_modules[str(idx)] = gca
         self.gca_modules = self.gca_modules.to(device)
 
-        # 4. Optionally apply LoRA (or full fine-tune)
-        if use_lora:
+        # 4. LLM trainability: frozen (Flamingo recipe) / LoRA / full fine-tune
+        if freeze_llm:
+            for p in self.llm.parameters():
+                p.requires_grad = False
+        elif use_lora:
             from peft import LoraConfig, get_peft_model
             for p in self.llm.parameters():
                 p.requires_grad = False
@@ -375,6 +378,9 @@ def main():
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--no-lora", action="store_true",
                         help="Full fine-tune instead of LoRA")
+    parser.add_argument("--freeze-llm", action="store_true",
+                        help="Freeze the LLM entirely; train only GCA + connector "
+                             "(Flamingo recipe). Overrides LoRA.")
     parser.add_argument("--epochs", type=int, default=16)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--val-batch-size", type=int, default=64)
@@ -438,7 +444,8 @@ def main():
     model = FlamingoModel(
         llm_name=args.llm_name, dinov2_dim=dinov2_dim,
         gca_layers=gca_layers, lora_r=args.lora_r,
-        use_lora=not args.no_lora, device=device)
+        use_lora=not args.no_lora and not args.freeze_llm,
+        freeze_llm=args.freeze_llm, device=device)
 
     # Tokenizer
     from transformers import AutoTokenizer
@@ -477,7 +484,8 @@ def main():
     best_acc = 0.0
     log.info(f"Training: {args.epochs} epochs, batch={args.batch_size}, "
              f"grad_accum={args.grad_accum}, lr={args.lr}, "
-             f"gca_layers={gca_layers}, lora={'off' if args.no_lora else args.lora_r}")
+             f"gca_layers={gca_layers}, "
+             f"llm={'frozen' if args.freeze_llm else ('full-ft' if args.no_lora else f'lora_r={args.lora_r}')}")
     log.info(f"Steps/epoch: {len(train_loader)}, total_steps: {total_steps}")
 
     for epoch in range(args.epochs):
@@ -532,6 +540,8 @@ def main():
             "model_state_dict": {k: v.cpu() for k, v in model.state_dict().items()},
             "gca_layers": gca_layers,
             "llm_name": args.llm_name,
+            "freeze_llm": args.freeze_llm,
+            "use_lora": not args.no_lora and not args.freeze_llm,
         }
         torch.save(ckpt, output_dir / "last.pt")
 

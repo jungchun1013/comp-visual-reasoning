@@ -64,7 +64,9 @@ def main():
     model = FlamingoModel(
         llm_name=ckpt["llm_name"], dinov2_dim=dinov2.embed_dim,
         gca_layers=ckpt["gca_layers"], lora_r=args.lora_r,
-        use_lora=True, device=device)
+        # old checkpoints predate these keys and were all LoRA-trained
+        use_lora=ckpt.get("use_lora", True),
+        freeze_llm=ckpt.get("freeze_llm", False), device=device)
     missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
     trainable_missing = [k for k in missing if "lora" in k or "gca" in k.lower()
                          or "connector" in k]
