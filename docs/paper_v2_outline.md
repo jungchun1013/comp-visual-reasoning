@@ -34,6 +34,14 @@ binder retrieves the bait. Metrics: acc_base vs acc_added, hallucination_rate,
 bait_share_of_errors (4 attributes × 100 pairs, rendered ✅; eval ⏳).
 Wording note: report the *bait share of errors* as the headline (isolates
 hallucination from generic distribution shift; acc_base controls render-domain shift).
+**Amendment (2026-07-06, user-approved):** headline metric changed to
+*hallucination_rate*. Reason: bait_share_of_errors is undefined at zero errors
+(the trained model reaches exactly that regime — material has 0 errors) and
+degenerates to 1.0 by construction for binary attributes whenever predictions
+are near-chance (flamingo §14), so it cannot serve as the primary comparison
+axis across models. bait_share_of_errors is retained as the secondary
+shape-of-errors statistic where defined. Registered→used mapping documented in
+`docs/substrate_fixation_report.md` 限制.
 
 ## A2 — Grounding via language conditioning (routing + refocus)
 
@@ -176,6 +184,12 @@ Mechanistic add-on: compare binding-head concentration across encoders.
   1-layer decoder readout (Table-1-protocol comparable), (c) cross-attn map
   localization on the referent (zero-shot Binding evidence). Caveat: questions ≠
   captions (domain mismatch, state in text).
+  **Amendment (2026-07-06, user-approved):** executed and NEGATIVE at the
+  registered t=100 (n=300/cat). Two additional timesteps t=261/400 at n=150/cat
+  were run afterwards as a post-hoc robustness check (not pre-registered; DIFT
+  uses t=261 for SD, motivating the sweep) — also negative, so the verdict does
+  not depend on noise level. Report the sweep as post-hoc in the text. Results:
+  RESULTS.md §13.
 - Scale disclosure: OpenFlamingo CA ≈1.3B vs ours ≈0.1B — comparison axis is
   *origin of cross-attention*, not parameter-matched performance.
 
