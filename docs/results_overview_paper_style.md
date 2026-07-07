@@ -4,8 +4,8 @@
 再逐一呈現每一項實驗；每項實驗都附上代號，並依相同的段落順序敘述：動機、研究問題、
 假設、設計、結果、詮釋。所有數字皆取自 `RESULTS.md`、`docs/paper_v2_outline.md`
 與 `JOURNAL.md`，不作任何推估。術語固定為：Grounding 指整套語言條件化機制，其兩個
-階段依序為 Binding 與 Retrieval；Retrieval 階段的兩個子訊號分別為 Retrieval
-(object) 與 Retrieval (answer)。
+階段依序為 Binding 與 Retrieval；答案層級的訊號是原本就存在的 classification 讀出
+（標記為 Answer classification），不屬於機制階段，本文不作機制討論。
 
 ---
 
@@ -141,8 +141,9 @@ category (same / spatial) 另顯示 anchor binding 在 L8 達峰後於 L12 崩�
 所定位 binding heads（CA L3–L9，如 color L5H0、material L7H9、size L7H11、shape L7H3）
 所在的中段窗口升起，Retrieval 僅在晚期（L9–L11，對應 patching 的 SA block 11）分離。
 anchor→target 的交接顯示 relational chaining 以序列式 re-binding 實作，與 E5 中
-「relational localization 便宜、enumeration 昂貴」的發現一致。依使用者決定，中間鏈層級
-稱 Retrieval (object)、答案層級稱 Retrieval (answer)。
+「relational localization 便宜、enumeration 昂貴」的發現一致。依使用者決定
+（2026-07-07），中間鏈層級即為 Retrieval 階段；答案層級（表中 answer_decode）為
+原有的 classification 讀出，不列為機制階段。
 
 ---
 

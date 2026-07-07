@@ -228,10 +228,12 @@ Flamingo 不可判讀。** Flamingo 的 E7 部分要等重訓（規劃為 no-LoR
   A>B>C 的梯度可直接自圖中讀出（shape 的 C 情形最低，0.199）。底層 JSON 經驗證位元相同，
   僅新增圖檔（RESULTS.md §6 的圖註）。
 - **v2 標籤重繪（E10）**：`grounding_manipulation.py` 新增 `--replot-from`，用已存的 JSON
-  重繪圖（不需 GPU），把 Retrieval 階段的子訊號標籤更新為 **Retrieval (object)** 與
-  **Retrieval (answer)**，輸出到**新目錄**
+  重繪圖（不需 GPU），輸出到**新目錄**
   `outputs/analysis/grounding_manipulation/clevr_dinov2_decoder1l_scratch_v2labels/`，
-  原圖保留未動。
+  原圖保留未動。（2026-07-07 命名更新：該批圖使用的「Retrieval (object)/(answer)」
+  標籤已被使用者裁定廢除——中間鏈層級即 Retrieval 階段，答案層級為原有的
+  classification 讀出；標籤修正版重繪於
+  `.../clevr_dinov2_decoder1l_scratch_v3labels/`。）
 
 兩者皆為支援性 artifact：不引入新數字，只把既有結果以正確的 v2 命名與對比方式呈現。
 

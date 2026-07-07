@@ -6,9 +6,9 @@
 > 路徑回溯，未經 artifact 佐證者不入本節。
 >
 > 術語遵循命名規範：**Grounding** 指整個語言 conditioning 機制，其階段依序為
-> **Binding**（將描述屬性綁定至被指涉物體）與 **Retrieval**（讀出被詢問屬性），
-> Retrieval 階段的兩個子訊號為 **Retrieval (object)** 與 **Retrieval (answer)**。
-> 全節不使用「object grounding」或「Object match」作為階段名稱。
+> **Binding**（將描述屬性綁定至被指涉物體）與 **Retrieval**（讀出被詢問屬性）。
+> 答案層級的訊號為原有的 classification 讀出（Answer classification），不屬於機制
+> 階段。全節不使用「object grounding」或「Object match」作為階段名稱。
 
 ## 研究問題
 
@@ -231,5 +231,5 @@ checkpoint 確認其僅具定性地位；Flamingo 的 E7 量測等待重訓後�
    水準，尚不構成資料點；I2T zero-shot 機制證據待重訓後補。
 
 （全節術語遵循命名規範：Grounding 指整個語言 conditioning 機制，其階段依序為 Binding
-與 Retrieval，Retrieval 階段的子訊號為 Retrieval (object) 與 Retrieval (answer)；
-全節不使用「object grounding」或「Object match」作為階段名稱。）
+與 Retrieval；答案層級為原有的 classification 讀出（Answer classification），非機制
+階段。全節不使用「object grounding」或「Object match」作為階段名稱。）

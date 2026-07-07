@@ -4,24 +4,25 @@ Instead of binary RSA on full DB (rare conditions diluted by "both false" pairs)
 each level is conditioned on the previous:
 
 Direct:
-  1. Binding | All                 — C1 on full DB
-  2. Retrieval (object) | Binding  — C2 on subset where C1=True
-  3. Retrieval (answer) | Binding  — C4 on subset where C1=True
+  1. Binding | All                    — C1 on full DB
+  2. Retrieval | Binding              — C2 on subset where C1=True
+  3. Answer classification | Binding  — C4 on subset where C1=True
 
 Spatial (same_attr / spatial):
   1. Anchor binding | All
   2. Target binding | All
-  3. Anchor retrieval (object) | Anc bind
-  4. Target retrieval (object) | Tgt bind
-  5. Retrieval (answer) | Tgt bind
+  3. Anchor retrieval | Anc bind
+  4. Target retrieval | Tgt bind
+  5. Answer classification | Tgt bind
 
 v2 naming (docs/legacy-reference.md §1.1): the 3-stage "binding → object
 grounding → answer matching" pipeline is now 2-stage "Binding → Retrieval";
 "Grounding" names the whole language-conditioning mechanism, never a chain
-stage. Both post-binding chain levels belong to the Retrieval stage (user
-decision 2026-07-06): the old "object grounding" condition (C2: full 4-attr
-object identity match) is "Retrieval (object)", the answer-level condition
-(C4) is "Retrieval (answer)". Condition indices / JSON keys are unchanged.
+stage. The old "object grounding" condition (C2: full 4-attr object identity
+match) IS the Retrieval stage (user decision 2026-07-07: no object/answer
+split within Retrieval). The answer-level condition (C4) is the pre-existing
+classification readout, labeled "Answer classification"; it is not a
+grounding stage. Condition indices / JSON keys are unchanged.
 
 Usage:
     CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src python scripts/analysis/conditional_rsa.py \
@@ -66,17 +67,17 @@ from analysis.plot_style import PLOT_STYLE as S, apply_style
 
 CHAIN_DIRECT = [
     ("Binding | All", 1, None),
-    ("Retrieval (object) | Binding", 2, 1),
-    ("Retrieval (answer) | Binding", 4, 1),
+    ("Retrieval | Binding", 2, 1),
+    ("Answer classification | Binding", 4, 1),
 ]
 CHAIN_DIRECT_COLORS = [COND_COLORS[1], COND_COLORS[2], COND_COLORS[4]]
 
 CHAIN_SPATIAL = [
     ("Anchor binding | All", 0, None),
     ("Target binding | All", 1, None),
-    ("Anchor retrieval (object) | Anc bind", 2, 0),
-    ("Target retrieval (object) | Tgt bind", 3, 1),
-    ("Retrieval (answer) | Tgt bind", 6, 1),
+    ("Anchor retrieval | Anc bind", 2, 0),
+    ("Target retrieval | Tgt bind", 3, 1),
+    ("Answer classification | Tgt bind", 6, 1),
 ]
 CHAIN_SPATIAL_COLORS = [
     SPATIAL_COND_COLORS[0], SPATIAL_COND_COLORS[1],

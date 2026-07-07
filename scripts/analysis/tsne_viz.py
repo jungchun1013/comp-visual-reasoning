@@ -5,11 +5,12 @@ Three modes:
   steered     — Pick one query, steer N DB images, color by conditions
                 (feature binding / retrieval-object / retrieval-answer). v2
                 naming (docs/legacy-reference.md §1.1): "Grounding" names the
-                whole language-conditioning mechanism, never a stage; both
-                post-binding conditions belong to the Retrieval stage (user
-                decision 2026-07-06) — legend text uses "Retrieval (object)" /
-                "Retrieval (answer)" for the old "object grounding" /
-                "answer match" stage labels.
+                whole language-conditioning mechanism, never a stage; the old
+                "object grounding" condition IS the Retrieval stage (user
+                decision 2026-07-07: no object/answer split) — legend text uses
+                "Retrieval" for it, and "Answer classification" for the old
+                "answer match" (the pre-existing classification readout, not a
+                grounding stage).
   cross_model — Load all available checkpoints, plot side-by-side t-SNE.
 
 Usage:
@@ -516,10 +517,10 @@ def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
                markersize=7, label=f"{role_prefix}Feature binding"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(fill_colors[1]),
-               markersize=7, label=f"{role_prefix}Retrieval (object)"),
+               markersize=7, label=f"{role_prefix}Retrieval"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
                markeredgecolor=tuple(ANSWER_MATCH_COLOR),
-               markeredgewidth=1.5, markersize=7, label="Retrieval (answer)"),
+               markeredgewidth=1.5, markersize=7, label="Answer classification"),
     ]
 
     q_short = question[:65] + "..." if len(question) > 65 else question

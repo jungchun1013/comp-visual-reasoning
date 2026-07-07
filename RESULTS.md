@@ -317,10 +317,12 @@ climbing to L11 — a visible anchor→target handoff, i.e., relational chaining
 implemented as sequential re-binding, consistent with E5's finding that relational
 localization is cheap (each step is one more binding pass) while enumeration is not.
 
-Naming (user decision 2026-07-06): the middle chain level is **Retrieval (object)**
-and the answer level **Retrieval (answer)** — both sub-signals of the Retrieval
-stage. Labels updated in conditional_rsa / tsne_viz / grounding_manipulation; the
-tables above use the stored JSON condition names (existing outputs never renamed).
+Naming (user decision 2026-07-07, supersedes 07-06 interim labels): the middle
+chain level IS the **Retrieval** stage — no object/answer split. The answer level
+is the pre-existing classification readout, labeled **Answer classification**,
+and is not a grounding stage. Labels updated in conditional_rsa / tsne_viz /
+grounding_manipulation; the tables above use the stored JSON condition names
+(existing outputs never renamed).
 
 ## 10. Cross-backbone circuit replication (E3, SigLIP patching) — landed 11:30 07-06
 
