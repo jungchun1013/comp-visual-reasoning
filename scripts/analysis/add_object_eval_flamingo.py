@@ -42,6 +42,8 @@ def main():
     ap.add_argument("--resolution", type=int, default=336)
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--out-suffix", default="",
+                    help="appended to the output file name (never overwrite old runs)")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -97,7 +99,10 @@ def main():
                 raw = model.generate_answer(
                     feats, enc["input_ids"], enc["attention_mask"], tokenizer)
             for pred in raw:
-                p = pred.split("Answer:")[-1].strip().split()[0] if pred else ""
+                # generate_answer lowercases the full decode (prompt included),
+                # so the marker must be matched lowercase too
+                tail = pred.split("answer:")[-1].strip() if pred else ""
+                p = tail.split()[0] if tail else ""
                 preds.append(p.strip(".,!?").lower())
         return preds
 
@@ -124,7 +129,7 @@ def main():
         "flip_rate": sum(r["pred_base"] != r["pred_added"] for r in records) / n,
         "records": records,
     }
-    out = pairs_path.parent / f"add_object_eval_{name}.json"
+    out = pairs_path.parent / f"add_object_eval_{name}{args.out_suffix}.json"
     out.write_text(json.dumps(summary, indent=2))
     for k in ("acc_base", "acc_added", "hallucination_rate",
               "bait_share_of_errors", "flip_rate"):

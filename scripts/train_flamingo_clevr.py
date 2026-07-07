@@ -348,7 +348,9 @@ def evaluate(model, dataloader, dinov2_cache, tokenizer, device, max_batches=Non
                 prompt_enc["attention_mask"], tokenizer)
 
         for pred, gt in zip(pred_answers, gt_answers):
-            pred_clean = pred.split("Answer:")[-1].strip().split()[0] if pred else ""
+            # generate_answer lowercases the decode, so match the marker lowercase
+            tail = pred.split("answer:")[-1].strip() if pred else ""
+            pred_clean = tail.split()[0] if tail else ""
             pred_clean = pred_clean.strip(".,!?").lower()
             if pred_clean == gt.lower():
                 correct += 1

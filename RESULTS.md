@@ -349,7 +349,7 @@ in mid layers rather than piling onto L11 — retrieval-side integration appears
 distributed than in DINOv2. The Binding-stage picture (specialized mid-layer GCA
 heads) is unchanged; the deviation is confined to where SA re-integrates.
 
-## 11. Raw-substrate probing (E8) — 3/4 backbones landed 14:12 07-06
+## 11. Raw-substrate probing (E8) — all 4 backbones landed (MAE 14:38 07-06)
 
 Artifacts: `outputs/analysis/raw_backbone_probe/<backbone>/` (300 multi-object
 scenes, 1,917 objects; fresh zero-gated GCA = pure pretrained ViT forward; 3×3
@@ -362,12 +362,21 @@ Per-object attribute decodability (peak over blocks):
 | DINOv2 | 0.966 (B7) | 0.987 (B10) | 0.986 (B11) | 0.997 (B8) |
 | SigLIP | 0.932 (B2) | 0.953 (B8) | 0.951 (B8) | 0.983 (B3) |
 | sup-ViT | 0.938 (B2) | 0.934 (B2) | 0.924 (B7) | 0.983 (B6) |
-| MAE | running | | | |
+| MAE | 0.920 (B4) | 0.914 (B6) | 0.914 (B9) | 0.979 (B9) |
 
 **A1.2 CONFIRMED: the raw substrate encodes attributes per-object in multi-object
-scenes** — 0.92–1.00 across all attributes and all landed backbones, before any
+scenes** — 0.91–1.00 across all attributes and ALL FOUR backbones, before any
 language conditioning or task training. What the raw backbone lacks is not
 information but *selection*.
+
+**A3 gradient note (MAE)**: the substrate-decodability ordering matches the
+downstream ordering (DINOv2 > SigLIP ≈ sup-ViT > MAE), but the substrate gap is
+small (MAE color 0.920 vs DINOv2 0.966) while the downstream VQA gap is large
+(0.748 vs 0.924). Peak per-object decodability therefore does NOT by itself
+explain MAE's failure; consistent with §5's finding that MAE's deficit is
+concentrated in two-referent binding (EqAttr), not in attribute encoding. The
+"weaker substrate" claim must be phrased as weaker *binding-usable* structure,
+not weaker attribute information.
 
 ### The fixation triangle (A1→A2) — CLOSED
 
@@ -399,7 +408,65 @@ independently trained models spanning two codebase generations.
 
 ## 12. Pending
 
-E8 MAE (running) · E10 grounding_manipulation replots (with "Retrieval
-(object/answer)" labels) · T2I timestep sweep t=261/400 (queued; first round at
-t=100 failed both pre-registered criteria — see §13 when written) · E5-on-SteerViT
-(running) · Flamingo E7 (queued, qualitative-only).
+E10 grounding_manipulation replots (with "Retrieval (object/answer)" labels) ·
+E9 contrast figure · Opus integrated substrate-section report (§8–§11 + §13) ·
+T2I declarative-caption variant (optional, if pursued after the negative sweep).
+
+## 13. T2I zero-shot grounding (PixArt-Σ) — timestep sweep complete 14:34 07-06
+
+Design: `docs/t2i_experiment_design.md`. Artifacts: `outputs/analysis/t2i_pixart/`
+(t=100, n=300/cat) and `outputs/analysis/t2i_pixart_t{261,400}/` (n=150/cat).
+Pre-registered dual criterion: (a) referent-local probe ≫ majority baseline in
+mid/late blocks, (b) column-normalized CA mass on referent 3×3 window ≫ chance
+(9/1024 ≈ 0.0088).
+
+Referent-local probe, best block (majority baseline in parens):
+
+| t | color | material | shape | size |
+|---|---|---|---|---|
+| 100 | 0.169 (0.152) | 0.554 (0.566) | 0.421 (0.361) | 0.556 (0.527) |
+| 261 | 0.168 (0.159) | 0.689 (0.571) | 0.542 (0.400) | 0.556 (0.556) |
+| 400 | 0.230 (0.159) | 0.594 (0.571) | 0.500 (0.400) | 0.632 (0.556) |
+
+CA referent-window mass (peak over blocks): t=100 0.0095–0.0096, t=261
+0.0097–0.0099, t=400 **0.0112–0.0117, all three categories peaking at the SAME
+block (B6)** — 1.27–1.33× chance.
+
+**Verdict: NEGATIVE under the pre-registered criteria at every tested timestep.**
+Probe exceedances over majority are scattered across blocks and attributes
+(no consistent mid/late-block structure; n=84–133 at t=261/400), and CA
+localization never leaves the 1.0–1.3× chance band. The consistent B6 peak at
+t=400 is noted as the only structured residue (same block across categories)
+but is far below any usable binding signal. Per the pre-registered caveat,
+questions-as-prompts constitute a domain mismatch for a T2I text encoder, so
+this negative cannot distinguish "mechanism absent" from "prompt distribution
+mismatch"; the bounded conclusion: **zero-shot binding does not emerge in
+PixArt-Σ's cross-attention under question prompts — grounding as measured here
+requires task training.** The main paper's contribution is accordingly framed
+as showing how VQA training elicits the mechanism from the pretrained
+substrate.
+
+## 14. Flamingo local baseline on E7 (measurement corrected 21:40 07-06)
+
+First run (`add_object_eval_clevr_flamingo_dinov2_early_s42.json`, no suffix) is
+INVALID — a harness bug, not a model measurement: `generate_answer` lowercases
+its decode, the adapter split on `"Answer:"` (uppercase), so every record's
+prediction was the prompt echo `'question:'`. Fixed in
+`add_object_eval_flamingo.py` (and the identical latent bug in
+`train_flamingo_clevr.py:evaluate` — relevant for the planned retrain, which
+would otherwise report val acc 0 forever). Per the never-overwrite policy the
+invalid JSONs remain in place; corrected runs are the `*_fixed.json` files.
+
+Corrected numbers (`add_object_eval_clevr_flamingo_dinov2_early_s42_fixed.json`):
+acc_base color 0.13 / material 0.54 / shape 0.32 / size 0.44 — chance level on
+every attribute (8/2/3/2 classes), with near-degenerate outputs (color: 98%
+"yellow"; size: 100% "small"; material/shape: coin-flip between two values).
+Predictions do stay inside the queried attribute's answer space, so the LLM
+reads the question type, but the visual pathway contributes nothing yet.
+
+**Reading: uninterpretable for E7.** With chance-level, near-constant
+predictions, hallucination/bait metrics are trivial artifacts (binary
+attributes make any error "bait-shaped" by construction — material bait_share
+0.96, size 1.00 mean nothing). The 4/16-epoch checkpoint confirms its
+qualitative-only status; the Flamingo E7 leg waits on the retrain
+(no-LoRA + precomputed-features plan, pending user go).
