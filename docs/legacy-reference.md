@@ -101,11 +101,38 @@ Reference: `SteerViT-legacy/exp_vqa/analysis/dinov2_gca/patching/run_headwise_by
 - Known binding heads (dinov2 GCA-decoder): CA L5H0 (color), L7H9 (material),
   L7H11 (size), L7H3 (shape); late SA block 11 = Retrieval-side integration.
 
-## 4. Plot style
+## 4. Plot style (MANDATORY — full spec, from legacy `SteerViT-legacy/CLAUDE.md`)
 
 Single source of truth: **`src/analysis/plot_style.py`** (PLOT_STYLE rcParams dict,
-tab10/tab20c palettes, CORRUPTION_COLORS). Import it; never copy style blocks inline.
-(L2 consolidation removes the historical inline copies.)
+tab10/tab20c palettes, CORRUPTION_COLORS, ATTR_VALUE_COLORS, t-SNE helpers). Import
+it; never copy style blocks inline. The rules it encodes:
+
+- Always call `apply_style()` before plotting; take ALL sizes from `S["key"]` —
+  never hardcode font sizes. Fonts: tick 14 / axis label 16 / legend 16 / subplot
+  title 18 / suptitle 20. DPI 150. `print(f"Saved: {path}")` after every save.
+- **Line-plot panels**: 8×6 each, `figsize=(8*ncols, 6*nrows)`; steered = solid
+  lw 2 marker `o` ms 6, unsteered = dashed lw 1 same colour alpha 0.5.
+- **Legend**: below the plot via `fig.legend()` (never `ax.legend()`),
+  `bbox_to_anchor=(0.5, -0.05)` (t-SNE grids: `(0.5, 0.016)`), `frameon=False`,
+  `ncol=min(n_items, 5)`.
+- **Colours**: condition colours fixed across ALL experiments — binding blue
+  `_tab10[0]`, anchor/target indexing orange `_tab10[1]`, extraction green
+  `_tab10[2]`, answer match red `_tab10[3]`, position purple `_tab10[4]`, none
+  gray `(0.75,)*3`. Family×shade gradients (e.g. corruption type × condition,
+  attribute values) use **tab20c** (5 families × 4 shades, dark→light);
+  attribute-value maps live in `ATTR_VALUE_COLORS`.
+- **t-SNE grids** (legacy `run_tsne_*.py` convention, helpers `make_tsne_grid` /
+  `style_tsne_ax` / `finish_tsne_grid`, constants `TSNE_STYLE`): square cells
+  `figsize=(cell*ncols+1, cell*nrows+1)` (cell 2.8), `set_box_aspect(1)`, no
+  ticks, spines lw 2, `subplots_adjust(hspace=.05, wspace=.05, top=.90,
+  bottom=.00)`; gray background points s=8, highlighted s=18, highlighted+edge
+  s=22 edge lw 1.2, query star gold s=120 black edge; every scatter
+  `rasterized=True`; legend handles = `Line2D` markers.
+- **Cache + replot** (legacy `add_replot_args` pattern): every analysis script
+  saves its expensive intermediates (features/stats) as `.npz`/`.json` in the
+  output dir and exposes `--replot`/`--compute-only` (or `--features*`) so style
+  changes never re-run GPU work. A script whose figures cannot be regenerated
+  without the model is a bug.
 
 ## 5. Legacy checkpoint format
 

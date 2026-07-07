@@ -37,6 +37,8 @@
 |---|---|
 | `outputs/analysis/raw_backbone_probe/vit_base_patch14_dinov2.lvd142m/raw_backbone_probe.png` | DINOv2 逐 block per-object 可解碼度曲線 |
 | `.../vit_base_patch16_siglip_224/`、`.../vit_base_patch16_224.augreg_in21k/`、`.../vit_base_patch16_224.mae/` 同名檔 | 其餘三個 backbone，四張並排 = A1.2 |
+| `outputs/analysis/single_objects/dino_attribute_tsne_tab20c.png` | raw DINOv2 single-object t-SNE，2×2 依 color/shape/material/size 上色（tab20c、正方 subplot、粗框線）。A1 substrate 主視覺 |
+| `outputs/analysis/tsne/single_object_tab20c/tsne_single_{noca,ca}_allattr.png` | trained model 逐 GCA-layer single-object t-SNE，no-CA vs CA 對照（同 style） |
 
 ### E10 — manipulation 因果測試（GCA-decoder）
 

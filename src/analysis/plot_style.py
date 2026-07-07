@@ -62,6 +62,75 @@ CONDITION_COLORS = {
 
 GCA_LAYERS = [1, 3, 5, 7, 9, 11]  # odd layers
 
+# Attribute-value colours for t-SNE scatters: Tab20c (5 families × 4 shades,
+# dark→light). Values hue-matched to the nearest family; within-family shades
+# only for hue-related values (blue/cyan, red/brown/yellow).
+ATTR_VALUE_COLORS = {
+    "color": {
+        "blue":   _tab20c[0],
+        "cyan":   _tab20c[1],
+        "red":    _tab20c[4],
+        "brown":  _tab20c[5],
+        "yellow": _tab20c[6],
+        "green":  _tab20c[8],
+        "purple": _tab20c[12],
+        "gray":   _tab20c[16],
+    },
+    "shape":    {"cube": _tab20c[0], "sphere": _tab20c[4], "cylinder": _tab20c[8]},
+    "material": {"metal": _tab20c[0], "rubber": _tab20c[4]},
+    "size":     {"large": _tab20c[0], "small": _tab20c[4]},
+}
+ATTR_VALUE_ORDER = {
+    "color":    ["blue", "cyan", "red", "brown", "yellow", "green", "purple", "gray"],
+    "shape":    ["cube", "sphere", "cylinder"],
+    "material": ["metal", "rubber"],
+    "size":     ["large", "small"],
+}
+
+
+# t-SNE scatter style (legacy run_tsne_*.py convention):
+# square cells in a tight grid, no ticks, thick spines, gray background
+# points, rasterized scatters, shared fig.legend below the grid.
+TSNE_STYLE = {
+    "cell": 2.8,        # square panel edge, inches
+    "bg_size": 8,       # unhighlighted points
+    "mid_size": 18,     # highlighted points
+    "hi_size": 22,      # highlighted points carrying an edge
+    "edge_width": 1.2,  # highlight edge width
+    "gray": (0.75, 0.75, 0.75),
+}
+
+
+def style_tsne_ax(ax):
+    """t-SNE axis style: square box, thick spines, no ticks."""
+    ax.set_box_aspect(1)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_linewidth(2)
+
+
+def make_tsne_grid(n_panels: int, ncols: int = 3, cell: float = None):
+    """Legacy t-SNE grid: figsize=(cell*ncols+1, cell*nrows+1), flat axes."""
+    if cell is None:
+        cell = TSNE_STYLE["cell"]
+    nrows = (n_panels + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols,
+                             figsize=(cell * ncols + 1, cell * nrows + 1))
+    return fig, np.atleast_1d(axes).flatten()
+
+
+def finish_tsne_grid(fig, handles, suptitle: str = None, ncol: int = None):
+    """Legacy t-SNE finish: tight grid spacing, fig.legend below, frameless."""
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=S["suptitle_fontsize"])
+    fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.90, bottom=0.00)
+    if ncol is None:
+        ncol = min(len(handles), 5)
+    fig.legend(handles=handles, loc="upper center",
+               bbox_to_anchor=(0.5, 0.016), ncol=ncol,
+               fontsize=S["legend_fontsize"], frameon=False)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
