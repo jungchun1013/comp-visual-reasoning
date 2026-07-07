@@ -214,6 +214,14 @@ def plot(stats, output_dir):
     layers = list(range(num_layers))
     is_spatial = stats.get("is_spatial", False)
     colors = CHAIN_SPATIAL_COLORS if is_spatial else CHAIN_DIRECT_COLORS
+    # Stored stats carry the condition names current at RUN time; rename by
+    # condition index so replots always use the current naming standard.
+    chain = CHAIN_SPATIAL if is_spatial else CHAIN_DIRECT
+    name_by_idx = {(ci, si): name for name, ci, si in chain}
+
+    def display_name(entry):
+        key = (entry.get("condition_index"), entry.get("subset_condition_index"))
+        return name_by_idx.get(key, entry["name"])
     gca_layers = stats.get("gca_layers", [1, 3, 5, 7, 9, 11])
 
     fig, ax = plt.subplots(1, 1, figsize=S["subplot_size"])
@@ -244,7 +252,7 @@ def plot(stats, output_dir):
                 sems.append(0.0)
         ax.plot(layers, means, color=color, linewidth=S["linewidth"],
                 marker=S["marker"], markersize=S["markersize"],
-                label=entry["name"])
+                label=display_name(entry))
         ax.fill_between(layers,
                         [m - s for m, s in zip(means, sems)],
                         [m + s for m, s in zip(means, sems)],
