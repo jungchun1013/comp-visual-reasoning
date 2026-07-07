@@ -24,6 +24,7 @@ Metrics per (perturbation, attribute):
 
 Outputs (new dir, never touches inputs):
   outputs/analysis/abc_localization/<model>/abc_contrast.json + abc_contrast.md
+  + abc_contrast.png (grouped CA-share bars, chance line at the CA head fraction)
 
 Usage (from main/):
   <interpreter> scripts/analysis/abc_localization.py \
@@ -74,6 +75,49 @@ def summarize(section: dict, gca_layers: list[int]) -> dict:
         "top10": [{"kind": k, "layer": l, "head": h, "delta": v}
                   for k, l, h, v in top],
     }
+
+
+PERT_LABEL = {
+    "A_described_attr_text": "A: described attr (text)",
+    "B_queried_attr_text": "B: queried attr (text)",
+    "C_queried_attr_image": "C: queried attr (image)",
+}
+# text-side perturbations in blues, image-side in warm — the contrast IS the claim
+PERT_COLOR = {
+    "A_described_attr_text": "steelblue",
+    "B_queried_attr_text": "#7fb3d3",
+    "C_queried_attr_image": "coral",
+}
+
+
+def plot_contrast(result: dict, out_dir: Path):
+    import matplotlib.pyplot as plt
+    from analysis.plot_style import PLOT_STYLE, apply_style
+
+    apply_style()
+    perts = list(result["perturbations"].keys())
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = np.arange(len(ATTRS))
+    width = 0.8 / len(perts)
+    for i, pert in enumerate(perts):
+        vals = [result["perturbations"][pert].get(a, {}).get("ca_share_perhead",
+                                                             float("nan"))
+                for a in ATTRS]
+        ax.bar(x + (i - (len(perts) - 1) / 2) * width, vals, width,
+               label=PERT_LABEL.get(pert, pert), color=PERT_COLOR.get(pert))
+    ax.axhline(0.5, color="gray", linewidth=1, linestyle="--",
+               label="no preference (0.5)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(ATTRS)
+    ax.set_ylabel("CA share of per-head |Δ logit|")
+    ax.set_ylim(0, 1)
+    ax.set_title(f"Perturbation localization: CA vs SA heads — {result['model']}")
+    ax.legend()
+    fig.tight_layout()
+    out = out_dir / "abc_contrast.png"
+    fig.savefig(str(out), dpi=PLOT_STYLE["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
 
 
 def main():
@@ -127,7 +171,8 @@ def main():
                 f"| L{ts['layer']}H{ts['head']} ({ts['delta']:+.3f}) "
                 f"| {s['top10_ca_count']}/10 |")
     (out_dir / "abc_contrast.md").write_text("\n".join(lines) + "\n")
-    print(f"Wrote {out_dir}/abc_contrast.{{json,md}}")
+    plot_contrast(result, out_dir)
+    print(f"Wrote {out_dir}/abc_contrast.{{json,md,png}}")
     for line in lines[5:]:
         print(line)
 

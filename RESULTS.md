@@ -139,7 +139,9 @@ either a footnote (protocol difference) or renumbering to 19.7 — user decision
    concat 0.926 > 0.924) — SigLIP's pooled features are weak for classification
    readout; its strength is token-level, consumed by decoders.
 
-## 6. A/B/C × {CA, SA} localization (E9) — first pass done
+## 6. A/B/C × {CA, SA} localization (E9) — first pass done; contrast figure at
+`outputs/analysis/abc_localization/clevr_dinov2_decoder1l_scratch/abc_contrast.png`
+(added 07-06; grouped CA-share bars per attribute, 0.5 no-preference line)
 
 Aggregated from existing patching stats (denoising, dinov2 GCA-decoder, n=50/category):
 `outputs/analysis/abc_localization/clevr_dinov2_decoder1l_scratch/abc_contrast.{json,md}`
