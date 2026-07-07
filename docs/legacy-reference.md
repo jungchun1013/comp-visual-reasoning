@@ -118,9 +118,10 @@ it; never copy style blocks inline. The rules it encodes:
 - **Colours**: condition colours fixed across ALL experiments — binding blue
   `_tab10[0]`, anchor/target indexing orange `_tab10[1]`, extraction green
   `_tab10[2]`, answer match red `_tab10[3]`, position purple `_tab10[4]`, none
-  gray `(0.75,)*3`. Family×shade gradients (e.g. corruption type × condition,
-  attribute values) use **tab20c** (5 families × 4 shades, dark→light);
-  attribute-value maps live in `ATTR_VALUE_COLORS`.
+  gray `(0.75,)*3`. Family×shade gradients (corruption type × condition line
+  plots) use **tab20c** (5 families × 4 shades, dark→light). Attribute values
+  in t-SNE scatters use **tab10** (user-specified 2026-07-07; CLEVR colour
+  values hue-faithful via tab10's named hues) — maps in `ATTR_VALUE_COLORS`.
 - **t-SNE grids** (legacy `run_tsne_*.py` convention, helpers `make_tsne_grid` /
   `style_tsne_ax` / `finish_tsne_grid`, constants `TSNE_STYLE`): square cells
   `figsize=(cell*ncols+1, cell*nrows+1)` (cell 2.8), `set_box_aspect(1)`, no

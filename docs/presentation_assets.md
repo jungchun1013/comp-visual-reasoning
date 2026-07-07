@@ -3,7 +3,7 @@
 > 2026-07-07 整理。三部分：可直接取用的圖檔位置、八個實驗結果表的 LaTeX、每頁
 > slide 可用的一句話主張。所有路徑相對於 `main/`；所有數字與
 > `docs/results_overview_paper_style.md`、`RESULTS.md` 一致。
-> 標籤現況：`_v3labels` 目錄與 `abc_contrast.png` 為 2026-07-07 命名
+> 標籤現況：`_v2` 目錄與 `abc_contrast.png` 為 2026-07-07 命名
 > （Binding → Retrieval，答案層級 = Answer classification）；其餘圖沿用產出當時的
 > script 內部訊號名，與階段命名無衝突。
 
@@ -13,7 +13,7 @@
 
 | 檔案 | 內容 |
 |---|---|
-| `outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch_v3labels/attr_query_direct/rsa_conditional.png` | conditional RSA 逐層曲線（direct）：Binding \| All、Retrieval \| Binding、Answer classification \| Binding，虛線為 unsteered control。**主圖候選** |
+| `outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch_v2/attr_query_direct/rsa_conditional.png` | conditional RSA 逐層曲線（direct）：Binding \| All、Retrieval \| Binding、Answer classification \| Binding，虛線為 unsteered control。**主圖候選** |
 | `.../attr_query_same/rsa_conditional.png`、`.../attr_query_spatial/rsa_conditional.png` | 同上，relational categories（可見 anchor→target 交接） |
 | `outputs/analysis/linear_probe/clevr_dinov2_decoder1l_scratch/probe_{direct,same,spatial}.png` | 逐層 linear probe 曲線（answer_decode / answer_match 等 probe 訊號） |
 
@@ -37,14 +37,14 @@
 |---|---|
 | `outputs/analysis/raw_backbone_probe/vit_base_patch14_dinov2.lvd142m/raw_backbone_probe.png` | DINOv2 逐 block per-object 可解碼度曲線 |
 | `.../vit_base_patch16_siglip_224/`、`.../vit_base_patch16_224.augreg_in21k/`、`.../vit_base_patch16_224.mae/` 同名檔 | 其餘三個 backbone，四張並排 = A1.2 |
-| `outputs/analysis/single_objects/dino_attribute_tsne_tab20c.png` | raw DINOv2 single-object t-SNE，2×2 依 color/shape/material/size 上色（tab20c、正方 subplot、粗框線）。A1 substrate 主視覺 |
-| `outputs/analysis/tsne/single_object_tab20c/tsne_single_{noca,ca}_allattr.png` | trained model 逐 GCA-layer single-object t-SNE，no-CA vs CA 對照（同 style） |
+| `outputs/analysis/single_objects/dino_attribute_tsne_v2.png` | raw DINOv2 single-object t-SNE，2×2 依 color/shape/material/size 上色（tab10、正方 subplot、粗框線）。A1 substrate 主視覺 |
+| `outputs/analysis/tsne/single_object_v2/tsne_single_{noca,ca}_allattr.png` | trained model 逐 GCA-layer single-object t-SNE，no-CA vs CA 對照（同 style） |
 
 ### E10 — manipulation 因果測試（GCA-decoder）
 
 | 檔案 | 內容 |
 |---|---|
-| `outputs/analysis/grounding_manipulation/clevr_dinov2_decoder1l_scratch_v3labels/manipulation_{grounding,answer,random}.png` | 各 manipulation 前後 RSA bar |
+| `outputs/analysis/grounding_manipulation/clevr_dinov2_decoder1l_scratch_v2/manipulation_{grounding,answer,random}.png` | 各 manipulation 前後 RSA bar |
 | `.../retrieval_{grounding,answer,random}.png` | 各 manipulation 前後 1-NN retrieval acc |
 | `.../tsne_grounding_manipulation.png` | 操縱前後 t-SNE（圖例已用現行命名） |
 

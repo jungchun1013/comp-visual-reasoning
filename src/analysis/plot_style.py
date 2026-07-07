@@ -62,23 +62,24 @@ CONDITION_COLORS = {
 
 GCA_LAYERS = [1, 3, 5, 7, 9, 11]  # odd layers
 
-# Attribute-value colours for t-SNE scatters: Tab20c (5 families × 4 shades,
-# dark→light). Values hue-matched to the nearest family; within-family shades
-# only for hue-related values (blue/cyan, red/brown/yellow).
+# Attribute-value colours for t-SNE scatters: Tab10 (user-specified).
+# CLEVR colour values are hue-faithful via tab10's named hues (red = _tab10[3],
+# the same red as the answer-match condition — no conflict, these panels carry
+# no condition marks).
 ATTR_VALUE_COLORS = {
     "color": {
-        "blue":   _tab20c[0],
-        "cyan":   _tab20c[1],
-        "red":    _tab20c[4],
-        "brown":  _tab20c[5],
-        "yellow": _tab20c[6],
-        "green":  _tab20c[8],
-        "purple": _tab20c[12],
-        "gray":   _tab20c[16],
+        "blue":   _tab10[0],
+        "cyan":   _tab10[9],
+        "red":    _tab10[3],
+        "brown":  _tab10[5],
+        "yellow": _tab10[8],   # olive — nearest tab10 hue to yellow
+        "green":  _tab10[2],
+        "purple": _tab10[4],
+        "gray":   _tab10[7],
     },
-    "shape":    {"cube": _tab20c[0], "sphere": _tab20c[4], "cylinder": _tab20c[8]},
-    "material": {"metal": _tab20c[0], "rubber": _tab20c[4]},
-    "size":     {"large": _tab20c[0], "small": _tab20c[4]},
+    "shape":    {"cube": _tab10[0], "sphere": _tab10[1], "cylinder": _tab10[2]},
+    "material": {"metal": _tab10[0], "rubber": _tab10[1]},
+    "size":     {"large": _tab10[0], "small": _tab10[1]},
 }
 ATTR_VALUE_ORDER = {
     "color":    ["blue", "cyan", "red", "brown", "yellow", "green", "purple", "gray"],

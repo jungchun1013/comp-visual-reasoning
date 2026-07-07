@@ -65,6 +65,7 @@ class SingleObjRetriever:
 
     @torch.no_grad()
     def extract_all(self, images, question_text=None):
+        """question_text: None (no CA), a single string, or a per-image list."""
         layer_out = {}
         hooks = []
         for idx, blk in enumerate(self.blocks):
@@ -75,7 +76,12 @@ class SingleObjRetriever:
                 return fn
             hooks.append(blk.register_forward_hook(make_hook(idx)))
 
-        texts = [question_text] * images.shape[0] if question_text else None
+        if question_text is None:
+            texts = None
+        elif isinstance(question_text, str):
+            texts = [question_text] * images.shape[0]
+        else:
+            texts = list(question_text)
         with autocast(device_type="cuda", dtype=torch.bfloat16):
             self.steervit.forward(images, texts)
 
@@ -91,15 +97,40 @@ class SingleObjRetriever:
 
 
 def load_single_obj_dataset(data_dir, transform):
+    """Load a controlled rendered dataset.
+
+    Two formats: scenes.json (CLEVR-gen style; target = objects[0]) or
+    metadata.json (render_single_objects.py style; target attrs at top level,
+    optional 'distractors' list for multi-object scenes).
+    """
     data_dir = Path(data_dir)
-    with open(data_dir / "scenes.json") as f:
-        scenes = json.load(f)["scenes"]
+    if (data_dir / "metadata.json").exists():
+        with open(data_dir / "metadata.json") as f:
+            entries = json.load(f)
+        fname_key = "filename"
+    else:
+        with open(data_dir / "scenes.json") as f:
+            scenes = json.load(f)["scenes"]
+        entries = [dict(s["objects"][0], image_filename=s["image_filename"])
+                   for s in scenes]
+        fname_key = "image_filename"
     images, attrs_list = [], []
-    for s in scenes:
-        img = PILImage.open(data_dir / "images" / s["image_filename"]).convert("RGB")
+    for e in entries:
+        img = PILImage.open(data_dir / "images" / e[fname_key]).convert("RGB")
         images.append(transform(img))
-        attrs_list.append(s["objects"][0])
+        attrs_list.append(e)
     return torch.stack(images), attrs_list
+
+
+DESC_ORDER = ["size", "color", "material", "shape"]
+
+
+def described_question(attrs, query_attr):
+    """CLEVR-style query describing the target by its other 3 attributes,
+    e.g. query_attr='color' -> 'What is the color of the large rubber cube?'"""
+    parts = [attrs[k] for k in DESC_ORDER if k != query_attr]
+    desc = " ".join(parts) + (" object" if query_attr == "shape" else "")
+    return f"What is the {query_attr} of the {desc}?"
 
 
 def run(args):
@@ -112,6 +143,10 @@ def run(args):
     steervit = None
     attrs_list = None
     for condition, q_text in [("noca", None), ("ca", args.question)]:
+        # --tag distinguishes CA runs with different questions; noca is
+        # question-independent and keeps untagged names
+        if condition == "ca" and args.tag:
+            condition = f"ca_{args.tag}"
         cache_file = (Path(args.features_dir) / f"feats_{condition}.npz"
                       if args.features_dir else None)
         if cache_file is not None and cache_file.exists():
@@ -129,13 +164,21 @@ def run(args):
                 with open(out_dir / "attrs.json", "w") as f:
                     json.dump(attrs_list, f)
             N = len(attrs_list)
+            # Described-target mode: per-scene question naming the target by
+            # its other 3 attributes (multi-object scenes need selection)
+            per_scene_q = None
+            if condition.startswith("ca") and args.describe_target:
+                per_scene_q = [described_question(a, args.query_attr)
+                               for a in attrs_list]
+                print(f"Described-target questions, e.g.: {per_scene_q[0]}")
             print(f"\nExtracting features: {condition} ({N} images) ...")
             all_feats = {l: [] for l in range(retriever.num_layers)}
             bs = 32
             for start in range(0, N, bs):
                 end = min(start + bs, N)
                 batch = images[start:end].to(device)
-                feats = retriever.extract_all(batch, q_text)
+                feats = retriever.extract_all(
+                    batch, per_scene_q[start:end] if per_scene_q else q_text)
                 for l in range(retriever.num_layers):
                     all_feats[l].append(feats[l])
                 if end % 200 == 0 or end == N:
@@ -145,11 +188,18 @@ def run(args):
             np.savez(out_dir / f"feats_{condition}.npz",
                      **{str(l): all_feats[l] for l in all_feats})
 
-        # All-attribute plot: color=tab20c color palette, marker=shape,
+        # All-attribute plot: color=ATTR_VALUE_COLORS (tab10), marker=shape,
         # black edge=metal, marker size=object size
         color_map = ATTR_VALUE_COLORS["color"]
         fig, axes = make_tsne_grid(len(gca_layers), ncols=3)
-        tag = "No cross-attention" if condition == "noca" else f"CA: \"{q_text}\""
+        if condition == "noca":
+            tag = "No cross-attention"
+        elif args.describe_target:
+            tag = f"CA: query {args.query_attr}, target described"
+        else:
+            tag = f"CA: \"{q_text}\""
+        n_obj = 1 + len(attrs_list[0].get("distractors", []))
+        scene_label = f"{n_obj}-object"
 
         # Vectorized scatter: group by (shape, size, material) for speed
         colors_arr = np.array([color_map[a["color"]][:3] for a in attrs_list])
@@ -200,7 +250,7 @@ def run(args):
         legend_handles.append(Line2D([0], [0], marker="o", color="w",
                               markerfacecolor=TSNE_STYLE["gray"], markersize=4,
                               label="small"))
-        finish_tsne_grid(fig, legend_handles, suptitle=f"Single-object t-SNE — {tag}",
+        finish_tsne_grid(fig, legend_handles, suptitle=f"{scene_label} t-SNE — {tag}",
                          ncol=5)
 
         fname = f"tsne_single_{condition}_allattr.png"
@@ -218,5 +268,14 @@ if __name__ == "__main__":
     ap.add_argument("--out-dir", default="outputs/analysis/tsne/single_object")
     ap.add_argument("--features-dir", default=None,
                     help="Dir with feats_{noca,ca}.npz + attrs.json — skip extraction")
+    ap.add_argument("--tag", default=None,
+                    help="Suffix for the CA condition's cache/figure names "
+                         "(e.g. 'shape' for a what-shape question)")
+    ap.add_argument("--describe-target", action="store_true",
+                    help="Per-scene question naming the target by its other 3 "
+                         "attributes (for multi-object controlled scenes)")
+    ap.add_argument("--query-attr", default="color",
+                    choices=["color", "shape", "material", "size"],
+                    help="Queried attribute in --describe-target mode")
     args = ap.parse_args()
     run(args)

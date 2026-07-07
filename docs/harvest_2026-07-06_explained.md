@@ -233,7 +233,7 @@ Flamingo 不可判讀。** Flamingo 的 E7 部分要等重訓（規劃為 no-LoR
   原圖保留未動。（2026-07-07 命名更新：該批圖使用的「Retrieval (object)/(answer)」
   標籤已被使用者裁定廢除——中間鏈層級即 Retrieval 階段，答案層級為原有的
   classification 讀出；標籤修正版重繪於
-  `.../clevr_dinov2_decoder1l_scratch_v3labels/`。）
+  `.../clevr_dinov2_decoder1l_scratch_v2/`。）
 
 兩者皆為支援性 artifact：不引入新數字，只把既有結果以正確的 v2 命名與對比方式呈現。
 

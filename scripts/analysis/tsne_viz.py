@@ -408,7 +408,7 @@ def _style_ax(ax, layer_idx):
     ax.set_xticks([]); ax.set_yticks([])
     ax.set_box_aspect(1)
     for spine in ax.spines.values():
-        spine.set_linewidth(1.5)
+        spine.set_linewidth(2)
 
 
 # ── Plotting: qtype ─────────────────────────────────────────────────
@@ -581,12 +581,6 @@ def plot_cross_model(all_results, queries, perplexity, seed, output_dir, qtype):
 # ── Mode: qtype ─────────────────────────────────────────────────────
 
 def run_qtype(args, device):
-    model, retriever, transform, vocab, show_layers, model_type = \
-        load_model(args.checkpoint, device)
-
-    dataset = CLEVRVQADataset(args.data_root, "val", transform)
-    show_layers = show_layers[::args.every_n]
-
     ckpt_dir = Path(args.checkpoint).parent
     run_name = ckpt_dir.name.replace("_s42", "")
     output_dir = Path(args.output_dir) if args.output_dir else \
@@ -595,6 +589,12 @@ def run_qtype(args, device):
     cache_path = output_dir / "cache_qtype.npz"
 
     if not args.replot:
+        # Model/dataset load only when computing — replot works from cache alone
+        model, retriever, transform, vocab, show_layers, model_type = \
+            load_model(args.checkpoint, device)
+        dataset = CLEVRVQADataset(args.data_root, "val", transform)
+        show_layers = show_layers[::args.every_n]
+
         n_per_type = args.n_samples // 5
         indices, qtypes, questions, answer_indices = sample_by_qtype(
             dataset, n_per_type=n_per_type, seed=args.seed)
@@ -652,59 +652,8 @@ def run_qtype(args, device):
 # ── Mode: steered ───────────────────────────────────────────────────
 
 def run_steered(args, device):
-    model, retriever, transform, vocab, show_layers, model_type = \
-        load_model(args.checkpoint, device)
-
-    dataset = CLEVRVQADataset(args.data_root, "val", transform)
-    show_layers = show_layers[::args.every_n]
-
-    # Load scenes
-    scenes_path = Path(args.data_root) / "scenes" / "CLEVR_val_scenes.json"
-    with open(scenes_path) as f:
-        scene_list = json.load(f)["scenes"]
-    scenes = {s["image_filename"]: s for s in scene_list}
-
-    # Resolve query
-    if args.metadata:
-        with open(args.metadata) as f:
-            meta_list = json.load(f)
-        qi = args.query_idx
-        meta = meta_list[qi]
-        q_data = dataset.questions[meta["idx"]]
-        query_dataset_idx = meta["idx"]
-    else:
-        # Pick random question of given type
-        rng = random.Random(args.seed)
-        candidates = [i for i, q in enumerate(dataset.questions)
-                      if _get_qtype(q) == args.qtype]
-        rng.shuffle(candidates)
-        query_dataset_idx = candidates[0]
-        q_data = dataset.questions[query_dataset_idx]
-        qi = 0
-
-    fname = q_data["image_filename"]
-    program = q_data.get("program", [])
-    question = q_data["question"]
-    gt_answer = q_data["answer"]
-    query_scene = scenes[fname]
-    print(f"Query [{qi}]: {question}  →  {gt_answer}")
-
-    # Extract program info for condition checking
-    described_attrs = extract_described_attrs(program)
-    anchor_obj, _ = find_anchor(query_scene["objects"], program)
-    anchor_4attrs = {k: anchor_obj.get(k) for k in ATTR_KEYS} if anchor_obj else None
-
-    # Check for same/spatial (has target)
-    meta_stem = Path(args.metadata).stem if args.metadata else ""
-    has_target = "same" in meta_stem or "spatial" in meta_stem
-    target_described, target_4attrs = {}, None
-    if has_target:
-        target_obj, target_described = find_target(query_scene["objects"], program)
-        if target_obj:
-            target_4attrs = {k: target_obj.get(k) for k in ATTR_KEYS}
-        print(f"Anchor attrs: {described_attrs}, Target attrs: {target_described}")
-
-    # Output dir
+    # Output dir / cache path need only path strings — replot never loads
+    # the model or dataset
     ckpt_dir = Path(args.checkpoint).parent
     run_name = ckpt_dir.name.replace("_s42", "")
     if args.metadata:
@@ -718,9 +667,60 @@ def run_steered(args, device):
     output_dir.mkdir(parents=True, exist_ok=True)
     no_ca = getattr(args, "no_ca", False)
     cache_suffix = "_noca" if no_ca else ""
+    qi = args.query_idx
     cache_path = output_dir / f"cache_q{qi}{cache_suffix}.npz"
 
     if not args.replot:
+        model, retriever, transform, vocab, show_layers, model_type = \
+            load_model(args.checkpoint, device)
+
+        dataset = CLEVRVQADataset(args.data_root, "val", transform)
+        show_layers = show_layers[::args.every_n]
+
+        # Load scenes
+        scenes_path = Path(args.data_root) / "scenes" / "CLEVR_val_scenes.json"
+        with open(scenes_path) as f:
+            scene_list = json.load(f)["scenes"]
+        scenes = {s["image_filename"]: s for s in scene_list}
+
+        # Resolve query
+        if args.metadata:
+            with open(args.metadata) as f:
+                meta_list = json.load(f)
+            meta = meta_list[qi]
+            q_data = dataset.questions[meta["idx"]]
+            query_dataset_idx = meta["idx"]
+        else:
+            # Pick random question of given type
+            rng = random.Random(args.seed)
+            candidates = [i for i, q in enumerate(dataset.questions)
+                          if _get_qtype(q) == args.qtype]
+            rng.shuffle(candidates)
+            query_dataset_idx = candidates[0]
+            q_data = dataset.questions[query_dataset_idx]
+
+        fname = q_data["image_filename"]
+        program = q_data.get("program", [])
+        question = q_data["question"]
+        gt_answer = q_data["answer"]
+        query_scene = scenes[fname]
+        print(f"Query [{qi}]: {question}  →  {gt_answer}")
+
+        # Extract program info for condition checking
+        described_attrs = extract_described_attrs(program)
+        anchor_obj, _ = find_anchor(query_scene["objects"], program)
+        anchor_4attrs = {k: anchor_obj.get(k) for k in ATTR_KEYS} if anchor_obj else None
+
+        # Check for same/spatial (has target)
+        meta_stem = Path(args.metadata).stem if args.metadata else ""
+        has_target = "same" in meta_stem or "spatial" in meta_stem
+        target_described, target_4attrs = {}, None
+        if has_target:
+            target_obj, target_described = find_target(query_scene["objects"], program)
+            if target_obj:
+                target_4attrs = {k: target_obj.get(k) for k in ATTR_KEYS}
+            print(f"Anchor attrs: {described_attrs}, Target attrs: {target_described}")
+
         # Sample DB
         db_fnames, db_indices = build_db_pool(
             dataset, scenes, fname, 3, 5, args.num_db)
@@ -752,7 +752,7 @@ def run_steered(args, device):
             db_shapes[i] = best_shape
         db_shapes = np.array(db_shapes)
 
-        cond_names = ["Binding", "Grounding", "Answer Match"]
+        cond_names = ["Binding", "Retrieval", "Answer classification"]
         print(f"Anchor: {dict(zip(cond_names, labels.sum(axis=0).tolist()))}")
 
         # Extract features

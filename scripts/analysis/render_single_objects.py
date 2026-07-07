@@ -52,6 +52,13 @@ parser.add_argument('--shape-dir',
 parser.add_argument('--material-dir',
                     default=os.path.join(CLEVR_GEN_DIR, 'data', 'materials'))
 parser.add_argument('--seed', default=42, type=int)
+parser.add_argument('--max-images', default=0, type=int,
+                    help='Stop after this many images (0 = all); for smoke tests')
+parser.add_argument('--num-distractors', default=0, type=int,
+                    help='Random distractor objects added per scene. Each '
+                         'distractor differs from the target in >=2 attributes '
+                         'so a 3-attribute description of the target stays '
+                         'unique for every query attribute.')
 
 # ── Constants ────────────────────────────────────────────────────
 
@@ -66,6 +73,26 @@ SIZES = ["large", "small"]
 
 # Position range — CLEVR default ground plane
 POS_MIN, POS_MAX = -3.0, 3.0
+
+
+def sample_distractor(target_attrs, rng):
+    """Distractor attrs differing from the target in >=2 of the 4 attributes."""
+    while True:
+        attrs = (rng.choice(COLORS), rng.choice(SHAPES),
+                 rng.choice(MATERIALS), rng.choice(SIZES))
+        if sum(a != b for a, b in zip(attrs, target_attrs)) >= 2:
+            return attrs
+
+
+def sample_position(existing, r, rng, min_margin=0.4, max_tries=100):
+    """Position with no overlap against existing [(x, y, r), ...]."""
+    for _ in range(max_tries):
+        x = rng.uniform(POS_MIN, POS_MAX)
+        y = rng.uniform(POS_MIN, POS_MAX)
+        if all(math.hypot(x - ex, y - ey) >= r + er + min_margin
+               for ex, ey, er in existing):
+            return x, y
+    raise RuntimeError("could not place object without overlap")
 
 
 # ── Blender helpers ──────────────────────────────────────────────
@@ -150,20 +177,39 @@ def main():
 
     for color, shape, material, size in all_types:
         for rep in range(args.n_per_type):
-            # Random position and rotation
-            x = random.uniform(POS_MIN, POS_MAX)
-            y = random.uniform(POS_MIN, POS_MAX)
+            # Target: random position and rotation
+            placed = []
+            x, y = sample_position(placed, SIZE_MAP[size], random)
+            placed.append((x, y, SIZE_MAP[size]))
             rotation = random.uniform(0, 2 * math.pi)
 
-            # Setup fresh scene, add object, render
+            # Distractors: attrs >=2 away from target, non-overlapping
+            distractors = []
+            for _ in range(args.num_distractors):
+                d_color, d_shape, d_material, d_size = sample_distractor(
+                    (color, shape, material, size), random)
+                dx, dy = sample_position(placed, SIZE_MAP[d_size], random)
+                placed.append((dx, dy, SIZE_MAP[d_size]))
+                distractors.append({
+                    'color': d_color, 'shape': d_shape,
+                    'material': d_material, 'size': d_size,
+                    'x': round(dx, 4), 'y': round(dy, 4),
+                    'rotation': round(random.uniform(0, 2 * math.pi), 4),
+                })
+
+            # Setup fresh scene, add objects, render
             setup_scene(args)
             clear_objects()
             add_single_object(args, color_to_rgba, color, shape, material, size, x, y, rotation)
+            for d in distractors:
+                add_single_object(args, color_to_rgba, d['color'], d['shape'],
+                                  d['material'], d['size'], d['x'], d['y'],
+                                  d['rotation'])
 
             fname = f'obj_{idx:04d}.png'
             render_to_file(str(img_dir / fname))
 
-            metadata.append({
+            entry = {
                 'index': idx,
                 'filename': fname,
                 'color': color,
@@ -173,11 +219,18 @@ def main():
                 'x': round(x, 4),
                 'y': round(y, 4),
                 'rotation': round(rotation, 4),
-            })
+            }
+            if distractors:
+                entry['distractors'] = distractors
+            metadata.append(entry)
 
             idx += 1
             if idx % 100 == 0:
                 print(f"  [{idx}/{total}] rendered")
+            if args.max_images and idx >= args.max_images:
+                break
+        if args.max_images and idx >= args.max_images:
+            break
 
     # Save metadata
     meta_path = out_dir / 'metadata.json'
