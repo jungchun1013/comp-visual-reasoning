@@ -813,9 +813,30 @@ def main():
     p.add_argument("--tsne-only", action="store_true",
                    help="Only generate t-SNE plots, skip RSA/acc analysis.")
     p.add_argument("--perplexity", type=float, default=30)
+    p.add_argument("--replot-from", type=str, default=None,
+                   help="Regenerate manipulation/retrieval figures from an existing "
+                        "run's JSONs (no GPU). Requires --output-dir (new dir; "
+                        "existing results are never overwritten).")
     args = p.parse_args()
 
     apply_style()
+
+    if args.replot_from:
+        assert args.output_dir, "--replot-from requires --output-dir"
+        src = Path(args.replot_from)
+        out = Path(args.output_dir)
+        assert out.resolve() != src.resolve(), "output dir must differ from source"
+        out.mkdir(parents=True, exist_ok=True)
+        for manip in ("grounding", "answer", "random"):
+            jf = src / f"manipulation_{manip}.json"
+            if not jf.exists():
+                print(f"skip {jf} (missing)")
+                continue
+            results = json.loads(jf.read_text())
+            plot_results(results, out)
+            plot_retrieval(results, out)
+        print("Done (replot).")
+        return
 
     ckpt_dir = Path(args.checkpoint).parent
     model_name = ckpt_dir.name.replace("_s42", "")
