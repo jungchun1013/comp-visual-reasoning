@@ -275,7 +275,7 @@ fixation 穩健，但要完成 A1→A2 的論證，必須先確認**未經語言
 （1,917 個物件），在每個物件的 pixel_coords 做 3×3 patch pooling，對每個 block 做
 5-fold logistic regression（`outputs/analysis/raw_backbone_probe/`）。
 
-**結果。** per-object 屬性可解碼度（取 block 峰值，括號內為峰值所在 block）：
+**結果。** per-object patch-token 屬性可解碼度（取 block 峰值，括號內為峰值所在 block）：
 
 | backbone | color | material | shape | size |
 |---|---|---|---|---|

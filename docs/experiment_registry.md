@@ -68,7 +68,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 - **Design**: 100 pairs × 4 attrs; distractor flips exactly one described attr; answer invariance verified by program execution; base re-render controls render domain. Families landed exactly on attr_query_direct [86,87,88,89] ✅ (consistent with X10's "direct" category).
 - **Status**: renders ✅; model eval ⏳ (queued, concat main model).
 
-### X12. E8 raw-backbone per-object probe (v2 A1.2)
+### X12. E8 raw-backbone per-object patch-token probe (v2 A1.2)
 - **Motivation**: substrate is compositional per-object BEFORE language conditioning.
 - **Design**: fresh zero-gated GCA = pure ViT; 3×3 patch pooling at pixel_coords; 300 scenes; per-block 5-fold logistic; 4 backbones.
 - **Status**: ⏳ (chained after main queue).

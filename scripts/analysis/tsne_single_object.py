@@ -21,6 +21,7 @@ from analysis.plot_style import (
     apply_style, ATTR_VALUE_COLORS, style_tsne_ax, make_tsne_grid,
     finish_tsne_grid, TSNE_STYLE, S,
 )
+from analysis.run_log import tee_stdout
 
 SHAPE_MARKERS = {"sphere": "o", "cube": "s", "cylinder": "^"}
 # Marker size encodes object size: hi/bg sizes from the shared t-SNE style
@@ -139,6 +140,7 @@ def run(args):
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(out_dir)
 
     steervit = None
     attrs_list = None

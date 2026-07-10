@@ -359,7 +359,7 @@ Artifacts: `outputs/analysis/raw_backbone_probe/<backbone>/` (300 multi-object
 scenes, 1,917 objects; fresh zero-gated GCA = pure pretrained ViT forward; 3×3
 patch pooling at each object's pixel_coords; 5-fold logistic regression per block).
 
-Per-object attribute decodability (peak over blocks):
+Per-object patch-token attribute decodability (peak over blocks):
 
 | backbone | color | material | shape | size |
 |---|---|---|---|---|

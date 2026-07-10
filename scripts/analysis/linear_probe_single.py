@@ -17,6 +17,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+from analysis.run_log import tee_stdout
 
 import matplotlib
 matplotlib.use("Agg")
@@ -115,6 +116,8 @@ COND_DISPLAY = {
     "noca": "no-CA",
     "ca_object": 'CA: "What color is the object?"',
     "ca_cube": 'CA: "What color is the cube?"',
+    "ca_shape_object": 'CA: "What shape is the object?"',
+    "ca_shape_large": 'CA: "What shape is the large object?"',
 }
 
 
@@ -126,6 +129,7 @@ def run(args):
         (Path(args.features_dir) if args.features_dir
          else Path("outputs/analysis/linear_probe/single_object"))
     out_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(out_dir)
 
     # Conditions: (name, {layer: (N, D)})
     conditions = []
@@ -180,7 +184,8 @@ def run(args):
 
     # Plot: one panel per attribute, lines = conditions (project plot style)
     _tab10 = plt.cm.tab10.colors
-    cond_color = {"noca": (0.4, 0.4, 0.4), "ca_object": _tab10[0], "ca_cube": _tab10[1]}
+    cond_color = {"noca": (0.4, 0.4, 0.4), "ca_object": _tab10[0], "ca_cube": _tab10[1],
+                  "ca_shape_object": _tab10[2], "ca_shape_large": _tab10[4]}
 
     fig, axes = plt.subplots(1, 4, figsize=(8 * 4, 6), sharey=True)
     for ax, attr in zip(axes, ATTRS):

@@ -35,7 +35,7 @@
 
 | 檔案 | 內容 |
 |---|---|
-| `outputs/analysis/raw_backbone_probe/vit_base_patch14_dinov2.lvd142m/raw_backbone_probe.png` | DINOv2 逐 block per-object 可解碼度曲線 |
+| `outputs/analysis/raw_backbone_probe/vit_base_patch14_dinov2.lvd142m/raw_backbone_probe.png` | DINOv2 逐 block per-object patch-token 可解碼度曲線 |
 | `.../vit_base_patch16_siglip_224/`、`.../vit_base_patch16_224.augreg_in21k/`、`.../vit_base_patch16_224.mae/` 同名檔 | 其餘三個 backbone，四張並排 = A1.2 |
 | `outputs/analysis/single_objects/dino_attribute_tsne_v2.png` | raw DINOv2 single-object t-SNE，2×2 依 color/shape/material/size 上色（tab10、正方 subplot、粗框線）。A1 substrate 主視覺 |
 | `outputs/analysis/tsne/single_object_v2/tsne_single_{noca,ca}_allattr.png` | trained model 逐 GCA-layer single-object t-SNE，no-CA vs CA 對照（同 style） |
@@ -195,7 +195,7 @@ Legacy SteerViT vs GCA-decoder   & 0.953 \\
 \end{table}
 ```
 
-### E8 — raw substrate per-object 可解碼度
+### E8 — raw substrate per-object patch-token 可解碼度
 
 ```latex
 \begin{table}
@@ -267,6 +267,6 @@ $t$ & Color & Material & Shape & Size & CA mass peak \\
 - **E3**：中段特化 GCA binding heads + 晚期 query-side SA 的 motif 在 SigLIP 完整複製；唯一偏離是 described-side SA 的整合位置。
 - **E9**：文字端擾動修復以 CA 為主、影像端以晚期 SA 為主，成立為 gradient（A 0.53–0.55 > B 0.43–0.49 > C 0.20–0.43）。
 - **E5**：難度軸是每步必須 bind 的 referent cardinality，不是 program depth；worst-family 結構跨三個獨立訓練模型複製（ρ 0.927–0.953）。
-- **E8**：raw backbone 已 per-object 編碼屬性（0.91–1.00，四個 backbone）；缺的是 selection，不是資訊。
+- **E8**：raw backbone 已 per-object 編碼屬性（patch-token probe）（0.91–1.00，四個 backbone）；缺的是 selection，不是資訊。
 - **E7**：同一組 bait 刺激，訓練後擄獲 ≤6%、移除 CA 後 24–59%——grounding 的因果貢獻就是 Binding/selection。
 - **T2I**：question prompt 下 PixArt-Σ 量不到 zero-shot binding（雙判準皆負）；機制需任務訓練誘發，此即本文貢獻的定位。

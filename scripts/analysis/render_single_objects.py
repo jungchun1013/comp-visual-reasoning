@@ -59,6 +59,11 @@ parser.add_argument('--num-distractors', default=0, type=int,
                          'distractor differs from the target in >=2 attributes '
                          'so a 3-attribute description of the target stays '
                          'unique for every query attribute.')
+parser.add_argument('--target-size', default=None, choices=['large', 'small'],
+                    help='Fix the target size (restricts the enumerated types)')
+parser.add_argument('--distractor-size', default=None, choices=['large', 'small'],
+                    help='Fix every distractor size (e.g. one-large-one-small '
+                         'scenes: --target-size large --distractor-size small)')
 
 # ── Constants ────────────────────────────────────────────────────
 
@@ -75,11 +80,11 @@ SIZES = ["large", "small"]
 POS_MIN, POS_MAX = -3.0, 3.0
 
 
-def sample_distractor(target_attrs, rng):
+def sample_distractor(target_attrs, rng, size=None):
     """Distractor attrs differing from the target in >=2 of the 4 attributes."""
     while True:
         attrs = (rng.choice(COLORS), rng.choice(SHAPES),
-                 rng.choice(MATERIALS), rng.choice(SIZES))
+                 rng.choice(MATERIALS), size or rng.choice(SIZES))
         if sum(a != b for a, b in zip(attrs, target_attrs)) >= 2:
             return attrs
 
@@ -169,6 +174,8 @@ def main():
 
     # Enumerate all 96 object types
     all_types = list(itertools.product(COLORS, SHAPES, MATERIALS, SIZES))
+    if args.target_size:
+        all_types = [t for t in all_types if t[3] == args.target_size]
     total = len(all_types) * args.n_per_type
     print(f"Rendering {len(all_types)} object types × {args.n_per_type} = {total} images")
 
@@ -187,7 +194,8 @@ def main():
             distractors = []
             for _ in range(args.num_distractors):
                 d_color, d_shape, d_material, d_size = sample_distractor(
-                    (color, shape, material, size), random)
+                    (color, shape, material, size), random,
+                    size=args.distractor_size)
                 dx, dy = sample_position(placed, SIZE_MAP[d_size], random)
                 placed.append((dx, dy, SIZE_MAP[d_size]))
                 distractors.append({
