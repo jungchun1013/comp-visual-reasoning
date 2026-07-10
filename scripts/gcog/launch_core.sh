@@ -14,7 +14,7 @@ NTRIALS=5000
 
 for model in "${MODELS[@]}"; do
     for split in "${SPLITS[@]}"; do
-        OUTDIR="../outputs/gcog/${model}_${split}_ep${N_EPOCHS}_seed${SEED}"
+        OUTDIR="outputs/gcog/${model}_${split}_ep${N_EPOCHS}_seed${SEED}"
         mkdir -p "$OUTDIR"
         echo "=========================================="
         echo "[$(date)] Model: ${model} | Split: ${split}"

@@ -33,6 +33,6 @@ for model in "${MODELS[@]}"; do
             --n-epochs $N_EPOCHS \
             --ntrials $NTRIALS \
             --seed $SEED \
-            2>&1 | tee -a "../outputs/gcog/${model}_${split}_seed${SEED}/stdout.log"
+            2>&1 | tee -a "outputs/gcog/${model}_${split}_seed${SEED}/stdout.log"
     done
 done
