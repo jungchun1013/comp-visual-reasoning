@@ -412,8 +412,10 @@ independently trained models spanning two codebase generations.
 
 ## 12. Pending
 
-E10 grounding_manipulation replots (with "Retrieval (object/answer)" labels) ·
-E9 contrast figure · Opus integrated substrate-section report (§8–§11 + §13) ·
+E5 failure-mode figures (JSONs landed §7, plots in progress 07-10) ·
+CoGenT alpha-sweep curve (from `cogent_zeroshot/zeroshot_alpha_sweep.json`) ·
+multi-object steered t-SNE light-palette replot (scope TBD — pick the
+presentation subset, not all 71) · ACDC / binding-interchange figures ·
 T2I declarative-caption variant (optional, if pursued after the negative sweep).
 
 ## 13. T2I zero-shot grounding (PixArt-Σ) — timestep sweep complete 14:34 07-06
@@ -474,3 +476,63 @@ attributes make any error "bait-shaped" by construction — material bait_share
 0.96, size 1.00 mean nothing). The 4/16-epoch checkpoint confirms its
 qualitative-only status; the Flamingo E7 leg waits on the retrain
 (no-LoRA + precomputed-features plan, pending user go).
+
+## 15. Flamingo retrain + E7 rerun (frozen-LLM, 8 epochs) — landed 07-09
+
+Retrain: `clevr_flamingo_dinov2_frozenllm_s42` (GCA+connector trainable 106M,
+LLM frozen, batch 64, 8 epochs). Final = best val acc **0.3176** — the
+architecture stays far below SteerViT (0.92) even with the full recipe, so the
+4-epoch checkpoint's weakness was not undertraining alone.
+
+E7 fixed-protocol rerun on `last.pt`
+(`add_object/<attr>/add_object_eval_clevr_flamingo_dinov2_frozenllm_s42.json`):
+
+| attr | acc_base | acc_added | hallucination | bait_share |
+|---|---|---|---|---|
+| color | 0.12 | 0.11 | 0.08 | 0.09 |
+| material | 0.54 | 0.41 | 0.59 | 1.00 |
+| shape | 0.44 | 0.37 | 0.52 | 0.83 |
+| size | 0.47 | 0.46 | 0.54 | 1.00 |
+
+Doubling training left hallucination flat-to-worse (material 0.51→0.59, shape
+0.29→0.52 vs the 4-ep run §14) while base accuracy rose above chance for the
+2–3-class attributes — the model now reads attributes well enough for errors
+to be meaningful, and those errors are ~all bait-shaped (bait_share 0.83–1.00
+outside the still-degenerate color leg). **Reading: fixation failure under an
+added lure is a property of LLM-side fusion, not of training budget; GCA
+in-stream conditioning (hallucination 0–0.06, §8) is what suppresses it.**
+The E7 flamingo leg is now quantitative. Figure:
+`outputs/analysis/add_object/hallucination_bar.png`
+(`scripts/analysis/add_object_plot.py`, aggregation-only, rerunnable).
+
+## 16. Object-count controlled t-SNE + probe (1 vs 2 objects × 5 prompts) — landed 07-08
+
+Design (user-specified): render CLEVR-style scenes with the single-object
+pipeline (`render_single_objects.py --num-distractors`), 1-object (500 imgs,
+96 types) vs 2-object (480 imgs, distractor ≥2-attr different); extract GCA-
+decoder features under {no-CA, "What color is the object?", "What color is
+the cube?", "What shape is the object?", "What shape is the large object?"};
+same features feed the allattr t-SNE grids and 5-fold PCA-50 logistic probes.
+Artifacts + caches + log.txt: `outputs/analysis/tsne/object_count/n{1,2}/`.
+
+L11 probe accuracy (target attributes):
+
+| condition | n1 color | n1 shape | n2 color | n2 shape |
+|---|---|---|---|---|
+| no-CA | 0.992 | 0.998 | 0.356 | 0.667 |
+| CA "What color is the object?" | 0.996 | 0.990 | **0.458** | 0.619 |
+| CA "What color is the cube?" | 0.998 | 0.988 | 0.331 | 0.548 |
+| CA "What shape is the object?" | 0.994 | 0.994 | 0.317 | 0.613 |
+| CA "What shape is the large object?" | 0.974 | 0.990 | 0.294 | 0.575 |
+
+Single object: everything scene-level decodable (≈1.0) under every condition.
+One distractor: scene-level target decodability collapses (color 0.36); only
+the semantically aligned color prompt gives partial recovery (0.36→0.46);
+shape prompts give none, and "the cube"/"the large object" referents mismatch
+the probe's target labels by construction. Consistent with §8/§11: the
+substrate keeps per-object information, but scene-level pooled features lose
+the *which-object* selection without (aligned) language conditioning.
+Side observation: CLEVR color "gray" forms an isolated t-SNE island at all
+layers — its L11 centroid sits 12.2 from the other colors' centroids
+(chromatic pairs: 4.6–5.5); gray is the only achromatic value, matching the
+gray ground plane. Data property, present in every condition.

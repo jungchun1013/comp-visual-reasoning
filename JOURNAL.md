@@ -9,16 +9,45 @@
 - [ ] [paper] R4: transfusion baseline has no checkpoint — retrain or drop from baseline table? (user decision)
 - [ ] [paper] learned_text paper cell (24.6) is protocol-dependent: training-log final-ep 0.2456 vs independent eval protocol 0.197 (last.pt) / 0.207 (best.pt ep2); windowed train-loop acc 0.4667 is a third number. User decides camera-ready treatment (footnote or renumber). Artifacts: `outputs/analysis/generalization/clevr_dinov2_learned_text_decoder1l{,_lastep}_s42.json`
 - [ ] [paper] Baseline implementations GATED ON USER GO: OpenFlamingo-9B zero-shot mechanism analysis (priority 1), T5-vs-RoBERTa capacity axis (+CLOSURE). Designs pre-registered in docs/paper_v2_outline.md; survey in experiment_registry.md X14. (PixArt-Σ un-gated by user 2026-07-06 — probe/CA-map running.)
-- [ ] [paper] Flamingo retrain LAUNCHED (user go 2026-07-06 ~23:10): `clevr_flamingo_dinov2_frozenllm_s42`, pid 3288810 — frozen-LLM recipe (new `--freeze-llm`: GCA+connector only, 106M trainable, LLM 0), batch 64, 8 epochs, warmup 1, cache 85000 (fp16, ~72GB RAM). Smoke-tested batch-64 peak 11.7GiB. Harvest: final-epoch val acc → then rerun E7 `*_fixed` protocol on the new ckpt (adapter reads freeze_llm from ckpt). Old 4/16-epoch `clevr_flamingo_dinov2_early_s42` stays qualitative-only reference.
+- [ ] [plot] E5 failure-mode figures from the landed JSONs (§7) — in progress 07-10
+- [ ] [plot] CoGenT alpha-sweep curve from `cogent_zeroshot/zeroshot_alpha_sweep.json` (R2 evidence)
+- [ ] [plot] multi-object steered t-SNE light-palette replot — decide the presentation subset first (previous batch stopped 2/71; don't redo all 71 blindly)
+- [ ] [plot] ACDC / binding-interchange figures (results JSONs exist, no figures)
+- [ ] [main flow] E5 agent-autonomous diagnosis pass (2–3 follow-up analyses from the failure-mode tables) — after E5 figures
 - [ ] [main flow] **POLICY (user 2026-07-05)**: non-paper run dirs (nogate/film/mean/20ep/sup+mae decoder1l/flamingo/llava/transfusion) are training-exploration byproducts — do not eval, analyze, or build claims on them. Exception: existing gate writeup (RESULTS.md §2) stays; siglip_decoder1l sanctioned for E3.
 - [ ] [model] dinov2_mean rerun if wanted: only an epoch-0 last.pt exists (crashed run; ep0 acc 0.218 — meaningless). Retrain or drop the cell.
-- [x] [paper] Pre-registration deviations RESOLVED (user-approved 2026-07-06): outline amended — A1.3 headline metric = hallucination_rate (bait_share undefined at 0 errors, degenerate for binary attrs at chance; kept as secondary); T2I t=261/400 sweep recorded as post-hoc robustness check. Commit on master.
 - [ ] [ablation] T2I optional follow-up: declarative-caption prompts (extract_oracle_prompt) if the user wants to chase the domain-mismatch caveat
 - [ ] [infra] broken A6000 (PCI 0x21, `[GPU requires reset]`, survives reboot, PCI remove blocks on usage count) → report for hardware repair
 
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- Day rotation performed (backlog: 07-06→07-09 archived below; boundary crossings were missed while sessions ran through the nights).
+- Dead-log cleanup (user-authorized): deleted 5 crash-only logs (activation_patching_legacy, path_patching_phase3, download_pixart, eval_dinov2_mean Hydra-error, followup_d2 skip-wrapper); moved 2 real-output logs home (`eval_clevr_dinov2_mean_scratch_s42_v2.log` → its model dir; `grounding_manip_tsne_v3labels.log` → `grounding_manipulation/..._v2/`). `outputs/analysis/` top level now log-free; `metadata/` holds only the 6 multi-experiment pipeline logs.
+- RESULTS.md §15 (Flamingo 8-ep retrain + E7 rerun: hallucination flat-to-worse despite doubled training → LLM-side-fusion property, E7 flamingo leg now quantitative) and §16 (object_count 1-vs-2-object × 5 prompts: scene-level collapse with one distractor, partial recovery only under the aligned color prompt) written; §12 Pending refreshed.
+
+## Log
+> [!NOTE] Day Rotation inserts archived entries here. Newest on top.
+
+### 2026-07-09 (Thu)
+- **E7 evidence completed**: new `scripts/analysis/add_object_plot.py` → `outputs/analysis/add_object/hallucination_bar.png` (grouped bars, 5 models × 4 attrs, aggregation-only/rerunnable). Existing-JSON version first, auto-refreshed after the flamingo rerun.
+- **Flamingo 8-ep E7 rerun (4 attrs, fixed protocol, last.pt)**: hallucination color 0.08 / material 0.59 / shape 0.52 / size 0.54, bait_share 0.83–1.00 (non-color); doubling training did not reduce hallucination → architecture (LLM-side fusion), not training budget. RESULTS.md §15.
+- **Flamingo retrain harvested**: `clevr_flamingo_dinov2_frozenllm_s42` finished 07-08 04:12, final=best val acc 0.3176 (8 ep).
+- **Log placement root fix**: new `src/analysis/run_log.py:tee_stdout(out_dir)` (appends stdout+stderr to `<out_dir>/log.txt`, timestamp+argv header) wired into 21 analysis scripts (agent did 18, hand-added add_object_eval{,_flamingo}, dino_attribute_tsne); all py_compile-clean, smoke-verified append mode. Blender render scripts excluded (no src on Blender's path).
+- **Log consolidation**: 65 stray logs moved into their experiment dirs by content evidence (14 from `analysis/` top level, 51+ from `metadata/`); pipeline/queue logs stay in `metadata/`.
+- **Folder convergence (user-directed)**: vault-root `outputs/` (2.5G invalid gcog runs + dead launch log) and vault-root `docs/` (superseded 05-13 superpowers design docs) DELETED; gcog launch scripts repointed `../outputs/gcog` → `outputs/gcog`; `main/outputs/2026-*` Hydra date dirs merged into `outputs/log/`; vault CLAUDE.md updated (results live ONLY in `main/outputs/`).
+- 3 commits pushed to origin/master: object_count follow-ups (tab10 α0.7 palette, shape prompts, distractor rendering, patch-token naming) / run_log tee wiring / gcog paths.
+- Superpowers plugin retired (user-directed): principles distilled into `~/.claude/skills/brainstorming/` (slim design gate) + playbook (20-judgment commit-reminder rule, 00-diagnosis debugging discipline); plugin disabled in settings; tdd-guard disabled by user.
+
+### 2026-07-08 (Wed)
+- **object_count experiment completed (RESULTS.md §16)**: n1 (500 single-object) + n2 (480 two-object, unconstrained ≥2-attr distractor) × {no-CA, color-object, color-cube, shape-object, shape-large} — 10 allattr t-SNE grids + 2 five-condition probes. L11: n1 ≈1.0 everywhere; n2 no-CA color 0.356 → 0.458 only under the aligned color prompt; shape prompts recover nothing. n3 dropped, one-large-one-small dataset rendered but retired (user reversal) — kept unused.
+- Palette settled after iterations: ATTR_VALUE_COLORS = tab10 baked at alpha 0.7 (light tab20 rejected as too pale in legends); all 10 t-SNE figures replotted from caches (a first replot ran from the wrong cwd — relative paths wrote nowhere while the wrapper still exited 0; reran from `main/`).
+- Gray-cluster question resolved quantitatively: CLEVR "gray" L11 centroid distance 12.2 vs 4.6–5.5 among chromatic colors — real feature-space isolation (achromatic + gray floor), not a t-SNE artifact.
+
+**Completed:**
+- [x] [paper] Flamingo retrain (launched 07-06, harvested 07-08/09; E7 fixed-protocol rerun done, RESULTS.md §15)
+
+### 2026-07-07 (Tue) — covers 07-06 evening through 07-07
 - **E7 harvested (all 4 attributes, concat main model)**: binding fixation is ROBUST under adversarial lure — acc_base→acc_added: color 0.98→0.97, material 1.00→1.00, shape 1.00→0.98, size 0.90→0.94; hallucination_rate 0–0.06; the FEW errors are bait-shaped (bait_share_of_errors 0.5–1.0). Reframes A1: trained grounding resolves the multi-object fixation problem for direct queries; the real multi-object bottleneck is set enumeration/combination (E5). Size is the weakest attribute throughout. RESULTS.md §8.
 - **D2 lastep landed**: learned_text last.pt(ep15) independent eval = 0.1974 ≠ training-log 0.2456 ≠ paper 24.6 provenance assumption. Same qualitative collapse as best.pt (QryAttr 0.000, Count 0.003, binary at chance). Paper cell is protocol-dependent → new TODO for camera-ready decision.
 - Side queue (E7 evals + D2) finished 03:51 — ran concurrently with pipeline E4 on the single healthy GPU (46GB, pipeline peaks ~8GB); pipeline will SKIP E7 via its own done_markers. E4 linear_probe done (02:57–07:03, exit=0); conditional_rsa running since 07:03.
@@ -34,8 +63,8 @@
 - **NAMING (user decision 2026-07-07, supersedes the 07-06 interim labels)**: Retrieval has NO object/answer split — the old middle chain level IS the Retrieval stage; the answer level is the pre-existing classification readout ("Answer classification"), not a grounding stage, not discussed as mechanism. "Retrieval (object)/(answer)" abolished across conditional_rsa/tsne_viz/grounding_manipulation, legacy-reference naming map, RESULTS.md, all three report docs, memory. Corrected-label replots → `grounding_manipulation/clevr_dinov2_decoder1l_scratch_v3labels/` (7 figures; v2labels dir kept untouched).
 - **Flamingo E7 measurement corrected (21:40), RESULTS.md §14**: first run was a harness artifact — `generate_answer` lowercases its decode, adapter split on uppercase `"Answer:"` → every prediction was prompt-echo `'question:'`, all-zero accs. Fixed in the adapter AND in `train_flamingo_clevr.py:evaluate` (same latent bug; would have reported val acc 0 during the planned retrain). Invalid JSONs left in place (never-overwrite); corrected runs = `*_fixed.json`. Corrected result: chance-level, near-degenerate predictions on all 4 attributes (color 98% "yellow", size 100% "small") → E7-flamingo uninterpretable until retrain; qualitative-only status confirmed quantitatively.
 
-## Log
-> [!NOTE] Day Rotation inserts archived entries here. Newest on top.
+**Completed:**
+- [x] [paper] Pre-registration deviations RESOLVED (user-approved 2026-07-06): outline amended — A1.3 headline metric = hallucination_rate (bait_share kept secondary); T2I t=261/400 sweep recorded as post-hoc robustness check.
 
 ### 2026-07-05 (Sun)
 - Identified the paper's model-variant split: performance tables use the **concat self-attention decoder** runs (`clevr_<bb>_concat_decoder1l_scratch_s42`, `ConcatSelfAttnDecoder` per `src/tasks/decoder.py:309`), while all mechanistic analyses use the **GCA-decoder** (`clevr_dinov2_decoder1l_scratch_s42`, `VQADecoder`). Matches paper App. A.
