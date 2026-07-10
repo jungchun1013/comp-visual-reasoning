@@ -20,6 +20,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+from analysis.run_log import tee_stdout
 
 import matplotlib
 matplotlib.use("Agg")
@@ -160,6 +161,7 @@ def run(args):
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(out_dir)
 
     results = {}
 

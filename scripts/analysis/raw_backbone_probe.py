@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Raw-backbone per-object attribute probing on MULTI-object scenes (E8, v2 §A1).
+"""Raw-backbone per-object patch-token probe on MULTI-object scenes (E8, v2 §A1).
 
 Claim A1.2 (docs/paper_v2_outline.md): the pretrained substrate encodes attributes
 at the PER-OBJECT level in multi-object scenes, before any language conditioning.
@@ -33,6 +33,7 @@ import torch
 from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+from analysis.run_log import tee_stdout
 
 ATTRS = ["color", "material", "shape", "size"]
 
@@ -81,6 +82,7 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--output-root", default="outputs/analysis/raw_backbone_probe")
     args = ap.parse_args()
+    tee_stdout(Path(args.output_root) / args.backbone.replace("/", "_"))
 
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import StratifiedKFold

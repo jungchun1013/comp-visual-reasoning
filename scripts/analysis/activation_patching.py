@@ -31,6 +31,7 @@ from model import CrossAttnViT
 from data.clevr import CLEVRVQADataset
 from tasks.decoder import build_clevr_decoder_vocab, VQADecoder, DecoderModel
 from analysis.patching_utils import HeadPatcher
+from analysis.run_log import tee_stdout
 from analysis.patching_sampling import (
     CATEGORIES, build_corruption_index, collect_corruption_samples,
 )
@@ -331,6 +332,7 @@ def main():
         Path("outputs/analysis/activation_patching") / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir = str(output_dir)
+    tee_stdout(output_dir)
 
     stats_path = output_dir / "headwise_by_type_stats.json"
 

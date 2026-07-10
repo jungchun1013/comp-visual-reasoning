@@ -29,6 +29,7 @@ from torchvision import transforms
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
+from analysis.run_log import tee_stdout  # noqa: E402
 from analysis.plot_style import (
     S, apply_style, ATTR_VALUE_COLORS, ATTR_VALUE_ORDER, style_tsne_ax,
     make_tsne_grid, finish_tsne_grid, TSNE_STYLE,
@@ -133,6 +134,7 @@ def main():
     image_dir = Path(args.image_dir)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_path.parent)
 
     # Load metadata
     with open(args.metadata) as f:

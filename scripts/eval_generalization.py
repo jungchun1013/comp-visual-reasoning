@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data.clevr import CLEVRVQADataset, clevr_collate_fn
 from evaluator import evaluate_decoder, evaluate_classification, format_results
+from analysis.run_log import tee_stdout
 from omegaconf import OmegaConf
 
 
@@ -270,6 +271,7 @@ def main():
     parser.add_argument("--ft-lr", type=float, default=2e-5)
     parser.add_argument("--ft-epochs", type=int, default=10)
     args = parser.parse_args()
+    tee_stdout(Path("outputs/analysis/generalization"))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

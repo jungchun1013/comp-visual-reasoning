@@ -40,6 +40,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from data.clevr import CLEVRVQADataset, clevr_collate_fn  # noqa: E402
+from analysis.run_log import tee_stdout  # noqa: E402
 
 YESNO = {"yes", "no"}
 DIGITS = {str(i) for i in range(11)}
@@ -76,6 +77,7 @@ def main():
 
     out_dir = Path(args.output_root) / meta["name"]
     out_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(out_dir)
 
     ds = CLEVRVQADataset(args.data_root, "val", transform)
     indices = list(range(0, len(ds), args.stride))

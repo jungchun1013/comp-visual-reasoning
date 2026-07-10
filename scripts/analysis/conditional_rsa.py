@@ -60,6 +60,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from analysis.plot_style import PLOT_STYLE as S, apply_style
+from analysis.run_log import tee_stdout
 
 
 # ── Chain definitions ────────────────────────────────────────────
@@ -302,6 +303,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/conditional_rsa") / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     if args.replot:
         for cat_dir in sorted(output_dir.iterdir()):

@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 from model import CrossAttnViT
 from data.clevr import CLEVRVQADataset
 from tasks.decoder import build_clevr_decoder_vocab, VQADecoder, DecoderModel
+from analysis.run_log import tee_stdout
 from analysis.patching_sampling import (
     build_corruption_index, collect_corruption_samples,
     collect_visual_corruption_samples,
@@ -391,6 +392,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/acdc")
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     discoverer = ACDCDiscoverer(steervit, decoder, vocab)
     print(f"SA: {discoverer.sa_num_heads} heads, "

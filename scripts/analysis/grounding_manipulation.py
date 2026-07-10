@@ -49,6 +49,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
 from analysis.plot_style import PLOT_STYLE, apply_style
+from analysis.run_log import tee_stdout
 
 
 # ── Reuse model loading & feature extraction from conditional_rsa ─
@@ -843,6 +844,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/grounding_manipulation") / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

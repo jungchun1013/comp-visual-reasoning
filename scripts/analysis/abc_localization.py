@@ -130,6 +130,8 @@ def main():
     src = Path(args.patching_root) / args.model
     out_dir = Path(args.output_root) / args.model
     out_dir.mkdir(parents=True, exist_ok=True)
+    from analysis.run_log import tee_stdout
+    tee_stdout(out_dir)
 
     headwise = json.loads((src / "headwise_by_type_stats.json").read_text())
     gca_layers = headwise["gca_layers"]

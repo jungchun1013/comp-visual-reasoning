@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 from model import CrossAttnViT
 from tasks.decoder import build_decoder_model, build_clevr_decoder_vocab
 from data.clevr import CLEVRVQADataset
+from analysis.run_log import tee_stdout
 
 # ── CoGenT conditions ───────────────────────────────────────────────
 
@@ -181,6 +182,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/cogent_zeroshot")
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     # Load CoGenT-B validation set
     dataset = CLEVRVQADataset(args.data_root, "valB", transform)

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 from model import CrossAttnViT
 from data.clevr import CLEVRVQADataset, ANSWER_TO_IDX, IDX_TO_ANSWER
 from tasks.decoder import build_clevr_decoder_vocab, VQADecoder, DecoderModel
+from analysis.run_log import tee_stdout
 
 import matplotlib
 matplotlib.use("Agg")
@@ -583,6 +584,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/binding_interchange") / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     gca_layers = [i for i, blk in enumerate(steervit.vision_model.trunk.blocks)
                   if getattr(blk, "gated_cross_attn", None) is not None]

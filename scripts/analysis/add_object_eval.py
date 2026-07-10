@@ -29,6 +29,8 @@ from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
+from analysis.run_log import tee_stdout  # noqa: E402
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -37,6 +39,7 @@ def main():
                     help="pairs.json from render_add_object.py")
     ap.add_argument("--batch-size", type=int, default=32)
     args = ap.parse_args()
+    tee_stdout(Path(args.pairs).parent)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     from model.checkpoint_io import load_any_checkpoint

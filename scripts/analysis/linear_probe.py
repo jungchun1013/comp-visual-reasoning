@@ -42,6 +42,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from analysis.plot_style import apply_style, line_kwargs
+from analysis.run_log import tee_stdout
 
 ATTR_KEYS = ("color", "shape", "material", "size")
 LABEL_NAMES = ["answer_match", "answer_decode"]
@@ -329,6 +330,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/linear_probe") / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     dataset = CLEVRVQADataset(args.data_root, "val", transform)
     scenes_path = Path(args.data_root) / "scenes" / "CLEVR_val_scenes.json"

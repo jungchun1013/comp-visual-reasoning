@@ -45,6 +45,7 @@ from model import CrossAttnViT
 from data.clevr import CLEVRVQADataset
 from tasks.decoder import build_clevr_decoder_vocab, VQADecoder, DecoderModel
 from analysis.patching_sampling import build_corruption_index, collect_corruption_samples
+from analysis.run_log import tee_stdout
 
 import matplotlib
 matplotlib.use("Agg")
@@ -1136,6 +1137,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/path_patching") / model_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     patcher = PathPatcher(steervit, decoder, vocab)
     print(f"SA: {patcher.sa_num_heads} heads, GCA: {patcher.gca_num_heads} heads")

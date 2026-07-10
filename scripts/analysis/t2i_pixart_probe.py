@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
 
 from data.clevr_programs import _execute_program  # referent localization
 from data.clevr_sampling import RETRIEVAL_CATEGORIES
+from analysis.run_log import tee_stdout
 
 CATEGORIES = ("attr_query_direct", "attr_query_same", "attr_query_spatial")
 CLEVR_W, CLEVR_H = 480, 320  # native render size (pixel_coords space)
@@ -350,6 +351,7 @@ def main():
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(out_dir)
     if args.stage in ("extract", "all"):
         extract(args, out_dir)
     if args.stage in ("probe", "all"):

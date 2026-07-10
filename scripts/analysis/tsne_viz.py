@@ -101,6 +101,7 @@ ATTR_KEYS = ("color", "shape", "material", "size")
 SHAPE_MARKERS = {"sphere": "o", "cylinder": "^", "cube": "s"}
 
 from analysis.plot_style import PLOT_STYLE, apply_style
+from analysis.run_log import tee_stdout
 
 # Intentional overrides vs PLOT_STYLE: smaller legend (14 vs 16) for dense
 # scatter legends, smaller suptitle (18 vs 20) for multi-panel t-SNE grids.
@@ -586,6 +587,7 @@ def run_qtype(args, device):
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/tsne") / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
     cache_path = output_dir / "cache_qtype.npz"
 
     if not args.replot:

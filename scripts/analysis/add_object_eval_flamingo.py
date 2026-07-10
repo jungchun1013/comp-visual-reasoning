@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from train_flamingo_clevr import FlamingoModel  # noqa: E402
+from analysis.run_log import tee_stdout  # noqa: E402
 
 
 def main():
@@ -45,6 +46,7 @@ def main():
     ap.add_argument("--out-suffix", default="",
                     help="appended to the output file name (never overwrite old runs)")
     args = ap.parse_args()
+    tee_stdout(Path(args.pairs).parent)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)

@@ -40,6 +40,7 @@ from sklearn.manifold import TSNE
 # ── Style ────────────────────────────────────────────────────────
 
 from analysis.plot_style import PLOT_STYLE, apply_style
+from analysis.run_log import tee_stdout
 
 # Intentional overrides vs PLOT_STYLE: smaller legend (12) and titles (16)
 # for the dense 3-panel clean/corrupt/patched layout.
@@ -319,6 +320,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else \
         Path("outputs/analysis/patching_tsne")
     output_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(output_dir)
 
     extractor = PatchingFeatureExtractor(steervit, args.extract_layer)
     corruption_index = build_corruption_index(dataset)
