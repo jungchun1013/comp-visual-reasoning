@@ -9,7 +9,7 @@
 - [ ] [paper] R4: transfusion baseline has no checkpoint — retrain or drop from baseline table? (user decision)
 - [ ] [paper] learned_text paper cell (24.6) is protocol-dependent: training-log final-ep 0.2456 vs independent eval protocol 0.197 (last.pt) / 0.207 (best.pt ep2); windowed train-loop acc 0.4667 is a third number. User decides camera-ready treatment (footnote or renumber). Artifacts: `outputs/analysis/generalization/clevr_dinov2_learned_text_decoder1l{,_lastep}_s42.json`
 - [ ] [paper] Baseline implementations GATED ON USER GO: OpenFlamingo-9B zero-shot mechanism analysis (priority 1), T5-vs-RoBERTa capacity axis (+CLOSURE). Designs pre-registered in docs/paper_v2_outline.md; survey in experiment_registry.md X14. (PixArt-Σ un-gated by user 2026-07-06 — probe/CA-map running.)
-- [ ] [plot] E5 failure-mode figures from the landed JSONs (§7) — in progress 07-10
+- [x] [plot] E5 failure-mode figures from the landed JSONs (§7) — done 07-10 (`failure_modes.py --replot all`, 4 models)
 - [ ] [plot] CoGenT alpha-sweep curve from `cogent_zeroshot/zeroshot_alpha_sweep.json` (R2 evidence)
 - [ ] [plot] multi-object steered t-SNE light-palette replot — decide the presentation subset first (previous batch stopped 2/71; don't redo all 71 blindly)
 - [ ] [plot] ACDC / binding-interchange figures (results JSONs exist, no figures)
@@ -25,6 +25,7 @@
 - Day rotation performed (backlog: 07-06→07-09 archived below; boundary crossings were missed while sessions ran through the nights).
 - Dead-log cleanup (user-authorized): deleted 5 crash-only logs (activation_patching_legacy, path_patching_phase3, download_pixart, eval_dinov2_mean Hydra-error, followup_d2 skip-wrapper); moved 2 real-output logs home (`eval_clevr_dinov2_mean_scratch_s42_v2.log` → its model dir; `grounding_manip_tsne_v3labels.log` → `grounding_manipulation/..._v2/`). `outputs/analysis/` top level now log-free; `metadata/` holds only the 6 multi-experiment pipeline logs.
 - RESULTS.md §15 (Flamingo 8-ep retrain + E7 rerun: hallucination flat-to-worse despite doubled training → LLM-side-fusion property, E7 flamingo leg now quantitative) and §16 (object_count 1-vs-2-object × 5 prompts: scene-level collapse with one distractor, partial recovery only under the aligned color prompt) written; §12 Pending refreshed.
+- **E5 figures done**: `failure_modes.py` gained `plot_summary` + `--replot MODEL|all` (aggregation from failure_summary.json, no GPU; GPU runs now emit the figure automatically) → `failure_modes.png` in all 4 model dirs (1×4: per-qtype bars / yes-no confusion / counting signed-error log-hist / acc-vs-depth). Main-vs-nogca pair is the A5 visual: symmetric confusion + off-by-one errors + flat depth curve vs prior-level everything, 2,043 non-numeric counts, wide error spread. RESULTS.md §7 updated with figure pointers.
 
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.

@@ -166,6 +166,11 @@ C only affects SA" is not.
 
 Artifacts: `outputs/analysis/failure_modes/clevr_dinov2_concat_decoder1l_scratch_s42/`
 (records.jsonl n=37,498 stride=4; overall 0.9240 ≈ full-val 0.9237 — subsample faithful).
+Figures (added 07-10): `failure_modes.png` in each model dir — per-qtype bars,
+yes/no confusion, counting signed-error hist (log y), acc-vs-depth
+(`failure_modes.py --replot all`, aggregation-only). The nogca panel is the
+visual contrast: all types at prior, counting 0.250 with 2,043 non-numeric
+outputs and wide error spread, mild yes-bias (pred-no 0.424 vs gt 0.503).
 Pre-registered hypotheses (docs/paper_v2_outline.md):
 
 - **H2 (answer-prior collapse on yes/no): REFUTED.** pred-no rate 0.504 vs gt-no 0.503;
@@ -412,7 +417,6 @@ independently trained models spanning two codebase generations.
 
 ## 12. Pending
 
-E5 failure-mode figures (JSONs landed §7, plots in progress 07-10) ·
 CoGenT alpha-sweep curve (from `cogent_zeroshot/zeroshot_alpha_sweep.json`) ·
 multi-object steered t-SNE light-palette replot (scope TBD — pick the
 presentation subset, not all 71) · ACDC / binding-interchange figures ·

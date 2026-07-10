@@ -45,6 +45,89 @@ from analysis.run_log import tee_stdout  # noqa: E402
 YESNO = {"yes", "no"}
 DIGITS = {str(i) for i in range(11)}
 
+QTYPE_ORDER = ["query_attribute", "equal_attribute", "exist", "count",
+               "compare_integer"]
+
+
+def plot_summary(summary, out_dir):
+    """failure_modes.png: per-qtype acc, yes/no confusion, counting errors, depth."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from analysis.plot_style import apply_style, S, line_kwargs
+    apply_style()
+    _tab10 = plt.cm.tab10.colors
+
+    fig, axes = plt.subplots(1, 4, figsize=(6.4 * 4, 4.8))
+
+    # (a) per-question-type accuracy
+    ax = axes[0]
+    qt = summary["per_qtype"]
+    keys = [k for k in QTYPE_ORDER if k in qt] + \
+        sorted(k for k in qt if k not in QTYPE_ORDER)
+    ax.bar(range(len(keys)), [qt[k]["accuracy"] for k in keys], color=_tab10[0])
+    ax.set_xticks(range(len(keys)))
+    ax.set_xticklabels([k.replace("_", "\n") for k in keys],
+                       fontsize=S["tick_labelsize"] - 2)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("accuracy")
+    ax.set_title("Per question type", fontsize=S["subplot_title_fontsize"])
+
+    # (b) yes/no confusion (row-normalized) with counts
+    ax = axes[1]
+    conf = summary["yesno"]["confusion"]
+    mat = np.array([[conf.get("yes->yes", 0), conf.get("yes->no", 0)],
+                    [conf.get("no->yes", 0), conf.get("no->no", 0)]], float)
+    norm = mat / mat.sum(axis=1, keepdims=True)
+    ax.imshow(norm, cmap="Blues", vmin=0, vmax=1)
+    for i in range(2):
+        for j in range(2):
+            ax.text(j, i, f"{norm[i, j]:.3f}\n({int(mat[i, j])})",
+                    ha="center", va="center",
+                    color="white" if norm[i, j] > 0.5 else "black",
+                    fontsize=S["tick_labelsize"])
+    ax.set_xticks([0, 1]); ax.set_xticklabels(["pred yes", "pred no"])
+    ax.set_yticks([0, 1]); ax.set_yticklabels(["gt yes", "gt no"])
+    ax.set_title(f"Yes/No (pred-no {summary['yesno']['pred_no_rate']:.3f}, "
+                 f"gt-no {summary['yesno']['gt_no_rate']:.3f})",
+                 fontsize=S["subplot_title_fontsize"] - 2)
+
+    # (c) counting signed-error histogram (log y)
+    ax = axes[2]
+    hist = summary["counting"]["signed_error_hist"]
+    numeric = {int(k): v for k, v in hist.items() if k.lstrip("-").isdigit()}
+    xs = sorted(numeric)
+    ax.bar(xs, [numeric[x] for x in xs],
+           color=[_tab10[2] if x == 0 else _tab10[3] for x in xs])
+    ax.set_yscale("log")
+    ax.set_xticks(xs)
+    ax.set_xlabel("pred − gt")
+    ax.set_ylabel("questions (log)")
+    nn = hist.get("non-numeric", 0)
+    ax.set_title(f"Counting errors (acc {summary['counting']['acc']:.3f}"
+                 + (f", non-numeric {nn}" if nn else "") + ")",
+                 fontsize=S["subplot_title_fontsize"] - 2)
+
+    # (d) accuracy vs program depth (productivity axis)
+    ax = axes[3]
+    pd_ = {int(k): v for k, v in summary["per_depth"].items()}
+    xs = sorted(pd_)
+    ax.plot(xs, [pd_[x]["accuracy"] for x in xs], **line_kwargs(color=_tab10[4]))
+    ax.set_ylim(0, 1.05)
+    ax.set_xlabel("program depth")
+    ax.set_ylabel("accuracy")
+    ax.set_title("Depth (productivity)", fontsize=S["subplot_title_fontsize"])
+
+    fig.suptitle(f"{summary['model']} — failure modes (n={summary['n']}, "
+                 f"overall {summary['overall_acc']:.3f})",
+                 fontsize=S["suptitle_fontsize"])
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    out = Path(out_dir) / "failure_modes.png"
+    fig.savefig(out, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
 
 def predict_batch(model, task_type, images, questions, inv_answer, device):
     if task_type == "decoder":
@@ -55,7 +138,7 @@ def predict_batch(model, task_type, images, questions, inv_answer, device):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", required=True)
+    ap.add_argument("--checkpoint")
     ap.add_argument("--data-root",
                     default=os.environ.get("CLEVR_ROOT",
                                            "/home/jungchun/data/clevr/CLEVR_v1.0"))
@@ -63,7 +146,21 @@ def main():
     ap.add_argument("--stride", type=int, default=1,
                     help="evaluate every k-th val question")
     ap.add_argument("--output-root", default="outputs/analysis/failure_modes")
+    ap.add_argument("--replot", default=None, metavar="MODEL|all",
+                    help="regenerate failure_modes.png from failure_summary.json "
+                         "(no GPU): a model dir name under output-root, or 'all'")
     args = ap.parse_args()
+
+    if args.replot:
+        root = Path(args.output_root)
+        dirs = sorted(d for d in root.iterdir() if d.is_dir()) \
+            if args.replot == "all" else [root / args.replot]
+        for d in dirs:
+            summary = json.loads((d / "failure_summary.json").read_text())
+            plot_summary(summary, d)
+        return
+    if not args.checkpoint:
+        ap.error("--checkpoint is required unless --replot is given")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     from model.checkpoint_io import load_any_checkpoint
@@ -181,6 +278,7 @@ def main():
               "", "## Answer marginal drift (pred − gt, top 12)",
               f"{summary['answer_marginal_drift_top']}"]
     (out_dir / "failure_summary.md").write_text("\n".join(lines) + "\n")
+    plot_summary(summary, out_dir)
     print(f"Wrote {out_dir}/failure_summary.{{json,md}} + records.jsonl")
     print("\n".join(lines[:20]))
 
