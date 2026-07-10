@@ -418,9 +418,10 @@ independently trained models spanning two codebase generations.
 ## 12. Pending
 
 CoGenT alpha-sweep curve (from `cogent_zeroshot/zeroshot_alpha_sweep.json`) ·
-multi-object steered t-SNE light-palette replot (scope TBD — pick the
-presentation subset, not all 71) · ACDC / binding-interchange figures ·
+ACDC / binding-interchange figures ·
 T2I declarative-caption variant (optional, if pursued after the negative sweep).
+(t-SNE light-palette replot resolved 07-10: only the 3 presentation figures
+needed it, done; the 71 steered PNGs use condition colors, unaffected — §16/JOURNAL.)
 
 ## 13. T2I zero-shot grounding (PixArt-Σ) — timestep sweep complete 14:34 07-06
 
@@ -540,3 +541,59 @@ Side observation: CLEVR color "gray" forms an isolated t-SNE island at all
 layers — its L11 centroid sits 12.2 from the other colors' centroids
 (chromatic pairs: 4.6–5.5); gray is the only achromatic value, matching the
 gray ground plane. Data property, present in every condition.
+
+## 17. E5 autonomous diagnosis pass (D1–D4) — landed 07-10
+
+Method: `failure_modes.py --diagnose all` (CPU-only) joins each model's
+`records.jsonl` with `CLEVR_val_questions.json` (programs) and
+`CLEVR_val_scenes.json` (objects + relationships), executing every question
+program against its scene with a mini ground-truth executor to recover latent
+quantities the answer hides (the two counts feeding a comparison, relate-op
+chain length, scene object count). Executor validity: recomputed answer ==
+dataset answer for **all 37,498 × 4 programs (agreement 1.0000)**. Artifacts:
+`outputs/analysis/failure_modes/<model>/diagnosis.{json,png}`; numbers below
+are the main model (`clevr_dinov2_concat_decoder1l_scratch_s42`, n=37,498,
+overall 0.924) with nogca as contrast.
+
+**D1 — counting is enumeration-capacity-limited; errors are misses, not
+double-counts.** Hypothesis: undercount grows with target-set size. Result:
+accuracy falls monotonically with gt count (0/1 → 0.92/0.90, 4 → 0.70,
+7 → 0.36) and the mean signed error slides from +0.09 at gt=0 to −0.81 at
+gt=7 — a systematic flip from slight overcounting on empty/singleton sets to
+growing undercount; from gt≥2 undercounts outnumber overcounts (e.g. gt=4:
+97 under vs 24 over). Scene clutter compounds it: counting accuracy drops
+0.92→0.80 from 3→10 scene objects while overall accuracy drops only
+0.95→0.90 — counting degrades ~2.5× faster with distractor load than the
+task average. Confirmed.
+
+**D2 — integer comparison difficulty is set by counting precision (margin
+effect).** Hypothesis: errors concentrate where |count₁−count₂| ≤ 1. Result:
+accuracy is 0.708 at Δ=0 and 0.787 at Δ=1 but ≥0.93 at Δ≥2 and ~1.0 at Δ≥4;
+95% of comparison errors live at Δ∈{0,1} (677 of 713). equal_integer
+is the hardest op at small margins (0.66 at Δ=0). Exactly the profile of an
+internal count that is noisy by ±1 (D1's dominant error) feeding an exact
+comparator. Confirmed — compare_integer failure reduces to counting noise.
+
+**D3 — residual yes/no errors concentrate on spatial chains.** Hypothesis:
+the surviving yes/no errors (§7's symmetric confusion) sit in relate-chained
+families, tying to §9's sequential re-binding. Result: yes/no accuracy by
+number of relate ops in the program: 0 hops 0.987 → 1 hop 0.905 → 2 hops
+0.776 (3 hops 0.821, n=425 only) — an 8–13-pt penalty per relate hop over the
+bulk of the data. Confirmed: once attribute binding is solved, what remains
+of yes/no failure is relational re-binding depth, the same axis the anchor→
+target handoff in §9 measures.
+
+**D4 — the depth≈11 accuracy dip is composition, not depth.** The errors at
+depth 10–12 are dominated by compare_integer + equal_attribute + count
+(depth 10: 230/172/172 vs 52 query_attribute) — i.e. the dip is where the
+two-referent and two-count families live, not an independent productivity
+cliff. Resolved as composition.
+
+nogca contrast (same joins, `.../clevr_dinov2_concat_decoder1l_nogca_scratch_s42/`):
+every structured signal above disappears — comparison accuracy is flat ~0.5
+at ALL margins (no count signal to compare), signed counting error reaches
+−8 at gt=9 (predicts small numbers regardless of the set), and yes/no
+accuracy is flat ~0.52–0.55 across relate depths (no binding to chain). The
+structured, capacity-shaped error profile of the trained model is itself
+evidence that grounding produces a real (bounded) enumeration mechanism
+rather than answer-prior matching.

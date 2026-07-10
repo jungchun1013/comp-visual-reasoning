@@ -129,6 +129,225 @@ def plot_summary(summary, out_dir):
     print(f"Saved: {out}")
 
 
+# ── E5 autonomous diagnosis (CPU-only: records ⋈ CLEVR questions+scenes) ──
+
+def _exec_program(program, scene):
+    """Mini CLEVR program executor — list of per-node outputs (sets/ints/strs).
+
+    Ground-truth side only (uses scene annotations, not the model); lets the
+    diagnosis recover latent quantities the answer hides, e.g. the two counts
+    feeding a compare_integer node.
+    """
+    objs = scene["objects"]
+    rel = scene["relationships"]
+    out = []
+    for node in program:
+        f = node["function"]
+        ins = [out[i] for i in node["inputs"]]
+        vals = node.get("value_inputs", [])
+        if f == "scene":
+            r = set(range(len(objs)))
+        elif f.startswith("filter_"):
+            attr = f.split("_", 1)[1]
+            r = {o for o in ins[0] if objs[o][attr] == vals[0]}
+        elif f == "unique":
+            (r,) = ins[0]
+        elif f == "relate":
+            r = set(rel[vals[0]][ins[0]])
+        elif f.startswith("same_"):
+            attr = f.split("_", 1)[1]
+            r = {o for o in range(len(objs))
+                 if objs[o][attr] == objs[ins[0]][attr] and o != ins[0]}
+        elif f == "count":
+            r = len(ins[0])
+        elif f == "exist":
+            r = "yes" if ins[0] else "no"
+        elif f.startswith("query_"):
+            r = objs[ins[0]][f.split("_", 1)[1]]
+        elif f in ("equal_integer", "greater_than", "less_than"):
+            r = {"equal_integer": ins[0] == ins[1],
+                 "greater_than": ins[0] > ins[1],
+                 "less_than": ins[0] < ins[1]}[f]
+            r = "yes" if r else "no"
+        elif f.startswith("equal_"):
+            r = "yes" if ins[0] == ins[1] else "no"
+        elif f == "union":
+            r = ins[0] | ins[1]
+        elif f == "intersect":
+            r = ins[0] & ins[1]
+        else:
+            raise ValueError(f"unknown CLEVR function: {f}")
+        out.append(r)
+    return out
+
+
+def _rate_table(pairs):
+    """[(key, correct_bool)] → {key: {accuracy, count}} sorted by key."""
+    stats = defaultdict(lambda: [0, 0])
+    for k, c in pairs:
+        stats[k][0] += c
+        stats[k][1] += 1
+    return {str(k): {"accuracy": c / n, "count": n}
+            for k, (c, n) in sorted(stats.items())}
+
+
+def diagnose(model_dir, questions, scenes_by_img):
+    """D1–D4 follow-up analyses on an existing records.jsonl (no GPU)."""
+    out_dir = Path(model_dir)
+    records = [json.loads(l) for l in open(out_dir / "records.jsonl")]
+    print(f"[{out_dir.name}] {len(records)} records")
+
+    exec_agree = [0, 0]  # executor-vs-gt sanity over all executed programs
+    cnt_by_gt = defaultdict(lambda: [0, 0, 0.0, 0, 0])  # n, correct, err_sum, under, over
+    cnt_by_scene = []      # (n_objects, correct) for count questions
+    all_by_scene = []      # (n_objects, correct) for every question
+    cmp_by_delta = []      # (|c1-c2|, correct)
+    cmp_mixed = []         # ((delta, op), correct)
+    yn_by_relate = []      # (n_relate_ops, correct) on yes/no gt
+    yn_err_family = Counter()
+    depth_comp = defaultdict(Counter)  # depth → qtype counter (errors only)
+
+    for r in records:
+        q = questions[r["q_idx"]]
+        scene = scenes_by_img[q["image_index"]]
+        n_obj = len(scene["objects"])
+        prog = q["program"]
+        outs = _exec_program(prog, scene)
+        exec_agree[0] += str(outs[-1]).lower() == r["gt"]
+        exec_agree[1] += 1
+        all_by_scene.append((n_obj, r["correct"]))
+
+        if r["gt"] in DIGITS:  # D1 counting
+            g = int(r["gt"])
+            s = cnt_by_gt[g]
+            s[0] += 1
+            s[1] += r["correct"]
+            if r["pred"] in DIGITS:
+                e = int(r["pred"]) - g
+                s[2] += e
+                s[3] += e < 0
+                s[4] += e > 0
+            cnt_by_scene.append((n_obj, r["correct"]))
+
+        final = prog[-1]["function"]
+        if final in ("equal_integer", "greater_than", "less_than"):  # D2
+            c1, c2 = (outs[i] for i in prog[-1]["inputs"])
+            delta = abs(c1 - c2)
+            cmp_by_delta.append((delta, r["correct"]))
+            cmp_mixed.append((f"{final}|{delta}", r["correct"]))
+
+        if r["gt"] in YESNO:  # D3
+            n_rel = sum(n["function"] == "relate" for n in prog)
+            yn_by_relate.append((n_rel, r["correct"]))
+            if not r["correct"]:
+                yn_err_family[r["family"]] += 1
+
+        if not r["correct"]:  # D4
+            depth_comp[r["depth"]][r["qtype"]] += 1
+
+    diag = {
+        "model": out_dir.name,
+        "n": len(records),
+        "executor_gt_agreement": exec_agree[0] / max(exec_agree[1], 1),
+        "d1_counting_by_gt_count": {
+            str(g): {"count": n, "accuracy": c / n,
+                     "mean_signed_error": es / max(n, 1),
+                     "undercount": u, "overcount": o}
+            for g, (n, c, es, u, o) in sorted(cnt_by_gt.items())},
+        "d1_counting_acc_by_scene_size": _rate_table(cnt_by_scene),
+        "d1_overall_acc_by_scene_size": _rate_table(all_by_scene),
+        "d2_compare_acc_by_abs_delta": _rate_table(cmp_by_delta),
+        "d2_compare_acc_by_op_delta": _rate_table(cmp_mixed),
+        "d3_yesno_acc_by_n_relate": _rate_table(yn_by_relate),
+        "d3_yesno_top_error_families": dict(yn_err_family.most_common(15)),
+        "d4_error_qtype_by_depth": {
+            str(d): dict(c.most_common()) for d, c in sorted(depth_comp.items())},
+    }
+    (out_dir / "diagnosis.json").write_text(json.dumps(diag, indent=2))
+    plot_diagnosis(diag, out_dir)
+    print(f"[{out_dir.name}] executor/gt agreement "
+          f"{diag['executor_gt_agreement']:.4f}; wrote diagnosis.json")
+    return diag
+
+
+def plot_diagnosis(diag, out_dir):
+    """diagnosis.png: counting capacity, clutter, compare margin, relate chain."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from analysis.plot_style import apply_style, S, line_kwargs
+    apply_style()
+    _tab10 = plt.cm.tab10.colors
+
+    fig, axes = plt.subplots(1, 4, figsize=(6.4 * 4, 4.8))
+
+    # (a) D1: counting acc + mean signed error vs gt count
+    ax = axes[0]
+    d1 = {int(k): v for k, v in diag["d1_counting_by_gt_count"].items()}
+    xs = sorted(d1)
+    ax.bar(xs, [d1[x]["accuracy"] for x in xs], color=_tab10[0], alpha=0.8)
+    ax.set_ylim(0, 1.05)
+    ax.set_xticks(xs)
+    ax.set_xlabel("gt count")
+    ax.set_ylabel("accuracy")
+    ax2 = ax.twinx()
+    ax2.plot(xs, [d1[x]["mean_signed_error"] for x in xs],
+             **line_kwargs(color=_tab10[3]))
+    ax2.axhline(0, color="gray", lw=0.8)
+    ax2.set_ylabel("mean signed error", color=_tab10[3])
+    ax.set_title("Counting vs gt count", fontsize=S["subplot_title_fontsize"])
+
+    # (b) D1: counting vs overall acc as scene clutter grows
+    ax = axes[1]
+    for key, color, label in [("d1_counting_acc_by_scene_size", _tab10[0], "count qs"),
+                              ("d1_overall_acc_by_scene_size", _tab10[7], "all qs")]:
+        d = {int(k): v for k, v in diag[key].items()}
+        xs = sorted(d)
+        ax.plot(xs, [d[x]["accuracy"] for x in xs],
+                label=label, **line_kwargs(color=color))
+    ax.set_ylim(0, 1.05)
+    ax.set_xlabel("objects in scene")
+    ax.set_ylabel("accuracy")
+    ax.legend(fontsize=S["legend_fontsize"], frameon=False)
+    ax.set_title("Scene clutter", fontsize=S["subplot_title_fontsize"])
+
+    # (c) D2: compare_integer acc vs |count1 − count2|
+    ax = axes[2]
+    d2 = {int(k): v for k, v in diag["d2_compare_acc_by_abs_delta"].items()}
+    xs = sorted(d2)
+    ax.bar(xs, [d2[x]["accuracy"] for x in xs], color=_tab10[2])
+    for x in xs:
+        ax.text(x, d2[x]["accuracy"] + 0.02, str(d2[x]["count"]),
+                ha="center", fontsize=S["tick_labelsize"] - 2)
+    ax.set_ylim(0, 1.1)
+    ax.set_xticks(xs)
+    ax.set_xlabel("|count$_1$ − count$_2$|")
+    ax.set_ylabel("accuracy")
+    ax.set_title("Integer comparison margin", fontsize=S["subplot_title_fontsize"])
+
+    # (d) D3: yes/no accuracy vs number of relate ops in the program
+    ax = axes[3]
+    d3 = {int(k): v for k, v in diag["d3_yesno_acc_by_n_relate"].items()}
+    xs = sorted(d3)
+    ax.bar(xs, [d3[x]["accuracy"] for x in xs], color=_tab10[4])
+    for x in xs:
+        ax.text(x, d3[x]["accuracy"] + 0.02, str(d3[x]["count"]),
+                ha="center", fontsize=S["tick_labelsize"] - 2)
+    ax.set_ylim(0, 1.1)
+    ax.set_xticks(xs)
+    ax.set_xlabel("relate ops in program")
+    ax.set_ylabel("accuracy")
+    ax.set_title("Yes/No vs spatial chain", fontsize=S["subplot_title_fontsize"])
+
+    fig.suptitle(f"{diag['model']} — E5 diagnosis (n={diag['n']})",
+                 fontsize=S["suptitle_fontsize"])
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    out = Path(out_dir) / "diagnosis.png"
+    fig.savefig(out, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+
 def predict_batch(model, task_type, images, questions, inv_answer, device):
     if task_type == "decoder":
         return [p.strip().lower() for p in model.generate(images, questions)]
@@ -149,15 +368,32 @@ def main():
     ap.add_argument("--replot", default=None, metavar="MODEL|all",
                     help="regenerate failure_modes.png from failure_summary.json "
                          "(no GPU): a model dir name under output-root, or 'all'")
+    ap.add_argument("--diagnose", default=None, metavar="MODEL|all",
+                    help="E5 follow-up diagnosis from records.jsonl joined with "
+                         "CLEVR val questions/scenes (no GPU); writes "
+                         "diagnosis.{json,png} into the model dir")
     args = ap.parse_args()
 
-    if args.replot:
+    if args.replot or args.diagnose:
+        sel = args.replot or args.diagnose
         root = Path(args.output_root)
         dirs = sorted(d for d in root.iterdir() if d.is_dir()) \
-            if args.replot == "all" else [root / args.replot]
+            if sel == "all" else [root / sel]
+        if args.replot:
+            for d in dirs:
+                summary = json.loads((d / "failure_summary.json").read_text())
+                plot_summary(summary, d)
+            return
+        droot = Path(args.data_root)
+        print("Loading CLEVR val questions/scenes ...")
+        questions = json.loads(
+            (droot / "questions/CLEVR_val_questions.json").read_text())["questions"]
+        scenes = json.loads(
+            (droot / "scenes/CLEVR_val_scenes.json").read_text())["scenes"]
+        scenes_by_img = {s["image_index"]: s for s in scenes}
         for d in dirs:
-            summary = json.loads((d / "failure_summary.json").read_text())
-            plot_summary(summary, d)
+            tee_stdout(d)
+            diagnose(d, questions, scenes_by_img)
         return
     if not args.checkpoint:
         ap.error("--checkpoint is required unless --replot is given")
