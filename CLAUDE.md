@@ -14,7 +14,7 @@ skill). Checkpoint loading: always `src/model/checkpoint_io.py:load_any_checkpoi
 
 ## Environment
 - Python interpreter (absolute — there is NO `.venv` under `main/`):
-  `/nfs/turbo/coe-chaijy/jungchun/vault/a-concept/comp-visual-reasoning/SteerViT-legacy/.venv-aspen/bin/python`
+  `/nfs/turbo/coe-chaijy/jungchun/vault/a-concept/SteerViT-legacy/.venv-aspen/bin/python`
 - NEVER use `uv run` — CUDA driver mismatch.
 - GPU cluster with NFS storage — avoid concurrent heavy I/O.
 
