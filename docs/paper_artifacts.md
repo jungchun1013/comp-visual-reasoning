@@ -127,12 +127,31 @@ the (non-standard) name `concat_decoder_1l` — E4's gap is only the *GCA-decode
    Camera-ready adopts the reproducible main-repo numbers: zero-shot ValA 0.94466 /
    ValB 0.89479 (`sample_efficiency.json` "before"), ft 50k/8ep → ValB 92.7 with
    ValA 92.4 retained (`50k_8ep.log`).
-3. **Seed coverage**: paper claims 3 seeds (42/43/44). Repo has **no s44 anywhere**;
-   MAE has only s42. Existing s43 runs are anomalous: `clevr_dinov2_decoder1l_scratch_s43`
-   train_log stale at ep7 (0.8295), `clevr_siglip_decoder1l_scratch_s43` stale at ep3
-   (0.5494), `clevr_sup_decoder1l_scratch_s43` stopped ~ep6 (0.6975). The tabled
-   **concat** variant has s42 only. → user decision (E1c): run missing seeds or note
-   single-seed in camera-ready.
+3. **Seed coverage — E1c RESOLVED 2026-08-01 (user decision: s43 only, not s44).**
+   Paper claims 3 seeds (42/43/44); repo still has no s44 anywhere. The tabled
+   **concat_decoder1l** variant now has a clean s43 replication for all 4 backbones
+   (`clevr_{dinov2,siglip,sup,mae}_concat_decoder1l_scratch_s43`, 16 epochs each,
+   monotone convergence, no failures):
+
+   | backbone | s42 (Table 1) | s43 | delta | binomial SE (n=149,991) |
+   |---|---|---|---|---|
+   | DINOv2 | 0.9237 | 0.9300 | +0.63 pts | 0.069 pts |
+   | SigLIP | 0.9256 | 0.9434 | +1.78 pts | 0.068 pts |
+   | Sup-ViT | 0.8655 | 0.8826 | +1.71 pts | 0.088 pts |
+   | MAE | 0.7476 | 0.7878 | +4.02 pts | 0.112 pts |
+
+   All four deltas are far beyond binomial sampling noise (6–36× the SE) — this is
+   genuine seed-to-seed training variance, not measurement noise, and s43 is higher
+   than s42 in every case (same direction, unequal magnitude). MAE's swing is by far
+   the largest (~4 pts) — worth a camera-ready footnote if MAE numbers are load-bearing
+   anywhere; the other three backbones' ~0.6–1.8-pt swings sit in a normal range for
+   this kind of scratch-CA training. Old s43 attempts on the (non-tabled) plain
+   `decoder1l` variant remain stale/anomalous as noted below and are unrelated to this
+   concat_decoder1l replication. Camera-ready options given this: (a) report s42/s43
+   mean±range per backbone instead of the single-seed Table 1 numbers, or (b) keep
+   Table 1 as-is and cite the s43 replication range in a footnote as evidence the
+   headline numbers are seed-stable to within a few points. User to pick footnote vs
+   table-mean treatment; s44 still not run (would need another ~4-day queue if wanted).
 4. **Per-category columns of Tables 1–5**: DINOv2 row recovered from legacy
    `eval_breakdown.json` (§2); all other rows have no artifact — regenerate via E1b.
 5. **Baselines with no recoverable numbers**: `clevr_flamingo_dinov2_early_s42`

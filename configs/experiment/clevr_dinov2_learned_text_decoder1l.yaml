@@ -14,3 +14,6 @@ task:
 
 training:
   epochs: 16
+
+wandb:
+  name: clevr_dinov2_learned_text_decoder1l

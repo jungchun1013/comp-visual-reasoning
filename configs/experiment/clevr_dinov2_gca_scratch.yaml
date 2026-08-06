@@ -15,3 +15,6 @@ task:
 training:
   epochs: 16
   lr: 3e-4
+
+wandb:
+  name: clevr_dinov2_gca_scratch
