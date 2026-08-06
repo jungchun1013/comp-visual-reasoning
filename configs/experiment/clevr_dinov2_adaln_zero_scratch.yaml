@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - override /model: steervit_dino_adaln_zero
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+model:
+  checkpoint: null
+  cross_attn_layers: [1, 3, 5, 7, 9, 11]
+  resolution: 336
+  unfreeze_gca: true
+  unfreeze_connector: true
+
+data:
+  val_batch_size: 512
+
+task:
+  decoder:
+    num_layers: 1
+
+training:
+  epochs: 20
+
+wandb:
+  name: clevr_dinov2_adaln_zero_scratch

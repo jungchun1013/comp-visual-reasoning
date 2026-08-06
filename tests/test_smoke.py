@@ -50,6 +50,52 @@ def test_build_and_forward(backbone):
     assert torch.isfinite(feats).all()
 
 
+# Large backbones added to the matrix (I-JEPA ViT-H/14, DINOv2 ViT-g/14). These
+# are NOT 12-block ViT-B, so they exercise whether the ViTBackbone monkeypatch
+# generalizes: embed_dim auto-derived from the trunk, GCA attached at
+# depth-fraction-matched indices, feature_pool consistent with prefix tokens.
+# (name, cross_attn_layers, resolution, feature_pool, embed_dim, has_cls)
+LARGE_BACKBONES = [
+    ("vit_huge_patch14_gap_224.in1k_ijepa", [3, 8, 14, 20, 25, 31], 224, "mean", 1280, False),
+    ("vit_giant_patch14_dinov2.lvd142m", [4, 11, 18, 25, 32, 39], 336, "cls", 1536, True),
+]
+
+
+@pytest.mark.parametrize(
+    "name,layers,res,pool,dim,has_cls", LARGE_BACKBONES,
+    ids=[b[0].split(".")[0] for b in LARGE_BACKBONES])
+def test_large_backbone_build_and_gca(name, layers, res, pool, dim, has_cls):
+    from model import CrossAttnViT
+
+    dev = torch.device("cuda") if torch.cuda.is_available() else None
+    model = CrossAttnViT.from_config(
+        name, device=dev, cross_attn_layers=layers,
+        resolution=res, feature_aggregation=pool, pretrained=False)
+    trunk = model.vision_model.trunk
+    # embed dim is auto-derived from the timm trunk, never configured
+    assert trunk.embed_dim == dim
+    # GCA attached at exactly the requested block indices, nowhere else
+    attached = [i for i, blk in enumerate(trunk.blocks) if blk.gated_cross_attn is not None]
+    assert attached == layers
+    # feature_pool must match token layout: cls needs a prefix token, mean does not
+    assert (trunk.num_prefix_tokens > 0) == has_cls
+
+    x = torch.randn(2, 3, res, res, device=dev)
+    with torch.no_grad():
+        feats = model.forward(x, None)  # unconditioned: threads all blocks, GCA idle
+    assert feats.ndim == 3 and feats.shape[0] == 2 and feats.shape[-1] == dim
+    assert torch.isfinite(feats).all()
+
+    # conditioned forward drives GCA at the new embed dim; needs the text encoder
+    # weights (roberta-large). Skip that leg if they aren't cached offline.
+    try:
+        with torch.no_grad():
+            cfeats = model.forward(x, ["what color is the large cube", "how many spheres"])
+    except (OSError, EnvironmentError) as e:
+        pytest.skip(f"text encoder weights unavailable offline: {e}")
+    assert cfeats.shape == feats.shape and torch.isfinite(cfeats).all()
+
+
 @pytest.mark.parametrize("name", sorted(CKPTS))
 def test_load_any_checkpoint(name):
     path = CKPTS[name]

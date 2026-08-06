@@ -1,0 +1,22 @@
+# @package _global_
+# I-JEPA (ViT-H/14) backbone + concat self-attn decoder
+defaults:
+  - override /model: jepa
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+data:
+  val_batch_size: 512
+
+task:
+  decoder:
+    type: concat_self_attention
+    num_layers: 1
+  use_text_gca: true
+
+training:
+  epochs: 16
+
+wandb:
+  name: clevr_jepa_concat_decoder1l_scratch

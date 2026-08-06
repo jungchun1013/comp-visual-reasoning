@@ -72,6 +72,10 @@ def train_one_epoch(
     grad_clip = cfg.training.get("grad_clip", 1.0)
     log_every = cfg.training.get("log_every", 100)
     use_amp = cfg.training.get("mixed_precision", "bf16") != "none"
+    # Micro-batches accumulated per optimizer step; effective batch =
+    # data.batch_size * grad_accum_steps. Default 1 = original behavior.
+    accum_steps = cfg.training.get("grad_accum_steps", 1)
+    num_batches = len(dataloader)
     t_epoch_start = time.time()
 
     for step, batch in enumerate(dataloader):
@@ -79,7 +83,8 @@ def train_one_epoch(
         questions = batch["question"]
         answers = batch["answer"].to(device)
 
-        optimizer.zero_grad()
+        if step % accum_steps == 0:
+            optimizer.zero_grad()
 
         with autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_amp):
             if task_type == "transfusion":
@@ -105,14 +110,15 @@ def train_one_epoch(
                 logits = model(images, questions, oracle_prompts=oracle_prompts)
                 loss = criterion(logits, answers)
 
-        scaler.scale(loss).backward()
-        scaler.unscale_(optimizer)
-        nn.utils.clip_grad_norm_(
-            [p for p in model.parameters() if p.requires_grad],
-            max_norm=grad_clip,
-        )
-        scaler.step(optimizer)
-        scaler.update()
+        scaler.scale(loss / accum_steps).backward()
+        if (step + 1) % accum_steps == 0 or (step + 1) == num_batches:
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(
+                [p for p in model.parameters() if p.requires_grad],
+                max_norm=grad_clip,
+            )
+            scaler.step(optimizer)
+            scaler.update()
 
         # Compute accuracy
         batch_size = images.size(0)

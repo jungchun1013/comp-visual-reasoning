@@ -1,0 +1,25 @@
+# @package _global_
+# DINOv2 giant (ViT-g/14) backbone + concat self-attn decoder — scale reference
+defaults:
+  - override /model: dinov2_giant
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+data:
+  # ViT-g @336 OOMs at batch 64 on 44GB; 16 x 4 accum keeps effective batch 64
+  batch_size: 16
+  val_batch_size: 128
+
+task:
+  decoder:
+    type: concat_self_attention
+    num_layers: 1
+  use_text_gca: true
+
+training:
+  epochs: 16
+  grad_accum_steps: 4
+
+wandb:
+  name: clevr_dinov2g_concat_decoder1l_scratch

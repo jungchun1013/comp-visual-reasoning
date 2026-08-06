@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import types
 import timm
-from model.crossattention import GatedCrossAttention, FiLMCondition, attn_forward_wrapper
+from model.crossattention import GatedCrossAttention, FiLMCondition, AdaLNZeroCondition, attn_forward_wrapper
 
 
 def block_forward(self, x):
@@ -12,11 +12,18 @@ def block_forward(self, x):
     note: both LayerScale and stochastic_depth are Identity()
     """
     x, text_feats, attn_mask = x
-    
+
+    if isinstance(self.gated_cross_attn, AdaLNZeroCondition) and text_feats is not None:
+        """adaLN-Zero: modulate the block's own norm1/norm2 outputs"""
+        sh1, sc1, g1, sh2, sc2, g2 = self.gated_cross_attn.modulation(text_feats)
+        x = x + (1 + g1) * self.drop_path1(self.ls1(self.attn(self.norm1(x) * (1 + sc1) + sh1)))
+        x = x + (1 + g2) * self.drop_path2(self.ls2(self.mlp(self.norm2(x) * (1 + sc2) + sh2)))
+        return (x, text_feats, attn_mask)
+
     if self.gated_cross_attn is not None and text_feats is not None:
         """x --> x + CA(LN(img),text)--> x"""
         x = self.gated_cross_attn(x, text_feats, attn_mask = attn_mask)
-        
+
     x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
     x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
 
@@ -56,7 +63,11 @@ class ViTBackbone(nn.Module):
             #each block's a diff object
             blk.forward = types.MethodType(block_forward, blk)
             if (layer_idx in config["cross_attn_layers"]):
-                if condition_type == "film":
+                if condition_type == "adaln_zero":
+                    blk.gated_cross_attn = AdaLNZeroCondition(
+                        layer_idx, dim=self.trunk.embed_dim,
+                    )
+                elif condition_type == "film":
                     blk.gated_cross_attn = FiLMCondition(
                         layer_idx, dim=self.trunk.embed_dim,
                         ff_mult=config["cross_attn_ffn_mult"],

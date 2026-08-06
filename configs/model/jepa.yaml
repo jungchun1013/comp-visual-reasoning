@@ -1,0 +1,9 @@
+checkpoint: null
+backbone_name: vit_huge_patch14_gap_224.in1k_ijepa
+resolution: 224
+use_steering: true
+feature_pool: mean  # I-JEPA gap variant has no CLS token
+text_only: false
+unfreeze_gca: true
+unfreeze_connector: true
+cross_attn_layers: [3, 8, 14, 20, 25, 31]  # 6 injections, depth-fraction-matched to ViT-B's [1,3,5,7,9,11] over 32 blocks

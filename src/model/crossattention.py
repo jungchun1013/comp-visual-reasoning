@@ -152,6 +152,33 @@ class FiLMCondition(nn.Module):
         return x
 
 
+class AdaLNZeroCondition(nn.Module):
+    """adaLN-Zero (DiT-style) conditioning, frozen-backbone variant.
+
+    Predicts shift/scale/gate for the block's own norm1/norm2 outputs:
+        x = x + (1 + gate1) * attn(norm1(x) * (1 + scale1) + shift1)
+        x = x + (1 + gate2) * mlp(norm2(x) * (1 + scale2) + shift2)
+    All generators zero-init, so at init each block computes exactly the
+    pretrained function (DiT's `gate * branch` would zero the frozen branches).
+    Applied by block_forward via `modulation()`; the pre-block `forward` path
+    used by GCA/FiLM is not implemented here.
+    """
+
+    def __init__(self, layer_idx, dim, **kwargs):
+        super().__init__()
+        self.layer_idx = layer_idx
+
+        self.norm = nn.LayerNorm(dim)
+        self.to_mod = nn.Linear(dim, 6 * dim)  # shift1, scale1, gate1, shift2, scale2, gate2
+        nn.init.zeros_(self.to_mod.weight)
+        nn.init.zeros_(self.to_mod.bias)
+
+    def modulation(self, text_feats):
+        # Pool text features: (B, T, dim) → (B, dim)
+        pooled = self.norm(text_feats.mean(dim=1))
+        return self.to_mod(pooled).unsqueeze(1).chunk(6, dim=-1)  # 6 × (B, 1, dim)
+
+
 def attn_forward_wrapper(self, x: torch.Tensor) -> torch.Tensor:
     B, N, C = x.shape
     qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4) #3,B,nh,L,D

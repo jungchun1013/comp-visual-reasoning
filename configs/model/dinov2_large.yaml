@@ -1,0 +1,9 @@
+checkpoint: null  # train fresh GCA (not the published ViT-B GCA checkpoint)
+backbone_name: vit_large_patch14_dinov2.lvd142m
+resolution: 336
+use_steering: true
+feature_pool: cls
+text_only: false
+unfreeze_gca: true
+unfreeze_connector: true
+cross_attn_layers: [2, 6, 10, 14, 18, 22]  # 6 injections, depth-fraction-matched to ViT-B's [1,3,5,7,9,11] over 24 blocks

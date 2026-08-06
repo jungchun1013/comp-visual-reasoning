@@ -1,0 +1,24 @@
+# @package _global_
+# DINOv2 large (ViT-L/14) backbone + concat self-attn decoder — scale reference
+# (replaced ViT-g on 2026-07-20: g needed ~7 days on one GPU; L answers the
+# scale question in ~3. B→L is a 3.5× parameter jump within the same paradigm.)
+defaults:
+  - override /model: dinov2_large
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+data:
+  val_batch_size: 256
+
+task:
+  decoder:
+    type: concat_self_attention
+    num_layers: 1
+  use_text_gca: true
+
+training:
+  epochs: 16
+
+wandb:
+  name: clevr_dinov2l_concat_decoder1l_scratch
