@@ -119,7 +119,63 @@ def _try_query_swap(question: str) -> list[dict]:
     return results
 
 
+# ── Anchor-attribute swap tables (attr_type → within-type swap table) ──
+
+_ANCHOR_SWAP_TABLES = {
+    "color": _COLOR_SWAPS,
+    "material": _MATERIAL_SWAPS,
+    "size": _SIZE_SWAPS,
+    "shape": _SHAPE_ALTERNATIVES,
+}
+
+
 # ── Public API ────────────────────────────────────────────────────
+
+def generate_anchor_swap(question: str, program: list[dict]) -> list[dict]:
+    """Swap an anchor's described attribute value in the question.
+
+    The anchor's described attributes are the ``filter_*`` values before the
+    first ``unique`` step (see ``clevr_programs.extract_described_attrs``). For
+    each ``(attr, value)``, replace the value word with a random alternative
+    from the matching within-type swap table, but ONLY when the value word
+    appears EXACTLY ONCE in the question (0 or ≥2 occurrences are skipped, to
+    avoid clobbering a target-side mention of the same value).
+
+    Returns list of dicts, each in the SAME schema as ``generate_corruptions``:
+        type: "anchor_swap"
+        fine_type: f"anchor_{attr}"  (e.g. "anchor_color")
+        original_word: str
+        corrupted_word: str
+        corrupted_question: str
+    """
+    from data.clevr_programs import extract_described_attrs
+
+    anchor_attrs = extract_described_attrs(program)
+    results = []
+    for attr, value in anchor_attrs.items():
+        table = _ANCHOR_SWAP_TABLES.get(attr)
+        if table is None:
+            continue
+        alts = table.get(value)
+        if not alts:
+            continue
+        pattern = re.compile(r'\b' + re.escape(value) + r'\b', re.IGNORECASE)
+        matches = list(pattern.finditer(question))
+        if len(matches) != 1:
+            continue  # skip 0 or ≥2 occurrences (target-side mention risk)
+        replacement = random.choice(alts)
+        corrupted = pattern.sub(replacement, question, count=1)
+        if corrupted == question:
+            continue
+        results.append({
+            "type": "anchor_swap",
+            "fine_type": f"anchor_{attr}",
+            "original_word": value,
+            "corrupted_word": replacement,
+            "corrupted_question": corrupted,
+        })
+    return results
+
 
 def generate_corruptions(question: str) -> list[dict]:
     """Generate corrupted versions of a CLEVR question.

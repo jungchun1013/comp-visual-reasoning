@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import random
 import sys
@@ -51,7 +52,7 @@ from data.clevr_sampling import RETRIEVAL_CATEGORIES, build_family_index, sample
 from data.clevr_conditions import (
     COND_COLORS, SPATIAL_COND_COLORS,
     FAMILY_SUBCATEGORY, SPATIAL_SUBCATEGORIES,
-    extract_query_info, label_db_image,
+    extract_query_info, label_db_image, check_pos_only,
 )
 from omegaconf import OmegaConf
 
@@ -85,6 +86,19 @@ CHAIN_SPATIAL_COLORS = [
     SPATIAL_COND_COLORS[2], SPATIAL_COND_COLORS[3],
     SPATIAL_COND_COLORS[6],
 ]
+
+# ── pos_only extension (experiment 三) ───────────────────────────
+# Extra cond columns: spatial idx 7 (anchor pos-only), 8 (target pos-only);
+# direct idx 5 (pos-only). Colors picked from tab10 slots free in each chain
+# (direct chain uses {0,1,3}; spatial chain uses {0,9,1,6,3}).
+_tab10 = plt.cm.tab10.colors
+POS_ONLY_DIRECT = [("Pos-only | All", 5, None)]
+POS_ONLY_DIRECT_COLORS = [_tab10[6]]
+POS_ONLY_SPATIAL = [
+    ("Anchor pos-only | All", 7, None),
+    ("Target pos-only | All", 8, None),
+]
+POS_ONLY_SPATIAL_COLORS = [_tab10[7], _tab10[8]]
 
 
 # ── Model loading (same as linear_probe.py) ──────────────────────
@@ -214,10 +228,15 @@ def plot(stats, output_dir):
     num_layers = stats["num_layers"]
     layers = list(range(num_layers))
     is_spatial = stats.get("is_spatial", False)
-    colors = CHAIN_SPATIAL_COLORS if is_spatial else CHAIN_DIRECT_COLORS
+    pos_only = stats.get("pos_only", False)
     # Stored stats carry the condition names current at RUN time; rename by
     # condition index so replots always use the current naming standard.
-    chain = CHAIN_SPATIAL if is_spatial else CHAIN_DIRECT
+    if is_spatial:
+        chain = CHAIN_SPATIAL + (POS_ONLY_SPATIAL if pos_only else [])
+        colors = CHAIN_SPATIAL_COLORS + (POS_ONLY_SPATIAL_COLORS if pos_only else [])
+    else:
+        chain = CHAIN_DIRECT + (POS_ONLY_DIRECT if pos_only else [])
+        colors = CHAIN_DIRECT_COLORS + (POS_ONLY_DIRECT_COLORS if pos_only else [])
     name_by_idx = {(ci, si): name for name, ci, si in chain}
 
     def display_name(entry):
@@ -281,6 +300,20 @@ def plot(stats, output_dir):
     print(f"Saved: {out}")
 
 
+# ── Head-ablation parsing (experiment 一 step2) ──────────────────
+
+def parse_ablate_heads(spec):
+    """"gca:7:9,sa:11:3" -> [("gca",7,9),("sa",11,3)] (kind,layer,head)."""
+    heads = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        kind, layer, head = part.split(":")
+        heads.append((kind.strip(), int(layer), int(head)))
+    return heads
+
+
 # ── Main ─────────────────────────────────────────────────────────
 
 def main():
@@ -296,6 +329,18 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output-dir", type=str, default=None)
     p.add_argument("--replot", action="store_true")
+    # experiment 三 / 二a
+    p.add_argument("--pos-only", action="store_true",
+                   help="append pos_only (position-overlap-only) RDM curves")
+    p.add_argument("--dump-per-query", action="store_true",
+                   help="write rsa_per_query.json with per-query per-layer rho + pred")
+    p.add_argument("--query-list", type=str, default=None,
+                   help="json (rsa_per_query.json or list[int]) pinning dataset_idx queries")
+    # experiment 一 step2
+    p.add_argument("--ablate-heads", type=str, default=None,
+                   help='"gca:7:9,sa:11:3,..." heads to ablate during forwards')
+    p.add_argument("--ablate-mode", type=str, default="zero",
+                   choices=["zero", "mean"])
     args = p.parse_args()
 
     ckpt_dir = Path(args.checkpoint).parent
@@ -322,6 +367,15 @@ def main():
     retriever = AllLayerRetriever(steervit)
     num_layers = retriever.num_layers
 
+    # Head ablation (experiment 一 step2): lazy import so py_compile / --help
+    # never require patching_utils.HeadAblator to exist.
+    ablate_heads = None
+    HeadAblator = None
+    if args.ablate_heads:
+        ablate_heads = parse_ablate_heads(args.ablate_heads)
+        from analysis.patching_utils import HeadAblator  # noqa: lazy on purpose
+        print(f"Head ablation ({args.ablate_mode}): {ablate_heads}", flush=True)
+
     gca_layers = [i for i, blk in enumerate(steervit.vision_model.trunk.blocks)
                   if getattr(blk, "gated_cross_attn", None) is not None]
 
@@ -331,6 +385,18 @@ def main():
 
     rng = random.Random(args.seed)
     family_index = build_family_index(dataset)
+
+    # --query-list: pin the exact dataset_idx set (matched ablation-vs-baseline).
+    # Accept an rsa_per_query.json (list of records) or a plain list[int].
+    pinned_idx = None
+    if args.query_list:
+        with open(args.query_list) as f:
+            ql = json.load(f)
+        if ql and isinstance(ql[0], dict):
+            pinned_idx = [int(r["dataset_idx"]) for r in ql]
+        else:
+            pinned_idx = [int(i) for i in ql]
+        print(f"Query-list: {len(pinned_idx)} pinned dataset_idx", flush=True)
 
     categories = args.categories.split(",")
 
@@ -342,9 +408,24 @@ def main():
         cat_dir = output_dir / category
         cat_dir.mkdir(parents=True, exist_ok=True)
 
-        queries = sample_queries(dataset, family_index, category,
-                                 n_total=args.queries_per_category, rng=rng,
-                                 scenes=scenes)
+        if pinned_idx is not None:
+            cat_families = set(RETRIEVAL_CATEGORIES.get(category, []))
+            queries = []
+            for idx in pinned_idx:
+                q_data = dataset.questions[idx]
+                fam = q_data.get("question_family_index", -1)
+                if cat_families and fam not in cat_families:
+                    continue
+                queries.append({
+                    "dataset_idx": idx, "family": fam,
+                    "question": q_data["question"],
+                    "answer": q_data.get("answer", "?"),
+                    "program": q_data.get("program", []),
+                })
+        else:
+            queries = sample_queries(dataset, family_index, category,
+                                     n_total=args.queries_per_category, rng=rng,
+                                     scenes=scenes)
         print(f"  Queries: {len(queries)}", flush=True)
         if not queries:
             continue
@@ -356,8 +437,13 @@ def main():
         chain = CHAIN_SPATIAL if is_spatial else CHAIN_DIRECT
         from data.clevr_conditions import SPATIAL_COND_NAMES, ALL_COND_NAMES
         n_conds = len(SPATIAL_COND_NAMES) if is_spatial else len(ALL_COND_NAMES)
+        if args.pos_only:
+            chain = chain + (POS_ONLY_SPATIAL if is_spatial else POS_ONLY_DIRECT)
+            n_conds += 2 if is_spatial else 1  # cols 7,8 (spatial) or 5 (direct)
         print(f"  {'Spatial' if is_spatial else 'Direct'}, chain: {[c[0] for c in chain]}",
               flush=True)
+
+        per_query_records = [] if args.dump_per_query else None
 
         # Accumulators
         rsa_acc = {ci: {l: [] for l in range(num_layers)} for ci in range(len(chain))}
@@ -391,14 +477,36 @@ def main():
                 conds, _ = label_db_image(db_scene["objects"], query_info, subcategory)
                 for ci_idx in range(min(len(conds), n_conds)):
                     cond_labels[di, ci_idx] = conds[ci_idx]
+                if args.pos_only:
+                    pos = check_pos_only(db_scene["objects"], query_info)
+                    if is_spatial:
+                        cond_labels[di, 7] = pos[0]  # anchor pos-only
+                        cond_labels[di, 8] = pos[1]  # target pos-only
+                    else:
+                        cond_labels[di, 5] = pos[0]  # pos-only (anchor)
 
-            # Extract steered + unsteered features
-            db_feats = retriever.build_steered_database(
-                dataset, question, device, db_indices, batch_size=args.batch_size)
-            db_feats_u = retriever.build_steered_database(
-                dataset, None, device, db_indices, batch_size=args.batch_size)
+            # Feature extraction (+ per-query prediction) under optional head
+            # ablation. GCA does not fire on the unsteered (question=None) pass,
+            # so wrapping it is a no-op there; SA ablation applies to both.
+            cm = (HeadAblator(steervit, ablate_heads, mode=args.ablate_mode)
+                  if ablate_heads else contextlib.nullcontext())
+            pred, correct = None, None
+            with cm:
+                if args.dump_per_query:
+                    q_img = dataset[dataset_idx]["image"].unsqueeze(0).to(device)
+                    with autocast(device_type="cuda", dtype=torch.bfloat16):
+                        pred = model.generate(q_img, [question])[0]
+                    correct = (str(pred).lower() == str(answer).lower())
+                db_feats = retriever.build_steered_database(
+                    dataset, question, device, db_indices, batch_size=args.batch_size)
+                db_feats_u = retriever.build_steered_database(
+                    dataset, None, device, db_indices, batch_size=args.batch_size)
 
-            # Conditional RSA per chain level
+            # Conditional RSA per chain level. Neural RDMs depend only on
+            # (layer, subset) — subset_cond_idx uniquely keys the subset — so
+            # memoize them per query (R8).
+            rdm_cache, rdm_cache_u = {}, {}
+            chain_records = [] if args.dump_per_query else None
             for ci, (chain_name, cond_idx, subset_cond_idx) in enumerate(chain):
                 if subset_cond_idx is None:
                     subset_mask = np.ones(len(db_fnames), dtype=bool)
@@ -413,20 +521,44 @@ def main():
                 n_true = int(subset_labels.sum())
                 n_false = n_subset - n_true
 
+                per_layer_rho = {} if args.dump_per_query else None
+                hyp_rdm = None
                 for layer in range(num_layers):
                     if n_true == 0 or n_false == 0 or n_subset < 3:
                         continue
+                    if hyp_rdm is None:
+                        hyp_rdm = build_binary_rdm(subset_labels)
 
-                    feats_np = db_feats[layer].numpy()[subset_indices]
-                    neural_rdm = pdist(feats_np, metric="correlation")
-                    hyp_rdm = build_binary_rdm(subset_labels)
-                    r, _ = spearmanr(neural_rdm, hyp_rdm)
+                    key = (layer, subset_cond_idx)
+                    if key not in rdm_cache:
+                        rdm_cache[key] = pdist(
+                            db_feats[layer].numpy()[subset_indices], metric="correlation")
+                    r, _ = spearmanr(rdm_cache[key], hyp_rdm)
                     rsa_acc[ci][layer].append(float(r))
+                    if per_layer_rho is not None:
+                        per_layer_rho[str(layer)] = float(r)
 
-                    feats_u = db_feats_u[layer].numpy()[subset_indices]
-                    neural_rdm_u = pdist(feats_u, metric="correlation")
-                    r_u, _ = spearmanr(neural_rdm_u, hyp_rdm)
+                    if key not in rdm_cache_u:
+                        rdm_cache_u[key] = pdist(
+                            db_feats_u[layer].numpy()[subset_indices], metric="correlation")
+                    r_u, _ = spearmanr(rdm_cache_u[key], hyp_rdm)
                     rsa_acc_u[ci][layer].append(float(r_u))
+
+                if chain_records is not None:
+                    chain_records.append({
+                        "name": chain_name, "cond_idx": cond_idx,
+                        "subset_cond_idx": subset_cond_idx,
+                        "subset_size": int(n_subset), "n_true": n_true,
+                        "per_layer_rho": per_layer_rho,
+                    })
+
+            if per_query_records is not None:
+                per_query_records.append({
+                    "dataset_idx": int(dataset_idx), "family": query["family"],
+                    "question": question, "answer": answer,
+                    "image_filename": img_filename, "pred": pred,
+                    "correct": bool(correct), "chains": chain_records,
+                })
 
         # Aggregate
         def _agg(vals):
@@ -449,6 +581,17 @@ def main():
             results_u.append({"name": chain_name, "avg_subset_size": avg_subset,
                               "per_layer": per_layer_u})
 
+        # Half-rise onset: first layer where mean >= 0.5 * max-over-layers.
+        onset = {}
+        for entry in results:
+            pts = [(l, entry["per_layer"][str(l)]["mean"])
+                   for l in range(num_layers) if str(l) in entry["per_layer"]]
+            if pts:
+                thr = 0.5 * max(m for _, m in pts)
+                onset[entry["name"]] = next((l for l, m in pts if m >= thr), None)
+            else:
+                onset[entry["name"]] = None
+
         stats = {
             "category": category, "n_queries": len(queries),
             "num_db": args.num_db, "num_layers": num_layers,
@@ -456,12 +599,26 @@ def main():
             "checkpoint": str(args.checkpoint),
             "conditional_rsa": results,
             "conditional_rsa_unsteered": results_u,
+            "onset": onset,
         }
+        if args.pos_only:
+            stats["pos_only"] = True
+        if args.ablate_heads:
+            stats["ablate_heads"] = args.ablate_heads
+            stats["ablate_mode"] = args.ablate_mode
 
         stats_path = cat_dir / "rsa_conditional_stats.json"
         with open(stats_path, "w") as f:
             json.dump(stats, f, indent=2)
         print(f"\n  Saved: {stats_path}", flush=True)
+
+        if per_query_records is not None:
+            pq_path = cat_dir / "rsa_per_query.json"
+            with open(pq_path, "w") as f:
+                json.dump(per_query_records, f, indent=2)
+            n_correct = sum(1 for r in per_query_records if r["correct"])
+            print(f"  Saved: {pq_path} ({n_correct}/{len(per_query_records)} correct)",
+                  flush=True)
 
         plot(stats, cat_dir)
 

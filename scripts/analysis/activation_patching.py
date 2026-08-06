@@ -34,6 +34,7 @@ from analysis.patching_utils import HeadPatcher
 from analysis.run_log import tee_stdout
 from analysis.patching_sampling import (
     CATEGORIES, build_corruption_index, collect_corruption_samples,
+    collect_anchor_swap_samples,
 )
 
 import matplotlib
@@ -140,8 +141,11 @@ def compute(patcher, dataset, args, device):
             continue
 
         print(f"\n--- {group}/{category_key} ---", flush=True)
-        samples = collect_corruption_samples(
-            dataset, corruption_index, category_key, args.num_samples)
+        if group == "anchor_swap":
+            samples = collect_anchor_swap_samples(dataset, args.num_samples)
+        else:
+            samples = collect_corruption_samples(
+                dataset, corruption_index, category_key, args.num_samples)
         print(f"  Sampled {len(samples)}/{args.num_samples}", flush=True)
         if not samples:
             continue
@@ -207,6 +211,7 @@ def plot(stats, output_dir):
     _ORDER = {
         "fine_attribute": ["color", "material", "size", "shape"],
         "fine_attribute_query": ["what_color", "what_material", "what_size", "what_shape"],
+        "anchor_swap": ["anchor_swap"],
     }
 
     for group in _ORDER:

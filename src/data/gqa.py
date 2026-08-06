@@ -1,4 +1,4 @@
-"""GQA dataset for classification-based VQA."""
+ㄥ"""GQA dataset for classification-based VQA."""
 
 from __future__ import annotations
 

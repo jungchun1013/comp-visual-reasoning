@@ -41,6 +41,8 @@ CATEGORIES = [
     ("fine_attribute_query", "what_material"),
     ("fine_attribute_query", "what_size"),
     ("fine_attribute_query", "what_shape"),
+    # Anchor swap — anchor-side described-attribute corruption
+    ("anchor_swap", "anchor_swap"),
 ]
 
 
@@ -117,6 +119,59 @@ def collect_corruption_samples(dataset, index, category_key, n_samples):
             sample["image"],
             sample["question"],
             chosen["corrupted_question"],
+            sample["answer"],
+        ))
+    return samples
+
+
+# ── Anchor-swap sampling ────────────────────────────────────────
+
+def collect_anchor_swap_samples(dataset, n_samples, families=None):
+    """Sample anchor_swap corruptions from the attr_query_same families.
+
+    Restricts to questions whose ``question_family_index`` is one of
+    ``families`` (default: RETRIEVAL_CATEGORIES["attr_query_same"] =
+    [53, 59, 55, 57, 61, 60]), keeps only questions for which
+    ``generate_anchor_swap`` yields ≥1 valid swap, then draws n_samples and
+    picks one swap per question.
+
+    Args:
+        dataset: CLEVRVQADataset
+        n_samples: number of samples
+        families: iterable of question_family_index ids (default attr_query_same)
+
+    Returns:
+        list of (image_tensor, question, corrupted_question, answer_idx)
+    """
+    from analysis.clevr_corruptions import generate_anchor_swap
+    from data.clevr_sampling import RETRIEVAL_CATEGORIES, build_family_index
+
+    if families is None:
+        families = RETRIEVAL_CATEGORIES["attr_query_same"]
+    families = set(families)
+
+    index = build_family_index(dataset)
+    eligible = []
+    for fam in families:
+        for idx in index.get(f"F{fam}", []):
+            q = dataset.questions[idx]
+            swaps = generate_anchor_swap(q["question"], q.get("program", []))
+            if swaps:
+                eligible.append((idx, swaps))
+    print(f"anchor_swap: {len(eligible)} eligible questions "
+          f"in families {sorted(families)}", flush=True)
+
+    random.shuffle(eligible)
+    chosen = eligible[:n_samples]
+
+    samples = []
+    for idx, swaps in chosen:
+        sample = dataset[idx]
+        chosen_swap = random.choice(swaps)
+        samples.append((
+            sample["image"],
+            sample["question"],
+            chosen_swap["corrupted_question"],
             sample["answer"],
         ))
     return samples

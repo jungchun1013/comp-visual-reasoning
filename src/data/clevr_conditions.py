@@ -148,6 +148,40 @@ def check_spatial_conditions(db_objs, all_filter_attrs,
     ]
 
 
+def check_pos_only(db_objs, query_info):
+    """Position-overlap-only condition for anchor and target (NO attribute match).
+
+    For each ref in (anchor_obj, target_obj), returns True iff ANY db_obj's
+    (pixel_coords, size) overlaps the ref's per ``_position_overlap`` — pure
+    geometry, no attribute comparison. This is the pos_only RDM used to test
+    position-as-indexing vs a position shortcut (experiment 三): a curve that
+    rises from position overlap alone, without any attribute binding.
+
+    Returns [anchor_pos_only, target_pos_only]; False for a ref that is None
+    or lacks pixel_coords/size.
+    """
+    out = []
+    for ref in (query_info.get("anchor_obj"), query_info.get("target_obj")):
+        if ref is None:
+            out.append(False)
+            continue
+        ref_coords = ref.get("pixel_coords")
+        ref_size = ref.get("size")
+        if ref_coords is None or ref_size is None:
+            out.append(False)
+            continue
+        hit = False
+        for o in db_objs:
+            oc = o.get("pixel_coords")
+            os = o.get("size")
+            if oc is not None and os is not None and \
+                    _position_overlap(oc, os, ref_coords, ref_size):
+                hit = True
+                break
+        out.append(hit)
+    return out
+
+
 def extract_query_info(query_scene_objs, program, gt_answer):
     """Extract all info needed for condition checking from a query."""
     from data.clevr_programs import (

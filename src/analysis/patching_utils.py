@@ -210,6 +210,139 @@ class HeadPatcher:
         return heatmap, clean_logit, corrupt_logit
 
 
+class HeadAblator:
+    """Context manager that ablates named attention heads via forward-pre-hooks.
+
+    Mirrors HeadPatcher's hook sites and per-head slice math EXACTLY:
+      - SA  head (l, h): pre-hook on ``blocks[l].attn.proj``; slice
+        ``x[:, :, h*sa_head_dim:(h+1)*sa_head_dim]`` (12 heads).
+      - GCA head (l, h): pre-hook on
+        ``blocks[l].gated_cross_attn.cross_attn.to_out``; slice
+        ``x[:, :, h*gca_head_dim:(h+1)*gca_head_dim]`` (16 heads).
+
+    ``mode="zero"`` (primary) zeros the per-head slice at the SAME pre-``proj`` /
+    pre-``to_out`` tensor position HeadPatcher patches. ``mode="mean"``
+    (secondary) mean-replaces it, using per-head-slice means that are either
+    passed in (``means``) or computed by ``calibrate(images, questions)`` — a
+    one-batch calibration forward, averaged over batch+token dims.
+
+    On an unsteered forward where the GCA path never executes, GCA hooks are
+    registered on their modules but simply never fire (no crash).
+
+    Contract (parent codes against this):
+        HeadAblator(steervit, heads, mode="zero", means=None)
+        heads: list of ("sa", layer, head) and ("gca", layer, head) tuples.
+    """
+
+    def __init__(self, steervit, heads, mode="zero", means=None):
+        self.steervit = steervit
+        self.mode = mode
+        self.means = dict(means) if means else {}
+        self.blocks = steervit.vision_model.trunk.blocks
+
+        # Resolve GCA layers / head dims exactly as HeadPatcher does.
+        self.sa_head_dim = self.blocks[0].attn.head_dim
+        self.gca_layers = []
+        for idx, blk in enumerate(self.blocks):
+            if getattr(blk, "gated_cross_attn", None) is not None:
+                self.gca_layers.append(idx)
+        if self.gca_layers:
+            gca0 = self.blocks[self.gca_layers[0]].gated_cross_attn
+            self.gca_head_dim = gca0.cross_attn.head_dim
+        else:
+            self.gca_head_dim = 0
+
+        # Group requested heads by target module; drop GCA heads on non-GCA layers.
+        self.heads = []
+        self._by_module = {}
+        for kind, layer, head in heads:
+            if kind == "gca" and layer not in self.gca_layers:
+                print(f"HeadAblator: skipping GCA head on non-GCA layer {layer}",
+                      flush=True)
+                continue
+            self.heads.append((kind, layer, head))
+            self._by_module.setdefault((kind, layer), []).append(head)
+
+        self._hooks = []
+
+    def _head_dim(self, kind):
+        return self.sa_head_dim if kind == "sa" else self.gca_head_dim
+
+    def _module_for(self, kind, layer):
+        blk = self.blocks[layer]
+        if kind == "sa":
+            return blk.attn.proj
+        return blk.gated_cross_attn.cross_attn.to_out
+
+    def calibrate(self, images, questions):
+        """Populate per-head-slice means from one calibration forward.
+
+        Records the pre-``proj``/pre-``to_out`` inputs at each target module and
+        averages the head slice over batch+token dims. GCA modules that never
+        fire (unsteered pass) are simply left without a mean.
+        """
+        recorded = {}
+        hooks = []
+        for (kind, layer) in self._by_module:
+            module = self._module_for(kind, layer)
+
+            def make(k, l):
+                def fn(mod, inp):
+                    recorded[(k, l)] = inp[0].detach()
+                return fn
+            hooks.append(module.register_forward_pre_hook(make(kind, layer)))
+
+        with torch.no_grad():
+            self.steervit.forward(images, questions)
+        for h in hooks:
+            h.remove()
+
+        for kind, layer, head in self.heads:
+            x = recorded.get((kind, layer))
+            if x is None:
+                continue  # module never fired (e.g. GCA on unsteered pass)
+            hd = self._head_dim(kind)
+            h_start = head * hd
+            h_end = h_start + hd
+            self.means[(kind, layer, head)] = x[:, :, h_start:h_end].mean(dim=(0, 1))
+        return self
+
+    def _make_ablate_hook(self, kind, layer, heads, hd):
+        mode = self.mode
+        means = self.means
+
+        def pre_hook(module, inp):
+            x = inp[0].clone()
+            for head in heads:
+                h_start = head * hd
+                h_end = h_start + hd
+                if mode == "mean":
+                    m = means.get((kind, layer, head))
+                    if m is not None:
+                        x[:, :, h_start:h_end] = m.to(x.device).to(x.dtype)
+                    else:
+                        x[:, :, h_start:h_end] = 0
+                else:  # "zero"
+                    x[:, :, h_start:h_end] = 0
+            return (x,)
+        return pre_hook
+
+    def __enter__(self):
+        self._hooks = []
+        for (kind, layer), heads in self._by_module.items():
+            module = self._module_for(kind, layer)
+            hd = self._head_dim(kind)
+            hook = self._make_ablate_hook(kind, layer, heads, hd)
+            self._hooks.append(module.register_forward_pre_hook(hook))
+        return self
+
+    def __exit__(self, *exc):
+        for h in self._hooks:
+            h.remove()
+        self._hooks = []
+        return False
+
+
 class ComponentPatcher:
     """Decomposed patching: SA contribution vs GCA contribution."""
 

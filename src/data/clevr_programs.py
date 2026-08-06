@@ -148,11 +148,22 @@ def _describe_filter_chain(program: list[dict], step_idx: int) -> str:
     return " ".join(parts) if parts else ""
 
 
-def _execute_program(objects: list[dict], program: list[dict]) -> list[list[dict]]:
+class _StrictUniqueError(Exception):
+    """Raised by ``_execute_program(strict=True)`` when a ``unique`` step's input
+    set has length != 1 (i.e. the referent is not unique)."""
+
+
+def _execute_program(
+    objects: list[dict], program: list[dict], strict: bool = False
+) -> list[list[dict]]:
     """Execute CLEVR functional program on scene objects.
 
     Returns a list of results (one per program step). Each result is a list of
     object dicts (the working set at that step).
+
+    If ``strict`` is True, a ``unique`` step whose input set does not have
+    exactly one element raises ``_StrictUniqueError`` instead of silently taking
+    ``[:1]`` (used by :func:`evaluate_answer_strict`).
     """
     results: list[list[dict]] = []
 
@@ -173,6 +184,8 @@ def _execute_program(objects: list[dict], program: list[dict]) -> list[list[dict
 
         elif stype == "unique":
             parent_set = results[inputs[0]] if inputs else []
+            if strict and len(parent_set) != 1:
+                raise _StrictUniqueError()
             results.append(parent_set[:1])
 
         elif stype == "relate":
@@ -267,6 +280,33 @@ def evaluate_answer(objects: list[dict], program: list[dict]) -> str | None:
         return None
 
     results = _execute_program(objects, program)
+    return _finalize_answer(results, program)
+
+
+def evaluate_answer_strict(objects: list[dict], program: list[dict]) -> str | None:
+    """Like :func:`evaluate_answer`, but returns None if ANY ``unique`` step's
+    input set has length != 1 (instead of silently taking ``[:1]``).
+
+    Mandatory when validating that an added distractor did NOT break referent
+    uniqueness: naive ``evaluate_answer`` would silently pick ``[:1]`` and mask a
+    broken referent, letting an ambiguous scene pass answer-invariance.
+    """
+    if not program or not objects:
+        return None
+
+    try:
+        results = _execute_program(objects, program, strict=True)
+    except _StrictUniqueError:
+        return None
+    return _finalize_answer(results, program)
+
+
+def _finalize_answer(results: list[list[dict]], program: list[dict]) -> str | None:
+    """Compute the terminal answer from executed program results.
+
+    Shared by :func:`evaluate_answer` and :func:`evaluate_answer_strict`; the two
+    differ only in how ``_execute_program`` handles non-unique ``unique`` steps.
+    """
     final = program[-1]
     fn = final.get("function", final.get("type", ""))
     inputs = final.get("inputs", [])
