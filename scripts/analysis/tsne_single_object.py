@@ -134,6 +134,25 @@ def described_question(attrs, query_attr):
     return f"What is the {query_attr} of the {desc}?"
 
 
+REFER_PRIORITY = ["shape", "size", "material", "color"]
+
+
+def minimal_referring_question(attrs, query_attr):
+    """Referring question with ONE distinguishing attribute — template
+    'What {query} is the {referent} object?' ('... is the {shape}?' when the
+    referent is the shape). The referent is the first attribute in
+    REFER_PRIORITY, excluding the queried one, whose value differs between
+    target and distractor, so it uniquely picks the target. The >=2-attribute
+    distractor rule guarantees such an attribute exists."""
+    d = attrs["distractors"][0]
+    for a in REFER_PRIORITY:
+        if a != query_attr and attrs[a] != d[a]:
+            if a == "shape":
+                return f"What {query_attr} is the {attrs['shape']}?"
+            return f"What {query_attr} is the {attrs[a]} object?"
+    raise ValueError(f"no distinguishing non-query attribute: {attrs}")
+
+
 def run(args):
     apply_style()
     gca_layers = [1, 3, 5, 7, 9, 11]
@@ -166,13 +185,18 @@ def run(args):
                 with open(out_dir / "attrs.json", "w") as f:
                     json.dump(attrs_list, f)
             N = len(attrs_list)
-            # Described-target mode: per-scene question naming the target by
-            # its other 3 attributes (multi-object scenes need selection)
+            # Per-scene question modes (multi-object scenes need selection):
+            # --describe-target names the target by its other 3 attributes;
+            # --refer-minimal uses one distinguishing attribute
             per_scene_q = None
             if condition.startswith("ca") and args.describe_target:
                 per_scene_q = [described_question(a, args.query_attr)
                                for a in attrs_list]
                 print(f"Described-target questions, e.g.: {per_scene_q[0]}")
+            elif condition.startswith("ca") and args.refer_minimal:
+                per_scene_q = [minimal_referring_question(a, args.query_attr)
+                               for a in attrs_list]
+                print(f"Minimal referring questions, e.g.: {per_scene_q[0]}")
             print(f"\nExtracting features: {condition} ({N} images) ...")
             all_feats = {l: [] for l in range(retriever.num_layers)}
             bs = 32
@@ -190,70 +214,34 @@ def run(args):
             np.savez(out_dir / f"feats_{condition}.npz",
                      **{str(l): all_feats[l] for l in all_feats})
 
-        # All-attribute plot: color=ATTR_VALUE_COLORS (tab10), marker=shape,
-        # black edge=metal, marker size=object size
-        color_map = ATTR_VALUE_COLORS["color"]
+        # All-attribute plot — shared encoding with the pooled backbone t-SNE
+        # figures: hue = color, shade = material (dark = metal, light =
+        # rubber), marker = shape, point size = size
+        from raw_backbone_probe import _pooled_scatter
+        from dino_attribute_tsne import attribute_legend_handles
         fig, axes = make_tsne_grid(len(gca_layers), ncols=3)
         if condition == "noca":
             tag = "No cross-attention"
         elif args.describe_target:
             tag = f"CA: query {args.query_attr}, target described"
+        elif args.refer_minimal:
+            tag = f"CA: query {args.query_attr}, minimal referring"
         else:
             tag = f"CA: \"{q_text}\""
         n_obj = 1 + len(attrs_list[0].get("distractors", []))
         scene_label = f"{n_obj}-object"
-
-        # Vectorized scatter: group by (shape, size, material) for speed
-        colors_arr = np.array([color_map[a["color"]][:3] for a in attrs_list])
-        shapes_arr = np.array([a["shape"] for a in attrs_list])
-        sizes_arr = np.array([SIZE_MARKERSIZE[a["size"]] for a in attrs_list])
-        metal_arr = np.array([a["material"] == "metal" for a in attrs_list])
 
         for ax_i, layer in enumerate(gca_layers):
             ax = axes[ax_i]
             X = all_feats[layer]
             tsne = TSNE(n_components=2, perplexity=30, random_state=42)
             emb = tsne.fit_transform(X)
-
-            for shape, marker in SHAPE_MARKERS.items():
-                for is_metal in (False, True):
-                    m = (shapes_arr == shape) & (metal_arr == is_metal)
-                    if not m.any():
-                        continue
-                    kw = dict(c=colors_arr[m], s=sizes_arr[m], marker=marker,
-                              rasterized=True)
-                    if is_metal:
-                        kw.update(edgecolors="black",
-                                  linewidths=TSNE_STYLE["edge_width"] / 2)
-                    else:
-                        kw["edgecolors"] = "none"
-                    ax.scatter(emb[m, 0], emb[m, 1], **kw)
-
+            _pooled_scatter(ax, emb, attrs_list)
             ax.set_title(f"L{layer}", fontsize=S["subplot_title_fontsize"])
             style_tsne_ax(ax)
 
-        # Legend: colors + shapes + material/size codes, below the grid
-        from matplotlib.lines import Line2D
-        legend_handles = []
-        for color, c in color_map.items():
-            legend_handles.append(Line2D([0], [0], marker="o", color="w",
-                                  markerfacecolor=c, markersize=7, label=color))
-        for shape, marker in SHAPE_MARKERS.items():
-            legend_handles.append(Line2D([0], [0], marker=marker, color="w",
-                                  markerfacecolor=TSNE_STYLE["gray"],
-                                  markersize=7, label=shape))
-        legend_handles.append(Line2D([0], [0], marker="o", color="w",
-                              markerfacecolor=TSNE_STYLE["gray"], markersize=7,
-                              markeredgecolor="black", markeredgewidth=1.0,
-                              label="metal (edge)"))
-        legend_handles.append(Line2D([0], [0], marker="o", color="w",
-                              markerfacecolor=TSNE_STYLE["gray"], markersize=8,
-                              label="large"))
-        legend_handles.append(Line2D([0], [0], marker="o", color="w",
-                              markerfacecolor=TSNE_STYLE["gray"], markersize=4,
-                              label="small"))
-        finish_tsne_grid(fig, legend_handles, suptitle=f"{scene_label} t-SNE — {tag}",
-                         ncol=5)
+        finish_tsne_grid(fig, attribute_legend_handles(),
+                         suptitle=f"{scene_label} t-SNE — {tag}", ncol=5)
 
         fname = f"tsne_single_{condition}_allattr.png"
         out_path = out_dir / fname
@@ -276,6 +264,10 @@ if __name__ == "__main__":
     ap.add_argument("--describe-target", action="store_true",
                     help="Per-scene question naming the target by its other 3 "
                          "attributes (for multi-object controlled scenes)")
+    ap.add_argument("--refer-minimal", action="store_true",
+                    help="Per-scene referring question with ONE distinguishing "
+                         "attribute ('What {query} is the {referent} object?'); "
+                         "requires scenes with distractors")
     ap.add_argument("--query-attr", default="color",
                     choices=["color", "shape", "material", "size"],
                     help="Queried attribute in --describe-target mode")

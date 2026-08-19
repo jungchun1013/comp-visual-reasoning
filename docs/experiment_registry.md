@@ -104,6 +104,148 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 ### X15. E10 2-stage-name replots
 - **Status**: 🔄 (agent replotting GPU-free figures into `*_v2names/` dirs).
 
+### X16. Patch-level t-SNE (unpooled tokens, mechanistic model)
+- **Motivation**: every existing t-SNE/probe mean-pools patch tokens (X10, object_count
+  runs); test whether attribute organization exists at the individual-patch level,
+  whether it survives two objects (or the objects' patches mix), and whether Grounding
+  (CA with a shape-referring question) reorganizes the referent's patches.
+- **Hypothesis**: object patches cluster by object/attribute per layer under no-CA; under
+  `ca_refshape` the referent's patches separate or sharpen at GCA layers.
+- **Design**: `clevr_dinov2_decoder1l_scratch_s42` (24×24 grid); 10 single-object (v3, no
+  gray) + 10 two-object (v2, shape AND color differ, no gray); pixel segmentation →
+  patch-owner masks (saturation gate + nearest-hue assignment — chromaticity is unusable,
+  dim renders drift toward gray; morphology; squash-consistent 336² NEAREST; coverage
+  ≥0.2 with best-patch fallback for tiny objects); t-SNE per GCA layer [1,3,5,7,9,11];
+  conditions noca + `ca_refshape` ("What color is the {target.shape}?"); background
+  subsampled to 100/img at plot time, subsample shared across conditions. Per-panel
+  independent t-SNE fits — no cross-panel geometry claims.
+- **Status**: ✅ run 08-13.
+- **Results (qualitative)**: (1) noca, single 2-object image: both objects' patches form
+  tight per-object clusters separate from background at every layer. (2) noca 10×1-object:
+  color-major clustering emerges L7→L11 (same color, different shape merges by L11).
+  (3) noca 10×2-object: object patches still separate from background but color clusters
+  visibly mix relative to (2). (4) `ca_refshape`: by L9 referent patches aggregate into
+  large referent-dominated clusters; at L11 object patches regroup into small per-image
+  islands. Caveat: 2 distractors have only 1–2 patches (small distant objects) — flagged
+  in log, do not over-read their cluster membership.
+- **Artifacts**: `outputs/analysis/tsne/patch_level/{single_object_10,two_object_10}/`
+  (script `scripts/analysis/tsne_patch_level.py`; feats npz cached, `--replot` and
+  `--masks-only` supported; masks_debug.png per subset is the segmentation gate).
+- **Consistency**: single backbone (D5 n/a); captions state n and model variant (D1/D6).
+
+### X17. Reference probe on the GCA ViT (Song et al. §4.2 analog)
+- **Motivation**: same-protocol comparison with the recode-repro Qwen §4.2 probe —
+  does the in-stream (GCA) model carry a linearly decodable referent/non-referent
+  signal in its patch tokens, and where does it emerge?
+- **Design**: `clevr_dinov2_decoder1l_scratch_s42`; clevr_two_object_v2 filtered to
+  shape≠ & color≠ & no-gray, 219/221 kept after hue segmentation (2 degenerate
+  skipped). **Paired referring design**: each scene probed under both directions
+  ("What color is the {target.shape}?" / "{distractor.shape}?"), so each object
+  carries both labels across prompts — kills the target-is-always-large confound
+  that made the first (unpaired) run trivially 1.0 in ALL conditions incl. noca
+  (`reference_probe/two_object/` kept as the confound record; numbers there are
+  artifacts, do not cite). Features = per-object mean over its own patches (counts
+  vary; no fixed-16-token concat analog). Grouped-by-scene 80/20 logistic per block.
+  Conditions: referring / noca / description / irrelevant.
+- **Results**: referring 0.50 (block 0) → 0.625 (b1) → 0.761 (b4) → 0.977 (b5) →
+  1.000 (b6-11); noca / description / irrelevant exactly 0.5 at every block
+  (structurally: control features are direction-independent). Reference signal
+  accumulates across successive GCA injections (layers 1,3,5), saturating mid-net.
+- **Artifacts**: `outputs/analysis/reference_probe/two_object_paired/`
+  (script `scripts/analysis/reference_probe.py`, `--replot`; feats npz cached).
+  Companion Qwen runs: `../../recode-repro/outputs/probe_n200{,_prefix}/`.
+- **Scene-level extension** (`scripts/analysis/reference_scene_tsne.py`,
+  `outputs/analysis/reference_probe/scene_tsne/`): mean of ALL 576 patches per
+  (scene, direction). noca = one undifferentiated cloud at every block; referring
+  = scenes cluster by the QUERIED shape from L1 (described attribute; markers
+  segregate) and reorganize into clean referent-COLOR islands by L11 (the answer
+  value) — the Binding→Retrieval sequence visible at scene level, surviving mean
+  pooling. Contrast: Qwen scene-level t-SNE (recode-repro `outputs/tsne_scene/`)
+  shows NO referent structure under referring — its reference recoding is a small
+  subspace shift that pooling (16/256 tokens) drowns, while GCA's in-stream
+  reorganization dominates the pooled vector.
+- **Status**: ✅ done 08-14 (probe + scene-level, both sides; Qwen full results in
+  recode-repro JOURNAL).
+
+### X18. Multi-object hallucination — pooled n1/n2 probe on raw backbones
+- **Motivation** (user-directed 08-18, replaces the 3×3 per-object readout of E8
+  as the site's presentation): hold the readout fixed at scene-level mean pooling
+  (all patch tokens averaged) and vary ONLY object count (1 vs 2) — same method
+  both sides, target attributes probed. Hypothesis: multi-object confusion arises
+  at aggregation, not encoding. The experiment's public name is
+  "multi-object hallucination" (hypothesis-named); measurement figures are
+  "ViT backbone probing / t-SNE".
+- **Design**: 4 ViT-B backbones (zero-gated GCA fwd = native), datasets
+  `data/clevr_single_object_v3` (n1=500) + `data/clevr_two_object_v2` (n2=480,
+  target always large → size single-class in n2, skipped). Per block: mean over
+  all patch tokens → PCA(50) → logistic (5-fold), target attrs. t-SNE: DINOv2
+  block 11 pooled, 288 pts/panel (per-combo 3 for n1; random 288 for n2),
+  4-channel encoding (tab20 hue=color, shade=material, glyph=shape, size=size).
+- **Results** (block 11, n1 → n2 target color): DINOv2 0.912 → 0.517,
+  Sup-ViT 0.984 → 0.812, SigLIP 1.000 → 0.850, MAE 0.932 → 0.912; n1 all-attr
+  0.91–1.00 for all 4 backbones. Shape/material stay ≥0.97 on n2 (target is the
+  large object and dominates the mean). t-SNE: n1 = shape×material islands with
+  color substructure; n2 = diffuse, no target-attribute organization. Note: raw
+  DINOv2 n2 color 0.517 vs trained-model noca 0.356 (linear_probe_single.py) —
+  same qualitative direction, protocols not point-comparable (different probe
+  implementation details); recorded on the site.
+- **Artifacts**: `outputs/analysis/raw_backbone_probe/pooled_n1n2/`
+  (feats npz per backbone×dataset, probe_results.json, pooled_probe.png,
+  pooled_tsne.png; `raw_backbone_probe.py --pooled [--only LABEL | --replot-pooled]`).
+- **Status**: ✅ done 08-19 (CPU-only; GPU was occupied by the s44 cls run).
+
+### X19. Patch-token PCA + KMeans on the paired renders — additive object vector
+- **Motivation** (user hypothesis): a patch containing an object carries the
+  local background representation plus an additive, object-specific vector.
+  X16's patch-level t-SNE showed per-object clusters but is distance-based,
+  nonlinear, and per-panel fit — cannot test additivity/linearity. PCA gives a
+  global linear frame (n1/n2 panels share one fit); KMeans is the quantitative
+  leg (user-specified: 5 random pairs, k=2 on 1-object / k=3 on 2-object,
+  foreground red / distractor blue at alpha 0.3).
+- **Design**: NEW paired dataset `data/clevr_object_count/{n1,n2}` (480 pairs =
+  96 combos × 5 positions, target placement identical across n1/n2, ≥2-attr
+  distractor, sizes free 240/240 — replaces invalidated single_object_v3 /
+  two_object_v2). Model = `clevr_dinov2_decoder1l_scratch_s42` noca (frozen
+  backbone ⇒ ViT backbone representation), X16 extraction+segmentation imported
+  (`tsne_patch_level.py`). PCA set: 6 combos × 5 positions (position-invariance
+  control); cluster set: 5 uniform-random pairs (both exclude gray / same-color
+  distractors — hue segmentation limit). Offsets in full 768-d:
+  offset = mean(object patches) − mean(bg patches). Clustering variants: raw
+  tokens (as specified) and bgsub (per-position background template — the mean
+  token at each position over images where it is background — subtracted; this
+  is the additive hypothesis' own prediction).
+- **Results** (script prints per layer; offset_stats.json):
+  (1) Additivity holds and is object-specific: same-pair target offset is
+  essentially unchanged by adding a distractor (n1-vs-n2 cos 0.998→0.962 L1→L11);
+  within-combo-across-position cos > between-combo at every layer (L11
+  0.912 vs 0.624), and after removing the shared "objectness" direction
+  (top-1 SVD 0.60–0.79 of offset energy) residuals are combo-specific
+  (L11: 0.729 within vs −0.152 between).
+  (2) Raw-token KMeans k=2/3 does NOT recover objects (IoU 0.01–0.05): 550/576
+  background tokens vary smoothly with position and dominate inertia — clusters
+  are large spatial background regions. Consistent with (1): the object vector
+  rides on a position-dependent background manifold.
+  (3) bgsub KMeans recovers the foreground (n1 target IoU 0.60 at L1, 0.23 at
+  L11; n2 foreground-union IoU 0.57→0.26; ARI 0.7→0.3): objects separate from
+  background, but the two foreground clusters split core-vs-halo (shadow/edge)
+  rather than object-vs-object — two objects' vectors are closer to each other
+  than an object's core is to its own periphery, at k=3 L2 geometry. IoU is
+  depressed by halo/shadow patches outside the strict pixel-based owner masks.
+  (4) PCA panels: PC1+2 hold only ~25–39% variance (background positional
+  manifold); object patches collapse into one tight clump by L11 in the global
+  frame, color separation not visible in 2 PCs.
+- **Artifacts**: `outputs/analysis/patch_pca_cluster/` (feats npz + labels +
+  masks_debug per subset; pca_n{1,2}.png, offset_stats.json,
+  cluster_overlay_n{1,2}{,_bgsub}.png, cluster_metrics{,_bgsub}.png,
+  cluster_metrics.json, log.txt). Script
+  `scripts/analysis/patch_pca_cluster.py` (--masks-only / cached extraction /
+  --replot, X16 three-phase pattern; CPU-only run).
+- **Caveats**: cluster-set pair 478 distractor has few patches at high layers
+  (owner counts in labels.json); owner masks exclude shadows so halo patches
+  count against IoU; PCA-set combos skew metal/large (5/6) under seed 42 —
+  color is the diverse axis.
+- **Status**: ✅ done 2026-08-19 (CPU-only; GPU left to the running s44 job).
+
 ## Part 2 — Design-consistency findings (D1–D11)
 
 **D1 [major, disclosure required] Performance model ≠ mechanistic model.** Tables use

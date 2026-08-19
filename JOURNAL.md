@@ -5,7 +5,7 @@
 > [!NOTE] Tags: `[model]`, `[data]`, `[metrics]`, `[infra]`, `[plot]`, `[main flow]`, `[paper]`, `[ablation]`, `[debug]`
 
 - [ ] [main flow] Confirm EXPERIMENT.md objective with user (initialized 2026-07-05 from the user's v2 outline)
-- [ ] [paper] E1c s43 replication DONE (08-01, table in paper_artifacts.md §8.1) — user still to pick footnote-vs-table-mean camera-ready treatment; s44 not run
+- [ ] [paper] E1c s42/s43/s44 replication DONE for Table 1 backbone matrix + s43 for the 4-cell ablation table (08-13, tables in paper_artifacts.md §8.1) — Sup-ViT s44 flagged as a high-variance outlier (0.8078 vs 0.8655/0.8826); user still to pick footnote-vs-table-mean camera-ready treatment
 - [ ] [paper] R4: transfusion baseline has no checkpoint — retrain or drop from baseline table? (user decision)
 - [ ] [paper] learned_text paper cell (24.6) is protocol-dependent: training-log final-ep 0.2456 vs independent eval protocol 0.197 (last.pt) / 0.207 (best.pt ep2); windowed train-loop acc 0.4667 is a third number. User decides camera-ready treatment (footnote or renumber). Artifacts: `outputs/analysis/generalization/clevr_dinov2_learned_text_decoder1l{,_lastep}_s42.json`
 - [ ] [paper] Baseline implementations GATED ON USER GO: OpenFlamingo-9B zero-shot mechanism analysis (priority 1), T5-vs-RoBERTa capacity axis (+CLOSURE). Designs pre-registered in docs/paper_v2_outline.md; survey in experiment_registry.md X14. (PixArt-Σ un-gated by user 2026-07-06 — probe/CA-map running.)
@@ -21,6 +21,129 @@
 
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
+
+- **2026-08-19 — X19 patch-token PCA + KMeans on the NEW paired renders
+  (additive object-vector test); paired dataset render completed.** The paired
+  object-count dataset finished rendering 06:31 (another agent's
+  `render_single_objects.py --paired` run, previously unjournaled):
+  `data/clevr_object_count/{n1,n2}` = 480 pairs (96 combos × 5 positions),
+  target placement bit-identical across n1/n2, 1 distractor ≥2 attrs different,
+  sizes free 240/240 — replaces the invalidated single_object_v3/two_object_v2.
+  New `scripts/analysis/patch_pca_cluster.py` (X19; imports X16's
+  extraction/segmentation from tsne_patch_level.py; noca on
+  clevr_dinov2_decoder1l_scratch_s42; CPU-only, GPU left to the s44 run; X16
+  three-phase --masks-only → cached npz → --replot). Findings: (1) additive +
+  object-specific offsets confirmed — target offset (obj−bg mean, 768-d)
+  unchanged when the distractor is added (same-pair n1↔n2 cos 0.998→0.962
+  L1→L11); within-combo-across-position cos > between-combo everywhere (L11
+  0.912 vs 0.624); one shared "objectness" direction carries 0.60–0.79 of
+  offset energy and the residual is combo-specific (L11 0.729 vs −0.152).
+  (2) User-specified KMeans (5 random pairs, k=2 n1 / k=3 n2, red/blue overlay
+  alpha 0.3) on RAW tokens fails (IoU 0.01–0.05): background's positional
+  manifold dominates inertia. (3) Subtracting a per-position background
+  template (the hypothesis' own prediction) recovers the foreground (n1 target
+  IoU 0.60@L1; ARI 0.7→0.3 with depth) but the two foreground clusters split
+  core-vs-halo, not object-vs-object. (4) Global-fit PCA (n1/n2 share the
+  frame — the advantage over per-panel t-SNE): PC1+2 only ~25–39% var, object
+  patches collapse to one clump by L11. Artifacts:
+  `outputs/analysis/patch_pca_cluster/`; registry X19 has full design/caveats.
+  Code developed on worktree branch `worktree-patch-pca-cluster` (main
+  checkout's bg-edit guard); JOURNAL/registry entries appended there too —
+  merge on next commit pass.
+
+- **2026-08-18 — site made external-reader-safe (user-directed, second pass).**
+  The site is served publicly (http://141.212.110.118:8899, long-running
+  `http.server` rooted at docs/site/), so index.src.html was purged of internal
+  vocabulary: (a) all checkpoint run names removed — models are described by
+  role + components; readout variants renamed to the new two-axis grammar
+  **CLS token / local patches / local patches + question** (visual interface ×
+  whether the question re-enters at readout; replaces concat_decoder1l /
+  decoder1l / cls, which conflated the axes — both decoder variants read local
+  patches); (b) all experiment registry codes deleted (E3/E4/E5/E7/E8/E9, X13,
+  T1/T4, R1) and replaced by experiment descriptions — user ruling: H1–H3,
+  D1–D4, A1–A6 stay because the page defines them; (c) every `<span class=src>`
+  path span, RESULTS.md/paper_artifacts/JOURNAL citation, and dir-migration
+  note removed (provenance stays in RESULTS.md/registry; prov block now a
+  3-sentence external statement). Two new comparison figures (both CPU replots
+  from caches, new filenames, nothing overwritten): `dino_attribute_tsne.py
+  --combined` → `outputs/analysis/single_objects/dino_attribute_tsne_combined.png`
+  (single panel, 4 channels: hue=color, shade=material via tab20 dark/light
+  pairs — metal dark, rubber light (user replaced the initial black-edge
+  encoding); glyph=shape, size=size; canvas ×1.6) and `raw_backbone_probe.py --combined` →
+  `outputs/analysis/raw_backbone_probe/combined_probe.png` (1×4 attr panels ×
+  4 backbone curves, shared axes; replaces the separate DINOv2 + MAE figures and
+  gives raw_backbone_probe.py its previously missing replot path). index.html
+  rebuilt: 7.2 MB, 25 images; verified live on :8899.
+  Follow-up rounds same day (user-directed): (1) material encoding changed
+  from black edges (a real bug — the global `alpha=` kwarg overwrote rubber's
+  transparent edge alpha, giving every point a black edge) to tab20 dark/light
+  hue pairs (metal dark / rubber light), thin uniform 0.5pt outline kept for
+  crispness only; canvas ×2 (cell 8 → 9×9 in). (2) t-SNE subsampled to 3
+  positions per attribute combination (96 combos → 288 points,
+  `--per-combo 3`, seed 42) so individual markers stay readable. (3) Term
+  unification: **"ViT backbone"** replaces raw backbone / raw substrate /
+  原始基底 / pretrained substrate everywhere; figures retitled "ViT backbone
+  t-SNE — DINOv2, single objects" and "ViT backbone probing — multi-object
+  scenes"; site section renamed "ViT backbone probing". Final build 6.8 MB.
+  (4) Section merge, user-directed: backbone probing + object-count 受控探測
+  are ONE experiment named by hypothesis — "**Multi-object hallucination**"
+  (first half = per-object local readout, information present; second half =
+  pooled 1-vs-2 readout, selection collapse; identical method across n1/n2).
+  Standalone object-count section removed, its content folded in; fixation
+  triangle + merged paper-ready claim close the section; behavioral 第三階段
+  and timeline references updated. Naming rule recorded in memory: experiments
+  named after the hypothesis, measurements keep "ViT backbone <measurement>".
+
+- **2026-08-19 — pooled redo of the multi-object hallucination evidence (X18) +
+  final site vocabulary pass.** User rulings: the 3×3 per-object readout is NOT
+  the designed experiment — readout must be 24×24 mean pooling with object count
+  as the only variable; "substrate" banned; ALL A-codes (A1–A6, A1.2, A2↔A4,
+  A4.3) rewritten as descriptions; 「誘餌奪走」→ hallucination rate. New run
+  `raw_backbone_probe.py --pooled` (X18, CPU 4-way parallel workers; GPU held
+  the s44 cls run): 4 backbones × {n1=500, n2=480} × 12 blocks, mean-pooled →
+  PCA50+logistic on target attrs + DINOv2 b11 pooled t-SNE (288 pts/panel).
+  Headline: n1 all 0.91–1.00; n2 target color DINOv2 0.912→0.517, Sup-ViT
+  →0.812, SigLIP →0.850, MAE →0.912 (shape/material stay high — target is the
+  large object); t-SNE n1 = shape×material islands, n2 = diffuse. Site section
+  rewritten as ONE experiment (backbone pooled → +language conditions →
+  fixation triangle); old 3×3 figures/table removed from the page (files kept
+  on disk). Raw-vs-trained numeric gap (0.517 vs noca 0.356) flagged on site as
+  protocol-level, direction-consistent. Rebuilt 7.1 MB / 25 images, live :8899.
+
+- **2026-08-15 — site updated with the external-comparison section.** New pillar
+  「外部對照：unified VLM 的 reference recoding」 in docs/site/index.src.html
+  (§4.2 reproduction + order negative control, t-SNE geometry contrast,
+  prefix/postfix behavioral cost, section conclusion + paper-ready claim);
+  figures referenced from recode-repro/outputs/report_figures/ (5 combined
+  presentation figures, conditions as row labels, no internal condition codes).
+  docs/site/build.py added (base64-inlining build; index.html rebuilt, 7.3 MB,
+  26 images). Provenance paragraph extended. Local files only — nothing pushed
+  or deployed.
+
+- **2026-08-14 — X17 reference probe (GCA ViT, Song-et-al §4.2 analog) done.**
+  Paired-referring probe on 219 two-object scenes: referring rises from chance at
+  block 0 to 1.0 by block 6 (0.625@b1 → 0.977@b5), controls exactly 0.5 everywhere.
+  First unpaired attempt was a lesson: target is always the large object in this
+  dataset, so ALL conditions (incl. noca) probed 1.0 through the size confound —
+  fixed with the two-direction paired design + grouped split; old dir
+  `reference_probe/two_object/` kept as confound record. Companion Qwen2.5-VL
+  reproduction lives in `../recode-repro/` (own JOURNAL): text-prefix run reproduces
+  the paper (counting/referring 1.0@L8, controls ~chance); image-first run = all
+  conditions bit-identical features → 0.562 flat, proving default Qwen ordering
+  admits NO in-stream recoding (causal mask gates it).
+
+- **2026-08-13 — X16 patch-level t-SNE (unpooled tokens) run.** New
+  `scripts/analysis/tsne_patch_level.py` on `clevr_dinov2_decoder1l_scratch_s42`:
+  t-SNE of individual patch tokens (first non-pooled embedding analysis) over GCA
+  layers, 4 figures in `outputs/analysis/tsne/patch_level/`. Stimuli: 10×1-object
+  (v3) + 10×2-object (v2); object→patch masks via saturation gate + nearest-hue
+  pixel segmentation (chromaticity match fails — pyrender/Blender renders are dim,
+  chroma drifts toward gray; single_object_v3 `pixel_coords` is a constant dummy
+  (240,160), not the true position). Qualitative: per-object patch clusters exist at
+  every layer even in 2-object scenes (the substrate is intact at patch level);
+  10×2-object color clustering is visibly more mixed than 10×1-object; under
+  `ca_refshape` ("What color is the {shape}?") referent patches aggregate into
+  referent-dominated clusters by L9. Registry X16 has full design + caveats.
 
 - **2026-08-05 — CORRECTION: the DINOv2 scale-axis entries (07-18/07-23/07-24) used a
   contaminated ViT-B reference value; direction of the return-scaling claim REVERSES.**
