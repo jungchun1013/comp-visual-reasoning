@@ -234,12 +234,24 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   (4) PCA panels: PC1+2 hold only ~25–39% variance (background positional
   manifold); object patches collapse into one tight clump by L11 in the global
   frame, color separation not visible in 2 PCs.
+- **SigLIP leg** (user-ordered same day; `clevr_siglip_decoder1l_scratch_s42`
+  noca, ViT-B/16 @256 → 16×16 grid, same 35 pairs/seed): additivity replicates
+  (n1↔n2 target cos 0.999→0.922; within > between everywhere, L11 resid 0.616
+  vs −0.116; top-1 SVD share higher than DINOv2, 0.59–0.84). Depth trend
+  REVERSES vs DINOv2: bgsub KMeans at L1 separates OBJECT-vs-OBJECT (target
+  IoU 0.568, distractor 0.629 ≈ foreground 0.664 — not the core-vs-halo split
+  DINOv2 shows), then foreground clusters fragment into background scatter
+  with depth (L11 IoU 0.07–0.11 vs DINOv2's 0.20–0.27). Raw-token KMeans fails
+  at all layers like DINOv2 (IoU ≤0.08). Caveat: 16×16 grid → small objects
+  hold only 2–3 patches (9 warnings, see log).
 - **Artifacts**: `outputs/analysis/patch_pca_cluster/` (feats npz + labels +
   masks_debug per subset; pca_n{1,2}.png, offset_stats.json,
   cluster_overlay_n{1,2}{,_bgsub}.png, cluster_metrics{,_bgsub}.png,
-  cluster_metrics.json, log.txt). Script
+  cluster_metrics.json, log.txt); SigLIP leg in
+  `outputs/analysis/patch_pca_cluster/siglip/` (same layout). Script
   `scripts/analysis/patch_pca_cluster.py` (--masks-only / cached extraction /
-  --replot, X16 three-phase pattern; CPU-only run).
+  --replot, X16 three-phase pattern; CPU-only runs; SigLIP via --checkpoint
+  ... --grid 16 --resolution 256 --out-dir .../siglip).
 - **Caveats**: cluster-set pair 478 distractor has few patches at high layers
   (owner counts in labels.json); owner masks exclude shadows so halo patches
   count against IoU; PCA-set combos skew metal/large (5/6) under seed 42 —

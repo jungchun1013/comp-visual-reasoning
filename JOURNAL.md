@@ -50,6 +50,13 @@
   Code developed on worktree branch `worktree-patch-pca-cluster` (main
   checkout's bg-edit guard); JOURNAL/registry entries appended there too —
   merge on next commit pass.
+  **SigLIP leg (user-ordered)**: same pipeline on
+  `clevr_siglip_decoder1l_scratch_s42` noca (@256, 16×16 grid, same 35 pairs)
+  → `outputs/analysis/patch_pca_cluster/siglip/`. Additivity replicates
+  (n1↔n2 cos 0.999→0.922), but the depth trend reverses vs DINOv2: bgsub
+  KMeans at L1 separates object-vs-object (target/distractor IoU 0.57/0.63 ≈
+  fg 0.66, not DINOv2's core-vs-halo), then foreground clusters fragment into
+  background scatter with depth (L11 0.07–0.11 vs DINOv2 0.20–0.27).
 
 - **2026-08-18 — site made external-reader-safe (user-directed, second pass).**
   The site is served publicly (http://141.212.110.118:8899, long-running
