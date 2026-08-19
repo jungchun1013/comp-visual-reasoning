@@ -188,6 +188,60 @@ def plot_patch_pca(feats, owner, labels, pcas, out_path, *, suptitle,
     print(f"Saved: {out_path}")
 
 
+def plot_patch_pca_single(feats, owner, labels, b, grid, out_path, *, suptitle):
+    """One image, ALL patches, per-layer PCA fit on that image's own tokens.
+    Top row: owner/attribute coloring. Bottom row: same embedding colored by
+    the patch's row in the 2D grid — diagnoses positional banding."""
+    rec = labels[b]
+    obj_attrs = [(rec["target"]["shape"], rec["target"]["color"])] + \
+                [(d["shape"], d["color"]) for d in rec["distractors"]]
+    rows_idx = np.arange(grid * grid) // grid
+
+    fig, axes = plt.subplots(2, len(GCA_LAYERS),
+                             figsize=(2.6 * len(GCA_LAYERS), 5.6))
+    last = None
+    for c, layer in enumerate(GCA_LAYERS):
+        X = feats[layer][b].astype(np.float32)
+        pca = PCA(n_components=2, random_state=0).fit(X)
+        emb = pca.transform(X)
+        ax = axes[0, c]
+        bg = owner[b] == 0
+        ax.scatter(emb[bg, 0], emb[bg, 1], c=[TSNE_STYLE["gray"]],
+                   s=TSNE_STYLE["bg_size"], marker="o", edgecolors="none",
+                   rasterized=True)
+        for oi, (sh, co) in enumerate(obj_attrs):
+            m = owner[b] == oi + 1
+            if m.any():
+                ax.scatter(emb[m, 0], emb[m, 1],
+                           c=[ATTR_VALUE_COLORS["color"][co]],
+                           marker=SHAPE_MARKERS[sh], s=TSNE_STYLE["mid_size"],
+                           edgecolors="none", rasterized=True)
+        ax.set_title(f"L{layer} (PC1+2 "
+                     f"{pca.explained_variance_ratio_.sum():.0%})",
+                     fontsize=S["subplot_title_fontsize"])
+        style_tsne_ax(ax)
+        ax = axes[1, c]
+        last = ax.scatter(emb[:, 0], emb[:, 1], c=rows_idx, cmap="viridis",
+                          s=TSNE_STYLE["bg_size"], edgecolors="none",
+                          rasterized=True)
+        style_tsne_ax(ax)
+    cb = fig.colorbar(last, ax=axes[1, :].tolist(), shrink=0.8, pad=0.01)
+    cb.set_label("patch row (top→bottom)", fontsize=8)
+    handles = [Line2D([0], [0], marker=SHAPE_MARKERS[sh], color="w",
+                      markerfacecolor=ATTR_VALUE_COLORS["color"][co],
+                      markersize=7, label=f"{co} {sh}")
+               for sh, co in obj_attrs]
+    handles.append(Line2D([0], [0], marker="o", color="w",
+                          markerfacecolor=TSNE_STYLE["gray"], markersize=5,
+                          label="background"))
+    fig.legend(handles=handles, loc="lower center",
+               ncol=len(handles), fontsize=8, frameon=False)
+    fig.suptitle(suptitle, fontsize=12)
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def _cos(a, b):
     return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
 
@@ -509,6 +563,18 @@ def main():
             suptitle=f"Patch-token PCA — {n_pca}×{tag} scenes (fit shared "
                      f"with the {other}-object set), no cross-attention",
             bg_per_image=args.bg_per_image, seed=args.seed)
+
+    # single-image PCA (first cluster-set pair): all patches of ONE image,
+    # per-layer own fit + positional-banding diagnostic row
+    for name, tag in (("n1", "1-object"), ("n2", "2-object")):
+        feats, owner, labels, _ = subsets[name]
+        b = next(i for i, rec in enumerate(labels) if rec["in_cluster_set"])
+        plot_patch_pca_single(
+            feats, owner, labels, b, args.grid,
+            out_dir / f"pca_single_{name}.png",
+            suptitle=f"Patch-token PCA — one {tag} image "
+                     f"({labels[b]['filename']}), all patches, per-layer fit; "
+                     "bottom row colored by patch row")
 
     print("\nAdditive-offset statistics (768-d):")
     stats = offset_statistics(subsets["n1"][0], subsets["n1"][1],
