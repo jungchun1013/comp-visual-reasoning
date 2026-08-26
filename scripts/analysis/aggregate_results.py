@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -221,6 +222,17 @@ def main():
                   "", "| n finetune samples | valA | valB |", "|---|---|---|"]
         for n, rec in sorted(cogent["final_per_n"].items(), key=lambda kv: int(kv[0])):
             lines.append(f"| {n} | {fmt(rec.get('valA'))} | {fmt(rec.get('valB'))} |")
+
+    # Linear-probe readout × backbone table (X20); same numbers as
+    # outputs/analysis/linear_probe/probe_table_direct.md.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from probe_table import probe_section_lines
+        probe_lines, _ = probe_section_lines()
+        lines += probe_lines
+    except Exception as e:  # never let the probe table break the accuracy tables
+        lines += ["", "## Linear probe — readout × backbone", "",
+                  f"(probe_table.py failed: {e})"]
 
     lines += ["", "## Analysis artifact inventory", "",
               "| outputs/analysis/ dir | files | last modified |", "|---|---|---|"]

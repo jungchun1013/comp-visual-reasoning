@@ -50,27 +50,16 @@ LABEL_COLORS = {"answer_match": "#d62728", "answer_decode": "#1f77b4"}
 
 
 def load_model(ckpt_path, device):
-    from model import CrossAttnViT
-    from tasks.decoder import build_decoder_model, build_clevr_decoder_vocab
+    """Canonical loader (src/model/checkpoint_io.py). The previous hand-rolled
+    loader dropped `use_gate`, so ungated-CA checkpoints were rebuilt with
+    zero-initialised gates and their GCA output nulled — every
+    `*_nogate_*` probe produced before 2026-08-26 is invalid for that reason."""
+    from model.checkpoint_io import load_any_checkpoint
 
-    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
-    cfg = OmegaConf.create(ckpt["config"])
-    cross_attn_layers = list(cfg.model.cross_attn_layers)
-    pretrained = cfg.model.get("pretrained", True)
-    condition_type = cfg.model.get("condition_type", "gca")
-    steervit = CrossAttnViT.from_config(
-        cfg.model.backbone_name, device=device,
-        cross_attn_layers=cross_attn_layers,
-        resolution=cfg.model.resolution,
-        pretrained=pretrained,
-        condition_type=condition_type,
-    )
-    vocab = build_clevr_decoder_vocab()
-    model_cfg = OmegaConf.create({"model": cfg.model, "task": cfg.task, "data": cfg.data})
-    model = build_decoder_model(steervit, model_cfg).to(device)
-    model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    model, steervit, _transform, vocab, task_type, meta = load_any_checkpoint(ckpt_path, device)
     model.eval()
-    print(f"Loaded (epoch {ckpt.get('epoch', '?')})")
+    epoch = meta.get("epoch", "?") if isinstance(meta, dict) else "?"
+    print(f"Loaded via checkpoint_io ({task_type}, epoch {epoch})")
     return model, steervit, vocab
 
 
@@ -82,8 +71,8 @@ class AllLayerRetriever:
         self.norm = steervit.vision_model.trunk.norm
         self.prefix = steervit.vision_model.trunk.num_prefix_tokens
         self.num_vit_layers = len(self.blocks)
-        has_decoder_probe = (decoder_model is not None and
-                             hasattr(decoder_model.decoder, 'pos_embedding'))
+        decoder = getattr(decoder_model, "decoder", None)  # None for CLS-token classifiers
+        has_decoder_probe = decoder is not None and hasattr(decoder, 'pos_embedding')
         self.num_layers = self.num_vit_layers + (1 if has_decoder_probe else 0)
 
     @torch.no_grad()
@@ -111,8 +100,8 @@ class AllLayerRetriever:
             feats[l] = patches.mean(dim=1).cpu()
 
         # Decoder L1: BOS hidden state (cross-attn decoder only)
-        if self.decoder_model is not None:
-            decoder = self.decoder_model.decoder
+        decoder = getattr(self.decoder_model, "decoder", None)
+        if decoder is not None:
             if hasattr(decoder, 'pos_embedding'):
                 patches = vit_out[:, self.prefix:, :].float()
                 memory = decoder.visual_proj(patches)
@@ -313,6 +302,11 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--categories", type=str, nargs="+",
+                        default=["attr_query_direct", "attr_query_same", "attr_query_spatial"],
+                        help="Subset of categories to probe, in order. The RNG "
+                             "is advanced per category, so a prefix of the "
+                             "default list reproduces the same queries as a full run.")
     args = parser.parse_args()
 
     apply_style()
@@ -344,7 +338,7 @@ def main():
     gca_layers = [i for i, blk in enumerate(steervit.vision_model.trunk.blocks)
                   if getattr(blk, "gated_cross_attn", None) is not None]
 
-    categories = ["attr_query_direct", "attr_query_same", "attr_query_spatial"]
+    categories = list(args.categories)
     all_results = {}
 
     for category in categories:

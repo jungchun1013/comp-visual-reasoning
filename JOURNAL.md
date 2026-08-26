@@ -22,6 +22,24 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-26 — X20 comprehensive linear probe launched (story-vs-evidence
+  check).** User's point: accuracy shows a behavioral difference, a linear
+  probe shows whether the representation differs. Audit of the site
+  (claim → evidence type) found accuracy-only mechanism claims: pretraining
+  objective explains MAE's deficit (準確率總表), Sup-ViT's +question drop is a
+  readout interaction, −CA 0.9237→0.4945 is the causal baseline / "gradients
+  vanish without CA" (第五階段), failure structure is mechanism-level not
+  readout-level (第二階段), ungated CA "leaves no separable handle" (gate note,
+  no evidence cited while an existing probe on `clevr_dinov2_nogate_scratch`
+  shows decode 0.171 — artifact-vs-real being checked). Probe coverage was
+  4/12 paper cells and zero for −CA. Same X10 protocol; `linear_probe.py` got
+  a `--categories` CLI (default unchanged). Queue on GPU0
+  (`outputs/analysis/linear_probe/x20_probe_queue_2026-08-26.log`): −CA all
+  3 categories, then mae/sup decoder1l+concat, siglip concat, siglip/sup/mae
+  cls (direct only). Pre-registered readings in registry X20. −CA checkpoint
+  verified: GCA layers present, attn_gate frozen at 0.0 for all six layers.
+  Aggregation script `probe_table.py` (readout × backbone table + layer
+  curves) to follow; site changes wait for user review.
 - **2026-08-26 — X19 (local patches additive structure) added to the results
   site.** New subsection「Local patches 的加性結構」inserted at the end of the
   Multi-object hallucination section of `docs/site/index.src.html` (local-only

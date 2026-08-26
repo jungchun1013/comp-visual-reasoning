@@ -60,7 +60,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 ### X10. Conditional RSA + linear probes (trained models)
 - **Motivation**: representational geometry of the 2 stages across the 3 attr_query categories.
 - **Design**: 72 queries/category, 500 db, families direct [86,87,88,89] / same [53,59,55,57,61,60] / spatial [76,74,75,77,80,81], seed 42.
-- **Status**: ✅ concat main model (`concat_decoder_1l/`), siglip GCA-decoder, nogate (byproduct, keep unused); dinov2 GCA-decoder ⏳ (E4, queued — completes the mechanistic-model pair).
+- **Status**: ✅ concat main model (`concat_decoder_1l/`), siglip GCA-decoder, dinov2 GCA-decoder. ❌ all `*_nogate_*` probe dirs are INVALID (2026-08-26, X20): `linear_probe.py`'s own loader dropped `use_gate`, so ungated checkpoints were rebuilt with zero-init gates and their GCA output nulled (decode 0.171 = unconditioned DINOv2). Kept on disk, excluded by `probe_table.py`; rerun lands in `clevr_dinov2_nogate_scratch_v2`.
 
 ### X11. E7 add-object hallucination (v2 A1.3 core)
 - **Motivation**: show the substrate bottleneck is fixation, not encoding.
@@ -257,6 +257,52 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   count against IoU; PCA-set combos skew metal/large (5/6) under seed 42 —
   color is the diverse axis.
 - **Status**: ✅ done 2026-08-19 (CPU-only; GPU left to the running s44 job).
+
+### X20. Comprehensive linear probe — story-vs-evidence consistency check
+- **Motivation** (user, 2026-08-26): several mechanism claims on the results
+  site rest on accuracy alone; a linear probe is the representational view that
+  can show whether the claimed difference exists. Audit found probe coverage of
+  4/12 paper cells (DINOv2 × 3 readouts, SigLIP local patches), zero probes on
+  the −CA ablation (the site's "causal baseline"), and an uncited
+  near-chance probe on the ungated-CA model (decode 0.171 vs val acc 0.91–0.97).
+- **Design**: same protocol as X10 (`linear_probe.py`, 72 queries × 500 db,
+  answer_decode / answer_match, seed 42), unchanged except a `--categories`
+  CLI (prefix of the default order reproduces the same queries). Queue on one
+  GPU (`outputs/analysis/linear_probe/x20_probe_queue_2026-08-26.log`):
+  Tier 1 `clevr_dinov2_concat_decoder1l_nogca_scratch` (−CA; GCA layers present
+  with attn_gate frozen at 0) all 3 categories; Tier 2 direct only:
+  mae/sup × {decoder1l, concat_decoder1l}; Tier 3 direct only: siglip concat,
+  siglip/sup/mae cls. Aggregation `scripts/analysis/probe_table.py` →
+  `outputs/analysis/linear_probe/probe_table.{md,json,png}` (readout ×
+  backbone; L11 decode/match, peak, half-rise) + section in
+  `docs/results_tables.md`.
+- **Pre-registered readings** (written before results):
+  (a) pretraining-objective claim — MAE decode under local patches ≥0.05 below
+  the other three backbones → supported; equal → difference lives in readout
+  training, rewrite. (b) Sup-ViT readout-interaction claim — Sup's two readouts
+  give the same probe curve (Δ ≤0.02) while acc differs by 0.07 → supported;
+  probe also drops → representation changed, rewrite. (c) −CA causal baseline —
+  −CA answer_match near chance at every layer and decode well below CA models →
+  language conditioning has a readable contribution in the ViT stream,
+  supported; decode still high with match low → rewrite as "encoding present,
+  selection absent". (d) mechanism-not-readout — DINOv2's three readouts share
+  the direct half-rise layer → supported (existing data). (e) ungated-CA 0.171 —
+  first rule out a loader artifact (strict=False key mismatch); if real, cite
+  it at the site's gate design note.
+- **Reading (e) resolved before results**: the ungated-CA 0.171 IS a loader
+  artifact — `linear_probe.load_model` rebuilt the backbone with the default
+  `use_gate=True`, `strict=False` left the missing `attn_gate` at 0, tanh(0)
+  nulled every GCA block (the same bug `checkpoint_io.py` documents for the
+  old eval loader). Fixed by switching `linear_probe.py` to
+  `load_any_checkpoint` (+ `getattr(model, "decoder", None)` for CLS
+  classifiers); smoke test with the fixed loader gives decode 0.80 / match
+  0.91 at L11 on 8 queries × 60 db. The Tier-1 −CA run started under the old
+  loader — equivalent for that checkpoint (its attn_gate keys exist, frozen
+  at 0); all later runs use the canonical loader. Ungated-CA rerun queued as
+  `clevr_dinov2_nogate_scratch_v2` (direct) after the main queue.
+- **Status**: ⏳ queue launched 2026-08-26 14:05 (GPU0; GPU1 not visible to
+  torch). Smoke test on the −CA checkpoint passed (`--num-db 60
+  --queries-per-subcat 8`).
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
