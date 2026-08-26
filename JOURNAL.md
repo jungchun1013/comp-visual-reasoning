@@ -22,6 +22,20 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-26 — X19 (local patches additive structure) added to the results
+  site.** New subsection「Local patches 的加性結構」inserted at the end of the
+  Multi-object hallucination section of `docs/site/index.src.html` (local-only
+  file, not in git), before its Paper-ready claim; the claim gained one sentence
+  (patch = background + additive, position-invariant, object-specific vector;
+  small relative to background positional variance, so pooling / unsupervised
+  clustering need a selection step). Five figures inlined from
+  `outputs/analysis/patch_pca_cluster/` (global PCA n1, single-image PCA n2,
+  raw and background-subtracted k=3 overlays, DINOv2 vs SigLIP metrics
+  half-pair). Site vocabulary: 1-object/2-object, 扣掉逐位置背景平均, no
+  internal codes. Rebuilt `index.html` (12.1 MB, 35 inlined images, was 29);
+  public server confirmed serving the new heading. Prose drafted by an Opus
+  agent under the user's explanation rules. Backup of the pre-edit source kept
+  in the job tmp dir only.
 - **2026-08-19 — X19 patch-token PCA + KMeans on the NEW paired renders
   (additive object-vector test); paired dataset render completed.** The paired
   object-count dataset finished rendering 06:31 (another agent's
