@@ -60,7 +60,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 ### X10. Conditional RSA + linear probes (trained models)
 - **Motivation**: representational geometry of the 2 stages across the 3 attr_query categories.
 - **Design**: 72 queries/category, 500 db, families direct [86,87,88,89] / same [53,59,55,57,61,60] / spatial [76,74,75,77,80,81], seed 42.
-- **Status**: ✅ concat main model (`concat_decoder_1l/`), siglip GCA-decoder, dinov2 GCA-decoder. ❌ all `*_nogate_*` probe dirs are INVALID (2026-08-26, X20): `linear_probe.py`'s own loader dropped `use_gate`, so ungated checkpoints were rebuilt with zero-init gates and their GCA output nulled (decode 0.171 = unconditioned DINOv2). Kept on disk, excluded by `probe_table.py`; rerun lands in `clevr_dinov2_nogate_scratch_v2`.
+- **Status**: ✅ concat main model (`concat_decoder_1l/`), siglip GCA-decoder, dinov2 GCA-decoder. ❌ all `*_nogate_*` probe dirs are INVALID (2026-08-26, X20): `linear_probe.py`'s own loader dropped `use_gate`, so ungated checkpoints were rebuilt with zero-init gates and their GCA output nulled (decode 0.171 = unconditioned DINOv2). Kept on disk, excluded by `probe_table.py`; the variant itself is deprecated (user ruling 2026-08-26) — no rerun.
 
 ### X11. E7 add-object hallucination (v2 A1.3 core)
 - **Motivation**: show the substrate bottleneck is fixation, not encoding.
@@ -298,8 +298,9 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   classifiers); smoke test with the fixed loader gives decode 0.80 / match
   0.91 at L11 on 8 queries × 60 db. The Tier-1 −CA run started under the old
   loader — equivalent for that checkpoint (its attn_gate keys exist, frozen
-  at 0); all later runs use the canonical loader. Ungated-CA rerun queued as
-  `clevr_dinov2_nogate_scratch_v2` (direct) after the main queue.
+  at 0); all later runs use the canonical loader. **User ruling 2026-08-26:
+  the ungated-CA variant is deprecated — not rerun, not compared, no row in
+  the probe table; reading (e) is closed.**
 - **Status**: ⏳ queue launched 2026-08-26 14:05 (GPU0; GPU1 not visible to
   torch). Smoke test on the −CA checkpoint passed (`--num-db 60
   --queries-per-subcat 8`).

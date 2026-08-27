@@ -40,6 +40,13 @@
   verified: GCA layers present, attn_gate frozen at 0.0 for all six layers.
   Aggregation script `probe_table.py` (readout × backbone table + layer
   curves) to follow; site changes wait for user review.
+  Later the same day: the ungated-CA 0.171 turned out to be a loader artifact
+  (`linear_probe.py` rebuilt the backbone with default `use_gate=True`,
+  `strict=False` left the missing gate at 0 → GCA nulled); `linear_probe.py`
+  now uses `load_any_checkpoint`. **User ruling: the ungated-CA variant is
+  deprecated — no rerun, no comparison, no row in the probe table.** First
+  result: −CA is flat at chance across all 12 layers on all three categories
+  (decode 0.171, match 0.21–0.23) vs 0.17→0.92 for the CA readouts.
 - **2026-08-26 — X19 (local patches additive structure) added to the results
   site.** New subsection「Local patches 的加性結構」inserted at the end of the
   Multi-object hallucination section of `docs/site/index.src.html` (local-only

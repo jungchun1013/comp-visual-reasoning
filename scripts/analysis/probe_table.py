@@ -42,16 +42,16 @@ BACKBONE_KEY = {"dinov2": "DINOv2", "siglip": "SigLIP", "sup": "Sup-ViT", "mae":
 _tab10 = plt.get_cmap("tab10").colors
 BACKBONE_COLORS = {"DINOv2": _tab10[0], "SigLIP": _tab10[1], "Sup-ViT": _tab10[2], "MAE": _tab10[3]}
 
-# Ablations are reported as separate rows, not grid cells.
-ABLATIONS = {"nogca": "−CA (local patches + question)", "nogate": "ungated CA (local patches)"}
+# Ablations are reported as separate rows, not grid cells. The ungated-CA
+# variant (*_nogate_*) is deprecated (user ruling 2026-08-26) and is never
+# aggregated; its pre-2026-08-26 probe dirs are also invalid (the old
+# linear_probe.py loader dropped `use_gate` and nulled the GCA output).
+ABLATIONS = {"nogca": "−CA (local patches + question)"}
 
-# Runs produced by the pre-2026-08-26 linear_probe.py loader, which dropped
-# `use_gate` and nulled the GCA output of ungated checkpoints (see
-# linear_probe.load_model). Kept on disk, never aggregated.
 INVALID_DIRS = {
-    "clevr_dinov2_nogate_scratch": "loader dropped use_gate (GCA nulled)",
-    "clevr_dinov2_nogate_scratch_s43": "loader dropped use_gate (GCA nulled)",
-    "clevr_siglip_nogate_scratch_s43": "loader dropped use_gate (GCA nulled)",
+    "clevr_dinov2_nogate_scratch": "deprecated variant; loader dropped use_gate (GCA nulled)",
+    "clevr_dinov2_nogate_scratch_s43": "deprecated variant; loader dropped use_gate (GCA nulled)",
+    "clevr_siglip_nogate_scratch_s43": "deprecated variant; loader dropped use_gate (GCA nulled)",
 }
 
 _DIR_RE = re.compile(
@@ -70,7 +70,7 @@ def classify(dir_name: str):
     bb = BACKBONE_KEY[m.group("bb")]
     kind, abl, seed = m.group("kind"), m.group("abl"), m.group("seed") or ""
     if kind == "nogate":
-        return "local patches", bb, "nogate", seed
+        return None  # deprecated variant, never aggregated
     readout = {"cls": "CLS token", "decoder1l": "local patches",
                "concat_decoder1l": "local patches + question"}[kind]
     return readout, bb, ("nogca" if abl else None), seed
@@ -191,8 +191,7 @@ def plot_curves(table, category, out_path: Path):
                         if c:
                             ax.plot(layers, c["curves"][sig],
                                     **line_kwargs(label=f"{abl_label.split(' (')[0]}, {bb}",
-                                                  color=BACKBONE_COLORS[bb],
-                                                  linestyle="--" if abl == "nogca" else ":"))
+                                                  color=BACKBONE_COLORS[bb], linestyle="--"))
             mark_gca_layers(ax)
             if row == 0:
                 ax.set_title(ro)
