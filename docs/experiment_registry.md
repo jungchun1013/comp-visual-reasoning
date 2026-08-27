@@ -440,8 +440,19 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   Verdict: the colour component of the patch token is causally additive and
   object-specific at every block but the last; the last block's readout
   draws on background tokens.
-- **Status**: ✅ A, B done 2026-08-27; ⏳ C (single-patch probes, three
-  splits) running on CPU.
+  (C) single-patch probes (≤6 tokens/object, 12 background/image, GCA
+  layers; random-by-image / slot-LOO / spatial-LOO): background vs object
+  0.99 at every layer; colour 0.99 (L1) → 0.91 (L11); shape 0.72 (L1) → 1.00
+  (L5+); material 0.92 → 0.99; size 0.94 → 0.99; referent vs non-referent
+  (c1 ∪ c2) 0.58 (L1), 0.94 (L5), ≥0.997 (L7–L11), no-question control 0.50.
+  Spatial-LOO within 0.05 of the random split for every task → the
+  per-patch object code generalises to unseen positions (supervised
+  position-invariance). Colour's decline with depth mirrors X19's
+  fragmentation and the intervention's block-11 exception.
+  Open: RSA on offsets is still position-dominated (0.6–0.8) — subtracting
+  the image-wide background mean does not remove the position-specific
+  background component; redo with X19's per-position template.
+- **Status**: ✅ A, B, C done 2026-08-27. Site edits await the user.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

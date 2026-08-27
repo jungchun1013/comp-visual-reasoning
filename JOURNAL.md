@@ -47,7 +47,12 @@
   norm-matched random 0%, background subset 0%, distractor patches 0%
   (c1), distractor+Δ under c2 97%, target+Δ under c2 0%. Block 11 is the
   exception: object-only edit 27%, ALL-background edit 79% — the final
-  readout takes the answer from background tokens too. Figures + JSON in
+  readout takes the answer from background tokens too. (C) single-patch
+  probes: bg/object 0.99; colour 0.99→0.91, shape 0.72→1.00, material and
+  size →0.99; referent-vs-non-referent 0.58 (L1) → 0.94 (L5) → 1.00 (L7+),
+  no-question control 0.50; spatial-LOO ≈ random split (Δ ≤ 0.05) →
+  position-invariant per-patch code, supervised. Open: offset RSA still
+  position-dominated (needs the per-position template). Figures + JSON in
   `outputs/analysis/patch_language_condition/`.
 - **2026-08-27 — X20 probe queue finished (9 models); readout × backbone
   table complete.** Readings: MAE deficit representational under local
