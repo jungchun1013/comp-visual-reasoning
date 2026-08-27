@@ -252,6 +252,30 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   `scripts/analysis/patch_pca_cluster.py` (--masks-only / cached extraction /
   --replot, X16 three-phase pattern; CPU-only runs; SigLIP via --checkpoint
   ... --grid 16 --resolution 256 --out-dir .../siglip).
+- **MAE and Sup-ViT (2026-08-27, user-ordered after X20 showed MAE's probe
+  deficit; same 35 pairs / seed, CPU)**. Sup-ViT
+  (`clevr_sup_decoder1l_scratch_s42`, `vit_base_patch16_384`, 24×24 grid, 1
+  warning; `.../sup/`): behaves like DINOv2 — additivity holds (n1↔n2 target
+  0.998→0.921; L11 within 0.889 vs between 0.607; resid 0.690 vs −0.143; top-1
+  0.65–0.80), raw KMeans fails (≤0.12), bgsub foreground IoU 0.64 at L1 →
+  0.16 at L11 (L1 separates target 0.60 / distractor 0.50). MAE
+  (`clevr_mae_decoder1l_scratch_s42`, `vit_base_patch16_224.mae`, 14×14 = 196
+  patches, 23 small-object warnings; `.../mae/`): DIFFERENT regime — object
+  patches sit far from the background cloud at every layer in the
+  single-image PCA (PC1+2 hold 45–62% vs 28–41% for DINOv2), offsets are the
+  most position-invariant and type-specific of the four (L11 within 0.869 vs
+  between 0.418; resid 0.757 vs −0.160; n1↔n2 0.986), and bgsub KMeans does
+  NOT decay with depth (n1 target IoU 0.79–0.83 at every layer; n2 target
+  0.62–0.81, distractor 0.41–0.61, foreground 0.62–0.73 at L11 — the only
+  backbone where k=3 keeps splitting object-vs-object through L11). Raw
+  KMeans still fails (n2 foreground ≤0.11; n1 ≤0.06). Reading: MAE's patch
+  tokens stay appearance-local through the whole trunk (pixel-reconstruction
+  objective), which is exactly the regime where per-patch object identity is
+  strongest and pooled/answer readout is weakest (X20 decode 0.817) — the
+  patch-level and probe-level pictures of MAE agree. Caveat: 14×14 grid
+  inflates per-patch IoU (objects are 1–8 patches) — compare trends, not
+  absolute IoU, across grids. `pca_single_*.png` now carries the scene with
+  owner overlay in a left column (all four backbones replotted).
 - **Caveats**: cluster-set pair 478 distractor has few patches at high layers
   (owner counts in labels.json); owner masks exclude shadows so halo patches
   count against IoU; PCA-set combos skew metal/large (5/6) under seed 42 —

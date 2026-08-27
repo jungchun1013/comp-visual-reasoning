@@ -188,17 +188,39 @@ def plot_patch_pca(feats, owner, labels, pcas, out_path, *, suptitle,
     print(f"Saved: {out_path}")
 
 
-def plot_patch_pca_single(feats, owner, labels, b, grid, out_path, *, suptitle):
+def plot_patch_pca_single(feats, owner, labels, b, grid, out_path, *, suptitle,
+                          image_path=None):
     """One image, ALL patches, per-layer PCA fit on that image's own tokens.
-    Top row: owner/attribute coloring. Bottom row: same embedding colored by
-    the patch's row in the 2D grid — diagnoses positional banding."""
+    Left column (both rows): the scene itself with the patch-owner masks
+    overlaid (target red / distractor blue, alpha 0.3, same blend as the
+    cluster overlays). Top row: owner/attribute coloring. Bottom row: same
+    embedding colored by the patch's row in the 2D grid — diagnoses
+    positional banding."""
     rec = labels[b]
     obj_attrs = [(rec["target"]["shape"], rec["target"]["color"])] + \
                 [(d["shape"], d["color"]) for d in rec["distractors"]]
     rows_idx = np.arange(grid * grid) // grid
+    n = len(GCA_LAYERS)
 
-    fig, axes = plt.subplots(2, len(GCA_LAYERS),
-                             figsize=(2.6 * len(GCA_LAYERS), 5.6))
+    fig = plt.figure(figsize=(2.6 * n + 4.0, 5.6))
+    gs = fig.add_gridspec(2, n + 1, width_ratios=[1.7] + [1] * n)
+    ax_img = fig.add_subplot(gs[:, 0])
+    axes = np.array([[fig.add_subplot(gs[r, c + 1]) for c in range(n)]
+                     for r in range(2)])
+    if image_path is not None:
+        img = PILImage.open(image_path).convert("RGB")
+        overlay = np.asarray(img, dtype=np.float32) / 255.0
+        w, h = img.size
+        up = np.asarray(PILImage.fromarray(
+            owner[b].reshape(grid, grid).astype(np.uint8)).resize(
+            (w, h), PILImage.NEAREST))
+        for oid, role in ((1, "target"), (2, "distractor")):
+            sel = up == oid
+            overlay[sel] = 0.7 * overlay[sel] + 0.3 * np.array(CLUSTER_RGB[role])
+        ax_img.imshow(overlay)
+        ax_img.set_title(f"{rec['filename']} ({grid}×{grid} patches)",
+                         fontsize=9)
+    ax_img.set_axis_off()
     last = None
     for c, layer in enumerate(GCA_LAYERS):
         X = feats[layer][b].astype(np.float32)
@@ -216,9 +238,8 @@ def plot_patch_pca_single(feats, owner, labels, b, grid, out_path, *, suptitle):
                            c=[ATTR_VALUE_COLORS["color"][co]],
                            marker=SHAPE_MARKERS[sh], s=TSNE_STYLE["mid_size"],
                            edgecolors="none", rasterized=True)
-        ax.set_title(f"L{layer} (PC1+2 "
-                     f"{pca.explained_variance_ratio_.sum():.0%})",
-                     fontsize=S["subplot_title_fontsize"])
+        ax.set_title(f"L{layer} ({pca.explained_variance_ratio_.sum():.0%})",
+                     fontsize=9)
         style_tsne_ax(ax)
         ax = axes[1, c]
         last = ax.scatter(emb[:, 0], emb[:, 1], c=rows_idx, cmap="viridis",
@@ -567,14 +588,15 @@ def main():
     # single-image PCA (first cluster-set pair): all patches of ONE image,
     # per-layer own fit + positional-banding diagnostic row
     for name, tag in (("n1", "1-object"), ("n2", "2-object")):
-        feats, owner, labels, _ = subsets[name]
+        feats, owner, labels, data_dir = subsets[name]
         b = next(i for i, rec in enumerate(labels) if rec["in_cluster_set"])
         plot_patch_pca_single(
             feats, owner, labels, b, args.grid,
             out_dir / f"pca_single_{name}.png",
             suptitle=f"Patch-token PCA — one {tag} image "
                      f"({labels[b]['filename']}), all patches, per-layer fit; "
-                     "bottom row colored by patch row")
+                     "bottom row colored by patch row",
+            image_path=Path(data_dir) / "images" / labels[b]["filename"])
 
     print("\nAdditive-offset statistics (768-d):")
     stats = offset_statistics(subsets["n1"][0], subsets["n1"][1],

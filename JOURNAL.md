@@ -22,6 +22,17 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-27 — X19 rerun on MAE and Sup-ViT; single-image PCA figure now
+  shows the scene.** User hypothesis after X20's MAE probe deficit: MAE's
+  local patch encoding differs. Confirmed at patch level: MAE object patches
+  are far from the background cloud at every layer (single-image PCA,
+  PC1+2 45–62%), offsets most type-specific (L11 within 0.869 / between
+  0.418), and background-subtracted KMeans keeps object-vs-object separation
+  through L11 (n2 target 0.81 / distractor 0.61) where DINOv2 / SigLIP /
+  Sup-ViT decay to 0.1–0.3. Sup-ViT tracks DINOv2. `pca_single_*.png` gained a
+  left column with the scene + owner overlay (user request); all four
+  backbones replotted from cache. Details in registry X19. X20 probe queue
+  still running (5/9 done at 00:00).
 - **2026-08-26 — X20 comprehensive linear probe launched (story-vs-evidence
   check).** User's point: accuracy shows a behavioral difference, a linear
   probe shows whether the representation differs. Audit of the site
