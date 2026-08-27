@@ -295,23 +295,7 @@ def offset_statistics(n1_feats, n1_owner, n2_feats, n2_owner, labels):
         o_n1 = np.stack([off(n1_feats, n1_owner, b, 1) for b in idx])
         o_n2t = np.stack([off(n2_feats, n2_owner, b, 1) for b in idx])
         o_n2d = [off(n2_feats, n2_owner, b, 2) for b in idx]
-
-        grand = o_n1.mean(0)
-        resid = o_n1 - grand
-        sv = np.linalg.svd(o_n1, compute_uv=False)
-        stats[f"L{layer}"] = {
-            "n1_within_combo_cos": _summ(_pair_cosines(o_n1, combos, True)),
-            "n1_between_combo_cos": _summ(_pair_cosines(o_n1, combos, False)),
-            "n1_resid_within_combo_cos": _summ(_pair_cosines(resid, combos, True)),
-            "n1_resid_between_combo_cos": _summ(_pair_cosines(resid, combos, False)),
-            "n1_svd_top1_share": float(sv[0] ** 2 / (sv ** 2).sum()),
-            "n1_offset_norm": _summ([float(np.linalg.norm(o)) for o in o_n1]),
-            "n1_grand_mean_norm": float(np.linalg.norm(grand)),
-            "n1_vs_n2_target_same_pair_cos": _summ(
-                [_cos(a, b) for a, b in zip(o_n1, o_n2t)]),
-            "n2_target_vs_distractor_cos": _summ(
-                [_cos(t, d) for t, d in zip(o_n2t, o_n2d) if d is not None]),
-        }
+        stats[f"L{layer}"] = offset_statistics_from_offsets(o_n1, o_n2t, o_n2d, combos)
         s = stats[f"L{layer}"]
         print(f"L{layer}: within {s['n1_within_combo_cos']['mean']:.3f} vs "
               f"between {s['n1_between_combo_cos']['mean']:.3f} | resid "
@@ -320,6 +304,31 @@ def offset_statistics(n1_feats, n1_owner, n2_feats, n2_owner, labels):
               f"{s['n1_svd_top1_share']:.3f} | n1~n2(target) "
               f"{s['n1_vs_n2_target_same_pair_cos']['mean']:.3f}")
     return stats
+
+
+def offset_statistics_from_offsets(o_n1, o_n2t, o_n2d, combos):
+    """Additivity statistics for ONE layer from precomputed offsets:
+    o_n1 (B, D) 1-object target offsets, o_n2t (B, D) 2-object target offsets,
+    o_n2d list of (D,) or None distractor offsets, combos list of B combo keys.
+    Shared by X19 (dense cache) and X21 (sparse cache)."""
+    o_n1 = np.asarray(o_n1, dtype=np.float32)
+    o_n2t = np.asarray(o_n2t, dtype=np.float32)
+    grand = o_n1.mean(0)
+    resid = o_n1 - grand
+    sv = np.linalg.svd(o_n1, compute_uv=False)
+    return {
+        "n1_within_combo_cos": _summ(_pair_cosines(o_n1, combos, True)),
+        "n1_between_combo_cos": _summ(_pair_cosines(o_n1, combos, False)),
+        "n1_resid_within_combo_cos": _summ(_pair_cosines(resid, combos, True)),
+        "n1_resid_between_combo_cos": _summ(_pair_cosines(resid, combos, False)),
+        "n1_svd_top1_share": float(sv[0] ** 2 / (sv ** 2).sum()),
+        "n1_offset_norm": _summ([float(np.linalg.norm(o)) for o in o_n1]),
+        "n1_grand_mean_norm": float(np.linalg.norm(grand)),
+        "n1_vs_n2_target_same_pair_cos": _summ(
+            [_cos(a, b) for a, b in zip(o_n1, o_n2t)]),
+        "n2_target_vs_distractor_cos": _summ(
+            [_cos(t, d) for t, d in zip(o_n2t, o_n2d) if d is not None]),
+    }
 
 
 # ---------------------------------------------------------------------------

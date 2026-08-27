@@ -360,6 +360,62 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 - **Status**: ✅ done 2026-08-27. Not yet: same/spatial for the eight new
   cells; site edits (await user).
 
+### X21. Language condition on the patch object vector — measurement + causal additivity
+- **Motivation** (user, 2026-08-27): X19 measured the additive object vector
+  only without a question (a design gap the user identified); X20 shows the
+  question enters the ViT stream through cross-attention from L1. Missing:
+  what a referring question does to the object vector, at which layer, and
+  whether the vector is causally additive. User asked for a literature survey
+  first (three sweeps, 2026-08-27).
+- **References that fix the design**: Song, Lepori & Pavlick 2025
+  (arXiv 2608.00035) — concept-vector projections, Δ_ref / Δ_nonref, late-layer
+  amplification of the queried attribute, steering/freezing; Feng & Steinhardt
+  2024 (ICLR) and Saravanan, Tapaswi & Gandhi 2025 (CVPRW, on image patches) —
+  difference-in-means binding vectors, additive swap, norm-matched random
+  control; Assouel, Campbell, Bengio & Webb 2025 (arXiv 2506.15871) —
+  additive binding IDs in VLMs are position pointers, identity-vs-position RSM
+  dissociation; Lepori et al. 2024 (NeurIPS) — disentangled shape/color
+  subspaces in the object's own tokens, cross-position injection; Darcet et
+  al. 2024 — high-norm background tokens; Dai et al. 2024 — PC1 as index axis;
+  Campbell et al. 2024 (NeurIPS) — set-size / conjunctive-search capacity
+  conditions (not run here: only 1–2 objects). Opposing framing to position
+  against: Haputhanthri, …, Webb 2026 (arXiv 2605.25427) — superposed object
+  codes cause binding failure, serial attention fixes it; our claim: the
+  additive vector is the substrate, gated cross-attention is the selection.
+- **Design**: model `clevr_dinov2_decoder1l_scratch_s42` (local patches;
+  loader `load_any_checkpoint`). n2 conditions c0 none / c1 refer target /
+  c2 refer distractor / c3 "What color is the object?" (questions from
+  `minimal_referring_question`, referent by shape>size>material); n1 c0, c1.
+  All eligible pairs (X19 segmentation filter; ~324). Sparse cache per
+  condition: object patches + 64 fixed background patches, object/background
+  means (normed and pre-norm), token norms, GCA writes, per-patch attention
+  onto the referent word. Part A: projections onto V = normalized c0 offset,
+  Δ_ref/Δ_nonref with bootstrap CIs, per-patch change norm/cosine by owner,
+  GCA write norm/cosine, offset stats per condition, identity-vs-position RSA,
+  Darcet norm control (+ `_normstd` variant). Part B: Δ_ℓ(A→B) colour vectors
+  by difference-in-means on n1 raw target means; residual-edit hook on block ℓ
+  adds α·Δ to target / random norm-matched / background subset / background
+  all / distractor patches under c1, and to distractor (Δ for its colour)
+  under c2, target under c2; readout = decoder first-token argmax (checked
+  against `generate`); flip rate on baseline-correct trials, logit(B)−logit(A);
+  α ∈ {0.5,1,2}, ℓ 0–11. Part C: single-patch probes (bg/object, four
+  attributes, referent vs non-referent under c1 ∪ c2 with c0 control) under
+  random-by-image, slot-LOO and spatial-LOO (3×3 cell of the owner's
+  centroid) splits, GCA layers. Script
+  `scripts/analysis/patch_language_condition.py` (masks → extract →
+  --intervene → --replot); `offset_statistics_from_offsets` factored out of
+  `patch_pca_cluster.py` for reuse. Output
+  `outputs/analysis/patch_language_condition/`.
+- **Pre-registered expectations**: Δ_ref > 0 and Δ_nonref < 0 emerging by
+  L5–L7 (X17 referent probe reaches 0.98 at block 5), growing with depth;
+  Δ under c3 ≈ 0 relative to Δ_ref; referent-patch change aligned with V,
+  background change ≈ 0; c0 offset stats reproduce X19 on its 30 pairs
+  (±0.02); interventions: target+Δ flips at early/mid layers, random-vector and
+  background controls at baseline error rate, distractor+Δ inert under c1 and
+  effective under c2; probes: bg/object ≥ 0.95, referent probe 0.5 on c0,
+  spatial-LOO ≈ random split if the object code is position-invariant.
+- **Status**: ⏳ implementation 2026-08-27; masks + smoke test running.
+
 ## Part 2 — Design-consistency findings (D1–D11)
 
 **D1 [major, disclosure required] Performance model ≠ mechanistic model.** Tables use
