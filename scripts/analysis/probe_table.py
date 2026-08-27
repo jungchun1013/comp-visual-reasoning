@@ -202,10 +202,16 @@ def plot_curves(table, category, out_path: Path):
             ax.set_xticks(layers)
             ax.set_ylim(0, 1.02)
             ax.grid(axis="y", alpha=0.2)
-            ax.legend(fontsize=S.get("legend_fontsize", 9), loc="lower right")
     short = category.replace("attr_query_", "")
     fig.suptitle(f"Linear probe per layer — {short} (seed 42)")
-    fig.tight_layout()
+    # one figure-level legend (per-axes legends would cover the curves)
+    seen = {}
+    for ax in axes.ravel():
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            seen.setdefault(l, h)
+    fig.legend(seen.values(), seen.keys(), loc="lower center",
+               ncol=len(seen), frameon=False, fontsize=10)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
     fig.savefig(str(out_path))
     plt.close(fig)
     print(f"Saved: {out_path}")

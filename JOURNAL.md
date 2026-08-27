@@ -22,6 +22,14 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-27 — X20 probe queue finished (9 models); readout × backbone
+  table complete.** Readings: MAE deficit representational under local
+  patches (0.817) but NOT under CLS token (0.916 decode at 0.77 accuracy) →
+  site claim to be reworded as pretraining × readout; Sup-ViT +question drop
+  is readout-side (decode 0.937 vs 0.930); −CA flat at chance on all three
+  categories; three readouts share the decode curve within every backbone.
+  Table + curves in `outputs/analysis/linear_probe/probe_table_direct.*`,
+  section in `docs/results_tables.md` (regenerated). Details registry X20.
 - **2026-08-27 — X19 rerun on MAE and Sup-ViT; single-image PCA figure now
   shows the scene.** User hypothesis after X20's MAE probe deficit: MAE's
   local patch encoding differs. Confirmed at patch level: MAE object patches

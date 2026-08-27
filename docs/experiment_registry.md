@@ -325,9 +325,40 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   at 0); all later runs use the canonical loader. **User ruling 2026-08-26:
   the ungated-CA variant is deprecated — not rerun, not compared, no row in
   the probe table; reading (e) is closed.**
-- **Status**: ⏳ queue launched 2026-08-26 14:05 (GPU0; GPU1 not visible to
-  torch). Smoke test on the −CA checkpoint passed (`--num-db 60
-  --queries-per-subcat 8`).
+- **Results** (queue done 2026-08-27 07:54; direct category, L11
+  answer_decode acc / answer_match F1; `outputs/analysis/linear_probe/probe_table_direct.{md,json,png}`):
+
+  | readout | DINOv2 | SigLIP | Sup-ViT | MAE |
+  |---|---|---|---|---|
+  | CLS token | 0.922 / 0.774 | 0.918 / 0.757 | 0.935 / 0.755 | 0.916 / 0.680 |
+  | local patches | 0.922 / 0.773 | 0.921 / 0.798 | 0.937 / 0.709 | 0.817 / 0.533 |
+  | local patches + question | 0.933 / 0.819 | 0.921 / 0.777 | 0.930 / 0.745 | 0.879 / 0.587 |
+  | −CA (local patches + question) | 0.171 / 0.225 | — | — | — |
+
+  Decode half-rise is L1 in every CA cell; −CA is flat at chance in all 12
+  layers on all three categories (same: 0.225/0.068, spatial: 0.163/0.065 at
+  L11).
+- **Readings against the pre-registered criteria**:
+  (a) MAE — supported under the local patches readout (0.817 vs 0.92–0.94,
+  Δ ≥ 0.10) and in answer_match under every readout (0.53–0.68 vs
+  0.71–0.82). BUT under the CLS-token readout MAE's ViT stream decodes the
+  answer at 0.916, on par with the others, while its accuracy stays at 0.77:
+  MAE's accuracy deficit is not purely representational — with a CLS readout
+  the information is in the stream and the loss sits in the answer
+  classification. Site wording must say "pretraining objective × readout",
+  not "pretraining objective, not architecture". (b) Sup-ViT — supported:
+  local patches vs +question decode 0.937 vs 0.930 (Δ 0.007 ≤ 0.02) while
+  accuracy drops 0.07 → representation unchanged, the drop is on the readout
+  side. (c) −CA — supported in the strong form (chance at every layer), with
+  the label caveat: the label is the question's answer, so this shows the
+  question never enters the ViT stream; object attributes remain readable
+  (no-question pooled probe, X18) → wording "attributes present, selection
+  needs cross-attention", not "causal baseline". (d) mechanism-not-readout —
+  supported: within each backbone the three readouts share the decode curve
+  (half-rise L1, peaks within 0.02) except MAE local patches. (e) closed
+  (variant deprecated).
+- **Status**: ✅ done 2026-08-27. Not yet: same/spatial for the eight new
+  cells; site edits (await user).
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
