@@ -488,7 +488,7 @@ def part_a(caches, labels, gca_layers, norm_std=False):
     rdm_id = (ident[:, None] != ident[None, :]).astype(float)[iu]
     rdm_pos = np.linalg.norm(pos[:, None] - pos[None], axis=-1)[iu]
     for cond in caches:
-        rs = {"identity": [], "position": []}
+        rs = {"identity": [], "position": [], "identity_offset": [], "position_offset": []}
         for l in range(NUM_LAYERS):
             f = caches[cond]["obj_mean"][:, 0, l].astype(np.float32)
             if norm_std:
@@ -496,6 +496,10 @@ def part_a(caches, labels, gca_layers, norm_std=False):
             rdm = 1 - _cos(f[:, None], f[None])[iu]
             rs["identity"].append(float(spearmanr(rdm, rdm_id).correlation))
             rs["position"].append(float(spearmanr(rdm, rdm_pos).correlation))
+            fo = off[cond][:, 0, l]                              # offset = obj − bg
+            rdm_o = 1 - _cos(fo[:, None], fo[None])[iu]
+            rs["identity_offset"].append(float(spearmanr(rdm_o, rdm_id).correlation))
+            rs["position_offset"].append(float(spearmanr(rdm_o, rdm_pos).correlation))
         metrics["rsa"][cond] = rs
     return metrics
 
@@ -828,8 +832,8 @@ def plot_projection_deltas(m, label, out_path, gca_layers):
 def plot_patch_change(m, label, out_path, gca_layers):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
     for ax, key, ylab in zip(axes, ("rel_norm", "cos_V", "cos_vimg"),
-                             ("‖h(c) − h(no question)‖ / ‖h(no question)‖",
-                              "cos(change, V)", "cos(change, image's own object direction)")):
+                             ("relative change ‖Δh‖ / ‖h‖",
+                              "cos(Δh, V)", "cos(Δh, image's own object direction)")):
         for cond, pc in m["patch_change"].items():
             for name, vals in pc.items():
                 if key == "cos_vimg" and name == "bg":
@@ -852,7 +856,7 @@ def plot_gca(m, label, out_path, gca_layers):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
     for ax, key, ylab in zip(axes, ("write_norm", "write_cos_V", "attn_ref"),
                              ("‖GCA write‖ per patch", "cos(GCA write, V)",
-                              "attention of the patch onto the referent word")):
+                              "patch → referent word attention")):
         for cond, g in m["gca"].items():
             for name, vals in g.items():
                 ax.plot(gca_layers, vals[key], COND_LS.get(cond, "-"), color=OWNER_RGB[name],
@@ -890,17 +894,21 @@ def plot_offsets_by_condition(m, label, out_path, gca_layers):
 
 
 def plot_rsa(m, label, out_path, gca_layers):
-    fig, ax = plt.subplots(figsize=(6.5, 4))
-    for cond, rs in m["rsa"].items():
-        ls = COND_LS.get(cond, "-")
-        ax.plot(range(NUM_LAYERS), rs["identity"], ls, color="#2ca02c", marker="o", markersize=3,
-                label=f"identity RDM, {COND_LABEL[cond]}")
-        ax.plot(range(NUM_LAYERS), rs["position"], ls, color="#9467bd", marker="s", markersize=3,
-                label=f"position RDM, {COND_LABEL[cond]}")
-    ax.set_ylabel("Spearman(feature RDM, model RDM)")
-    _layers_axis(ax, gca_layers)
-    ax.legend(fontsize=6)
-    fig.suptitle(f"{label} — target patch-mean features: object identity vs position")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    for ax, suffix, title in ((axes[0], "", "target patch mean (raw token)"),
+                              (axes[1], "_offset", "target offset (patch mean − background mean)")):
+        for cond, rs in m["rsa"].items():
+            ls = COND_LS.get(cond, "-")
+            ax.plot(range(NUM_LAYERS), rs["identity" + suffix], ls, color="#2ca02c", marker="o",
+                    markersize=3, label=f"object identity, {COND_LABEL[cond]}")
+            ax.plot(range(NUM_LAYERS), rs["position" + suffix], ls, color="#9467bd", marker="s",
+                    markersize=3, label=f"position, {COND_LABEL[cond]}")
+        ax.set_ylabel("Spearman(feature RDM, model RDM)", fontsize=10)
+        ax.set_title(title, fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.axhline(0, color="k", linewidth=0.6)
+    axes[0].legend(fontsize=6)
+    fig.suptitle(f"{label} — RSA of the target's features against an identity RDM and a position RDM")
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)

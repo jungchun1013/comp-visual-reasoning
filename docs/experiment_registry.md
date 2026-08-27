@@ -414,7 +414,34 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   background controls at baseline error rate, distractor+Δ inert under c1 and
   effective under c2; probes: bg/object ≥ 0.95, referent probe 0.5 on c0,
   spatial-LOO ≈ random split if the object code is position-invariant.
-- **Status**: ⏳ implementation 2026-08-27; masks + smoke test running.
+- **Results (2026-08-27; 324 pairs; user framing: a replication of the cited
+  methods on the GCA ViT)**:
+  (A) Δ_ref(ℓ) = 0 through block 4, +2.8 (5), +11.2 (7), +26.5 (9), +21.3
+  (10), +6.2 (11); Δ_nonref mirrors it (−26.4 at 9); relative to the mean
+  offset norm: ±0.40 at blocks 9–10. Against no question: refer-this-object
+  +3 at block 9, refer-other-object −23 — suppression of the non-referent
+  carries the selection. Non-referring c3 moves both objects like the
+  referring ones do (common component), and block 11 lowers the object
+  projection by ≈15 under every question. Per-patch relative change grows to
+  1.4× the token norm at block 11 for all owners alike; background-token
+  change aligns +0.2 with V from block 7, object-token change −0.3 at 9–11.
+  GCA write norm peaks at layer 9 (≈8–10) with no owner difference;
+  cos(write, V) ≤ 0.11; patch→referent-word attention: objects > background
+  at layer 5 (0.28 vs 0.22) but target = distractor. RSA on the target's
+  patch mean: position RDM 0.6–0.78 through block 8, identity ≤ 0.16;
+  questions reduce the position correlation earlier (blocks 7–9). c0
+  reproduces X19 on the 30 pairs exactly. Norm-standardised variant gives the
+  same picture (Δ_ref/‖offset‖ 0.36 at 9–10).
+  (B) baseline c1/c2 accuracy 0.994; α=1 flip rate: target+Δ 0.80 (block 0),
+  0.93 (2), 0.97 (5), 0.99 (8–10), 0.27 (11); random 0.00 everywhere;
+  background subset 0.00; background all ≤0.04 through block 10 then 0.79 at
+  11; distractor+Δ under c1 0.00 (0.16 at 11); distractor+Δ_D under c2 0.97;
+  target+Δ under c2 0.00. α=0.5 reaches only 0.25–0.3; α=2 saturates.
+  Verdict: the colour component of the patch token is causally additive and
+  object-specific at every block but the last; the last block's readout
+  draws on background tokens.
+- **Status**: ✅ A, B done 2026-08-27; ⏳ C (single-patch probes, three
+  splits) running on CPU.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

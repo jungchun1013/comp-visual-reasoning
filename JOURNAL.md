@@ -22,6 +22,33 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-27 — X21: language condition on the patch object vector; Parts A
+  and B done, Part C (single-patch probes) running.** User ruling: the
+  no-question-only design of X19 was a design error; literature survey first
+  (Song/Lepori/Pavlick 2025, Feng & Steinhardt 2024, Saravanan et al. 2025,
+  Assouel/Webb 2025, Lepori et al. 2024, Darcet 2024; references in registry
+  X21), then `scripts/analysis/patch_language_condition.py` (324 pairs, four
+  n2 conditions, sparse cache 3.9 GB). Treated as a replication of those
+  methods on the GCA ViT (user: 就當復現). Results: (A) projection of the
+  target's patch mean onto the no-question object direction — Δ_ref
+  (refer target − refer distractor) rises from block 5, peaks +26.5 at block 9
+  (0.40 of the offset norm), Δ_nonref is its mirror (−26.4); decomposed
+  against no-question, "refer this object" adds only +3 while "refer the
+  other object" removes −23 → selection works mainly by suppressing the
+  non-referent. Any question (incl. non-referring) shifts both objects by the
+  same amount, and at block 11 all conditions drop the object projection by
+  ≈15. GCA write norm is the same for target/distractor/background patches,
+  cos(write, V) ≤ 0.11, and patch→referent-word attention does not differ
+  between the two objects — selection is not visible in attention weights.
+  c0 reproduces X19 on its 30 pairs exactly (0.912 / 0.624 / 0.962).
+  (B) additive colour-vector intervention (difference-in-means on n1 raw
+  target means; edit at block ℓ on baseline-correct trials, n=322): α=1
+  target+Δ flips the answer to B at 80% (block 0) → 99% (block 8–10);
+  norm-matched random 0%, background subset 0%, distractor patches 0%
+  (c1), distractor+Δ under c2 97%, target+Δ under c2 0%. Block 11 is the
+  exception: object-only edit 27%, ALL-background edit 79% — the final
+  readout takes the answer from background tokens too. Figures + JSON in
+  `outputs/analysis/patch_language_condition/`.
 - **2026-08-27 — X20 probe queue finished (9 models); readout × backbone
   table complete.** Readings: MAE deficit representational under local
   patches (0.817) but NOT under CLS token (0.916 decode at 0.77 accuracy) →
