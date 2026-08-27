@@ -58,6 +58,7 @@ from tsne_patch_level import (
 )
 
 # tab10 red/blue — cluster-identity overlay colors (not attribute colors)
+BACKBONE_LABELS = {"dinov2": "DINOv2", "siglip": "SigLIP", "sup": "Sup-ViT", "mae": "MAE"}
 CLUSTER_RGB = {"target": (0.839, 0.153, 0.157), "distractor": (0.121, 0.467, 0.706)}
 
 
@@ -388,9 +389,10 @@ def plot_cluster_overlays(images, mappeds, recs, grid, out_path, *, suptitle):
     print(f"Saved: {out_path}")
 
 
-def plot_cluster_metrics(records, out_path):
+def plot_cluster_metrics(records, out_path, *, suptitle):
     """Mean IoU / ARI vs layer; individual pairs as faint points."""
-    fig, (ax_iou, ax_ari) = plt.subplots(1, 2, figsize=(9.0, 3.4))
+    fig, (ax_iou, ax_ari) = plt.subplots(1, 2, figsize=(9.0, 3.6))
+    fig.suptitle(suptitle, fontsize=11)
     series = [("n1", "iou_target", "target (1-object, k=2)",
                CLUSTER_RGB["target"], "--"),
               ("n2", "iou_target", "target (2-object, k=3)",
@@ -482,7 +484,7 @@ def run_clustering(subsets, out_dir, args, variant="raw"):
         plot_cluster_overlays(
             images, mappeds, recs, args.grid,
             out_dir / f"cluster_overlay_{name}{tag}.png",
-            suptitle=f"Patch-token KMeans (k={k}) — {name}, no cross-attention"
+            suptitle=f"{args.model_label} — patch-token KMeans (k={k}) — {name}, no cross-attention"
                      f"{note}; target cluster red, distractor cluster blue "
                      "(alpha 0.3)")
     return records
@@ -503,6 +505,10 @@ def main():
                     help="selection + segmentation + masks_debug, no model")
     ap.add_argument("--replot", action="store_true",
                     help="all analyses from cached npz, no model")
+    ap.add_argument("--model-label", default=None,
+                    help="backbone name printed first in every figure title "
+                         "(default: inferred from --checkpoint; pass it "
+                         "explicitly with --replot)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--n-combos", type=int, default=6)
     ap.add_argument("--n-cluster-pairs", type=int, default=5)
@@ -518,6 +524,12 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     tee_stdout(out_dir)
+    if args.model_label is None:
+        stem = Path(args.checkpoint).parent.name
+        args.model_label = next(
+            (v for k, v in BACKBONE_LABELS.items() if f"_{k}_" in f"_{stem}_"),
+            stem)
+    label = args.model_label
     print(f"args: {vars(args)}")
 
     dirs = {"n1": args.n1_dir, "n2": args.n2_dir}
@@ -581,7 +593,7 @@ def main():
         feats, owner, labels, _ = subsets[name]
         plot_patch_pca(
             feats, owner, labels, pcas, out_dir / f"pca_{name}.png",
-            suptitle=f"Patch-token PCA — {n_pca}×{tag} scenes (fit shared "
+            suptitle=f"{label} — patch-token PCA — {n_pca}×{tag} scenes (fit shared "
                      f"with the {other}-object set), no cross-attention",
             bg_per_image=args.bg_per_image, seed=args.seed)
 
@@ -593,7 +605,7 @@ def main():
         plot_patch_pca_single(
             feats, owner, labels, b, args.grid,
             out_dir / f"pca_single_{name}.png",
-            suptitle=f"Patch-token PCA — one {tag} image "
+            suptitle=f"{label} — patch-token PCA — one {tag} image "
                      f"({labels[b]['filename']}), all patches, per-layer fit; "
                      "bottom row colored by patch row",
             image_path=Path(data_dir) / "images" / labels[b]["filename"])
@@ -614,7 +626,10 @@ def main():
         recs = run_clustering(subsets, out_dir, args, variant=variant)
         records += recs
         tag = "" if variant == "raw" else "_bgsub"
-        plot_cluster_metrics(recs, out_dir / f"cluster_metrics{tag}.png")
+        plot_cluster_metrics(
+            recs, out_dir / f"cluster_metrics{tag}.png",
+            suptitle=f"{label} — patch-token KMeans vs owner masks "
+                     f"({'raw tokens' if variant == 'raw' else 'background template subtracted'})")
         print(f"\nClustering summary [{variant}] (mean over cluster-set pairs):")
         for layer in GCA_LAYERS:
             parts = [f"L{layer}"]
