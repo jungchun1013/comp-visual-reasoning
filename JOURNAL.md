@@ -22,6 +22,20 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-29 — X21 (E): attribute-specific directions (Song et al.
+  concept vectors) — amplification vs suppression reconciled.** New
+  `--attr-directions` mode (from cache; new files `partA_attr_directions.json`,
+  `attr_directions.png`). Directions from the 1-object images (independent
+  set). Any colour question raises the own-colour projection of both objects
+  alike through block 8 (Song's amplification of the asked attribute, not
+  object-selective) and lowers the shape projection of both objects (unasked
+  attribute); from block 9 the referent keeps the raised colour and the
+  non-referent loses it (refer target − refer distractor on own colour:
+  +5.3 (9), +6.0 (10), +11.4 (11); mirrored on the distractor). A shape-direction
+  dip of the referent at blocks 5–8 exists only when the referring word is a
+  shape word (checked by splitting on referring-word type: shape n=223 vs
+  size 59 / material 42) — matching the word, not a general effect on the
+  unasked attribute. Registry X21 updated.
 - **2026-08-29 — X21 (D): where the decoder reads the answer — decoder
   attention by owner and token swaps between conditions.** New `--readout`
   mode in `scripts/analysis/patch_language_condition.py` (new files only:

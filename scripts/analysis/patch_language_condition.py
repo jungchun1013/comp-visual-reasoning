@@ -596,6 +596,119 @@ def plot_rsa_template(res, label, out_path, gca_layers):
     print(f"Saved: {out_path}")
 
 
+# ---------------------------------------------------------------------------
+# Attribute-specific directions (Song, Lepori & Pavlick 2025 concept vectors):
+# does a question amplify the asked attribute of the referent, or suppress the
+# non-referent's whole object vector?  Directions from the 1-object images
+# (independent set), projections on the 2-object images per condition.
+# ---------------------------------------------------------------------------
+
+ATTR_VALUES = {"color": COLORS, "shape": ["cube", "sphere", "cylinder"],
+               "size": ["small", "large"], "material": ["rubber", "metal"]}
+
+
+def attribute_directions(cache_n1, labels_n1):
+    """V[attr][value] (12, D) = unit(mean obj_mean of 1-object targets with that
+    value − mean over all 1-object targets), in trunk.norm feature space."""
+    om = cache_n1["obj_mean"][:, 0].astype(np.float32)               # (N, 12, D)
+    mu = om.mean(0)
+    V = {}
+    for attr, values in ATTR_VALUES.items():
+        vals = np.array([rec["target"][attr] for rec in labels_n1])
+        V[attr] = {v: _unit(om[vals == v].mean(0) - mu) for v in values if (vals == v).sum() >= 5}
+    return V
+
+
+def attr_direction_analysis(caches_n2, labels_n2, V):
+    N = len(labels_n2)
+    has_d = np.array([rec["n_distractor_patches"] > 0 for rec in labels_n2])
+    res = {"n_images": N, "n_with_distractor": int(has_d.sum()), "proj": {}, "delta": {}}
+
+    def proj(cond, oid, attr, value_of):
+        """Per image projection onto V[attr][own value] and mean over the other values."""
+        om = caches_n2[cond]["obj_mean"][:, oid].astype(np.float32)   # (N, 12, D)
+        own = np.full((N, NUM_LAYERS), np.nan, np.float32)
+        other = np.full((N, NUM_LAYERS), np.nan, np.float32)
+        for i in range(N):
+            v = value_of(i)
+            if v not in V[attr]:
+                continue
+            own[i] = (om[i] * V[attr][v]).sum(-1)
+            others = [V[attr][u] for u in V[attr] if u != v]
+            other[i] = np.mean([(om[i] * u).sum(-1) for u in others], 0)
+        return own, other
+
+    P = {}
+    for cond in caches_n2:
+        for oid, name, key in ((0, "target", "target"), (1, "distractor", "distractors")):
+            for attr in ("color", "shape"):
+                value_of = (lambda i, a=attr: labels_n2[i]["target"][a]) if oid == 0 else \
+                           (lambda i, a=attr: labels_n2[i]["distractors"][0][a])
+                own, other = proj(cond, oid, attr, value_of)
+                valid = np.ones(N, bool) if oid == 0 else has_d
+                P[(cond, name, attr)] = (own, other, valid)
+                res["proj"][f"{cond}_{name}_{attr}"] = {
+                    "own": [_boot(own[valid, l]) for l in range(NUM_LAYERS)],
+                    "other": [_boot(other[valid, l]) for l in range(NUM_LAYERS)]}
+    # referent − non-referent contrasts, per attribute, own vs other value
+    for attr in ("color", "shape"):
+        for what, k in (("own", 0), ("other", 1)):
+            t1, t2 = P[("c1", "target", attr)], P[("c2", "target", attr)]
+            d1, d2 = P[("c1", "distractor", attr)], P[("c2", "distractor", attr)]
+            v = t1[2] & d1[2]
+            res["delta"][f"ref_target_{attr}_{what}"] = [_boot((t1[k] - t2[k])[v, l]) for l in range(NUM_LAYERS)]
+            res["delta"][f"nonref_distractor_{attr}_{what}"] = [_boot((d1[k] - d2[k])[v, l]) for l in range(NUM_LAYERS)]
+            if "c0" in caches_n2:
+                t0, d0 = P[("c0", "target", attr)], P[("c0", "distractor", attr)]
+                res["delta"][f"refvs0_target_{attr}_{what}"] = [_boot((t1[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+                res["delta"][f"nonrefvs0_target_{attr}_{what}"] = [_boot((t2[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+                if "c3" in caches_n2:
+                    t3 = P[("c3", "target", attr)]
+                    res["delta"][f"c3vs0_target_{attr}_{what}"] = [_boot((t3[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+    return res
+
+
+def plot_attr_directions(res, label, out_path, gca_layers):
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4))
+    x = range(NUM_LAYERS)
+
+    def line(ax, key, color, ls, lab, marker="o"):
+        d = res["delta"][key]
+        m = np.array([q["mean"] for q in d]); lo = np.array([q["lo"] for q in d]); hi = np.array([q["hi"] for q in d])
+        ax.plot(x, m, ls, color=color, marker=marker, markersize=3, label=lab)
+        ax.fill_between(x, lo, hi, color=color, alpha=0.12, linewidth=0)
+
+    ax = axes[0]
+    line(ax, "ref_target_color_own", "#d62728", "-", "target: own colour direction")
+    line(ax, "ref_target_color_other", "#d62728", ":", "target: other colour directions (mean)")
+    line(ax, "ref_target_shape_own", "#1f77b4", "-", "target: own shape direction", "^")
+    line(ax, "ref_target_shape_other", "#1f77b4", ":", "target: other shape directions (mean)", "^")
+    ax.set_title("target: refer target − refer distractor", fontsize=10)
+    ax = axes[1]
+    line(ax, "nonref_distractor_color_own", "#d62728", "-", "distractor: own colour direction")
+    line(ax, "nonref_distractor_color_other", "#d62728", ":", "distractor: other colour directions (mean)")
+    line(ax, "nonref_distractor_shape_own", "#1f77b4", "-", "distractor: own shape direction", "^")
+    line(ax, "nonref_distractor_shape_other", "#1f77b4", ":", "distractor: other shape directions (mean)", "^")
+    ax.set_title("distractor: refer target − refer distractor", fontsize=10)
+    ax = axes[2]
+    line(ax, "refvs0_target_color_own", "#d62728", "-", "refer target − no question, own colour")
+    line(ax, "nonrefvs0_target_color_own", "#d62728", "--", "refer distractor − no question, own colour", "s")
+    line(ax, "refvs0_target_shape_own", "#1f77b4", "-", "refer target − no question, own shape", "^")
+    line(ax, "nonrefvs0_target_shape_own", "#1f77b4", "--", "refer distractor − no question, own shape", "v")
+    ax.set_title("target: question − no question", fontsize=10)
+    for ax in axes:
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.set_ylabel("Δ projection", fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — attribute-specific directions (from 1-object images): asked attribute (colour) vs "
+                 f"unasked attribute (shape), own value vs other values")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def token_norm_stats(c0):
     rn = c0["raw_norm"].astype(np.float32)                    # (N,12,P)
     own = c0["owner"]
@@ -1341,6 +1454,8 @@ def main():
     ap.add_argument("--x19-dir", default="outputs/analysis/patch_pca_cluster")
     ap.add_argument("--masks-only", action="store_true")
     ap.add_argument("--replot", action="store_true")
+    ap.add_argument("--attr-directions", action="store_true",
+                    help="only: attribute-specific direction projections (new files)")
     ap.add_argument("--rsa-template", action="store_true",
                     help="only: RSA with the per-position background template (new files)")
     ap.add_argument("--intervene", action="store_true")
@@ -1430,6 +1545,20 @@ def main():
                  if (out_dir / "n2" / f"feats_{c}.npz").exists()}
     cache_n1 = load_sparse(out_dir / "n1", "c0")
     gca_layers = [int(l) for l in caches_n2["c0"]["gca_layers"]]
+    if args.attr_directions:
+        V = attribute_directions(cache_n1, labels["n1"])
+        print("directions per attribute: " + ", ".join(f"{a}: {sorted(V[a])}" for a in V))
+        res = attr_direction_analysis(caches_n2, labels["n2"], V)
+        for key in ("ref_target_color_own", "ref_target_color_other", "ref_target_shape_own",
+                    "nonref_distractor_color_own", "nonref_distractor_shape_own",
+                    "refvs0_target_color_own", "refvs0_target_shape_own",
+                    "nonrefvs0_target_color_own", "nonrefvs0_target_shape_own", "c3vs0_target_color_own"):
+            if key in res["delta"]:
+                print(f"{key:<30} " + " ".join(f"{q['mean']:+.2f}" for q in res["delta"][key]))
+        with open(out_dir / "partA_attr_directions.json", "w") as f:
+            json.dump(res, f, indent=1)
+        plot_attr_directions(res, label, out_dir / "attr_directions.png", gca_layers)
+        return
     if args.rsa_template:
         res = rsa_template(caches_n2, labels["n2"], args.grid)
         with open(out_dir / "partA_rsa_template.json", "w") as f:

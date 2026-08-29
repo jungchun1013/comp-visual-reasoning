@@ -490,8 +490,32 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   and the template RSA), and at block 11 it is copied into the background
   tokens, from which the decoder reads it; the block-11 exceptions in B
   (target+Δ 0.27, background+Δ 0.79) are the same effect.
+  (E, attribute-specific directions 2026-08-29, `--attr-directions`,
+  `partA_attr_directions.json`, `attr_directions.png`; Song, Lepori &
+  Pavlick 2025 concept vectors): V[attr][value] = unit(mean patch-mean of
+  1-object targets with that value − mean over all 1-object targets), an
+  independent image set; projections of each 2-object object's patch mean
+  per condition. Asked attribute (colour), own value, refer target − refer
+  distractor on the target: 0 through block 4, +1.0/+1.3 (5–6), +0.8 (8),
+  +5.3 (9), +6.0 (10), +11.4 (11); other colour values −1.3 to −2.1 at 9–11;
+  the distractor mirrors it (−4.6, −5.2, −11.1). Against no question: any
+  colour question (refer target, refer distractor, non-referring) raises
+  the target's own-colour projection alike through block 8 (+12 to +15 at
+  block 8); from block 9 the referent keeps it (+9 to +10) while the
+  non-referent's falls (+4.1, +4.5, −3.4 at 9–11). The unasked attribute
+  (shape) falls under any question on both objects alike (−14 to −18 at
+  9–11, referent = non-referent). A separate shape-direction dip of the
+  referent at blocks 5–8 (−5 to −8) occurs only when the referring word is
+  a shape word (n=223: −7.7/−8.1/−12.9 at 5–7; size/material referring
+  words: ≈0 to +4) — it belongs to matching the referring word, not to the
+  unasked attribute. Reading: the model does both things — the asked
+  attribute is amplified on every object by any question (Song et al.'s
+  amplification, not selective), and from block 9 the selection is
+  expressed as removing the asked attribute from the non-referent; the
+  whole-vector Δ_nonref of −26 at block 9 is mostly this colour component.
 - **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
-  2026-08-28; readout check (D) done 2026-08-29. Site edits await the user.
+  2026-08-28; readout check (D) and attribute directions (E) done
+  2026-08-29. Site edits await the user.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
