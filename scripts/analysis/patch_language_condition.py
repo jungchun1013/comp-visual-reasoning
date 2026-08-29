@@ -989,10 +989,10 @@ def plot_readout(attention, swap, label, out_path, gca_layers):
               "target": ("#1f77b4", "--", "^", "target's patches only"),
               "distractor": ("#d62728", "--", "v", "distractor's patches only")}
     panels = ((axes[0], "c2", "p_distractor",
-               "replaced with tokens from the run that asks about the distractor",
+               "tokens replaced from the forward pass with the question about the distractor",
                "P(answer = distractor's colour)"),
               (axes[1], "c0", "p_target",
-               "replaced with tokens from the run without a question",
+               "tokens replaced from the forward pass without a question",
                "P(answer = target's colour)"))
     for ax, dc, key, title, ylab in panels:
         for mk, (col, ls, mkr, lab) in styles.items():
@@ -1009,7 +1009,7 @@ def plot_readout(attention, swap, label, out_path, gca_layers):
         mark_gca_layers(ax)
         ax.legend(fontsize=7)
     a1 = attention["conditions"]["c1"]["mass_per_token"]
-    fig.suptitle(f"{label} — the run asking about the target, with one block's patch tokens replaced from another run "
+    fig.suptitle(f"{label} — forward pass with the question about the target; one block's patch tokens replaced from another forward pass "
                  f"(n={swap['n_images_ok']})\n"
                  f"decoder attention per patch when asking about the target: target {a1['target']*1e3:.1f}, "
                  f"distractor {a1['distractor']*1e3:.1f}, background {a1['bg']*1e3:.1f} (×1e-3)", fontsize=10)

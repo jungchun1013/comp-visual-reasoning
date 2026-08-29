@@ -390,7 +390,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   condition: object patches + 64 fixed background patches, object/background
   means (normed and pre-norm), token norms, GCA writes, per-patch attention
   onto the referent word. Part A: projections onto V = normalized c0 offset,
-  Δ_ref/Δ_nonref with bootstrap CIs, per-patch change norm/cosine by owner,
+  Δ_ref/Δ_nonref with bootstrap CIs, per-patch change norm/cosine grouped by background / target / distractor,
   GCA write norm/cosine, offset stats per condition, identity-vs-position RSA,
   Darcet norm control (+ `_normstd` variant). Part B: Δ_ℓ(A→B) colour vectors
   by difference-in-means on n1 raw target means; residual-edit hook on block ℓ
@@ -475,14 +475,14 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   of images, the non-referent in 1%, background in 21–23%; without a
   question both objects get ≈7–8×1e-3. (ii) Activation patching between
   conditions at every block output (receiver: refer target; masked patch
-  tokens replaced by the donor run's tokens at that block; identity control
-  donor = receiver reproduces the baseline 1.00 at all 12 blocks; n = 320
-  images correct under both questions). Donor = refer distractor:
+  tokens replaced by the same tokens from another forward pass at that block;
+  identity control (replaced from the same forward pass) reproduces the baseline 1.00 at all 12 blocks; n = 320
+  images correct under both questions). Tokens from the forward pass with the question about the distractor:
   swapping the two objects' tokens makes the answer the distractor's colour
   0.88 (block 7), 0.97 (9–10), 0.24 (11); swapping the background tokens
   0.00–0.02 through block 10, 0.71 at block 11; swapping only the
   distractor's tokens 0.36–0.50 at 7–10, only the target's ≤0.03 (0.10 at
-  11). Donor = no question: object tokens swapped drop P(target colour) to
+  11). Tokens from the forward pass without a question: object tokens swapped drop P(target colour) to
   0.32–0.57 at 7–10 (answers become "other", not the distractor) and 1.00
   at 11; background swapped 0.99 through 10 and 0.87 at 11. Reading: the
   referent selection is carried by the object tokens from block 7 to 10
@@ -517,7 +517,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   grid 16 @ 256, same 324 pairs, `outputs/analysis/patch_language_condition/siglip/`,
   all phases A–E; masks inspected; c0 reproduces X19-SigLIP on its 30 pairs:
   L11 within 0.915 / between 0.743 / n1↔n2 0.922 vs 0.915 / 0.742). Same
-  mechanism, earlier and without the last-block hand-off: Δ_ref 0 through
+  mechanism, earlier and without the last-block copy into the background tokens: Δ_ref 0 through
   block 4, +15.3 (5), +18.9 (6), +28.7 (7), then +21 to +25 through block
   11 (Δ_nonref the mirror); baseline accuracy 1.000 / 1.000. Interventions
   α=1: target+Δ 0.76 (block 0), 0.90–0.95 (1–5), 0.83–0.89 (6–11) — no
@@ -526,10 +526,10 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   distractor+Δ_D under c2 0.77–0.95. Readout: decoder attention per patch
   113×1e-3 on the referent vs 1.8×1e-3 background and 0.1×1e-3 on the
   non-referent (57% of the mass on the referent's few patches; top patch is
-  the referent in 76–78%); swaps (donor refer distractor): object tokens
+  the referent in 76–78%); swaps (tokens from the forward pass with the question about the distractor): object tokens
   → distractor's colour 0.85 (5), 0.80–0.88 (6–11); background tokens
   0.05–0.21; distractor's tokens alone 0.26–0.44, target's alone ≤0.03.
-  Donor no question: object tokens swapped keep the target's colour
+  Tokens from the forward pass without a question: object tokens swapped keep the target's colour
   0.90–1.00 at every block, but background tokens swapped at blocks 9–11
   make the answer "no" in 93% of images — in SigLIP the background tokens
   at 9–11 carry the question type (that a colour is asked), the object

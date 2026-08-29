@@ -27,7 +27,7 @@
   same 324 pairs, masks inspected, X19-SigLIP reproduced on its 30 pairs).
   Same mechanism as DINOv2 with two differences: (1) the referent /
   non-referent split appears earlier (Δ_ref +15 at block 5, +29 at 7; own-colour
-  split from block 7) and stays to block 11 — no last-block hand-off to the
+  split from block 7) and stays to block 11 — no last-block copy into the
   background tokens: target+Δ flips 0.83–0.95 at every block including 11,
   object-token swaps move the answer 0.80–0.88 through block 11, background
   swaps ≤0.21; (2) the background tokens at blocks 9–11 carry the question
@@ -52,7 +52,7 @@
   size 59 / material 42) — matching the word, not a general effect on the
   unasked attribute. Registry X21 updated.
 - **2026-08-29 — X21 (D): where the decoder reads the answer — decoder
-  attention by owner and token swaps between conditions.** New `--readout`
+  attention grouped by background / target / distractor, and token swaps between conditions.** New `--readout`
   mode in `scripts/analysis/patch_language_condition.py` (new files only:
   `readout_attention.json`, `readout_swap.json`, `readout_swap_trials.jsonl`,
   `readout.png`, `log_readout.txt`). Checks passed: generate() = first-token
@@ -60,8 +60,8 @@
   trunk.norm equals the decoder input; identity swap reproduces the baseline
   at all blocks. Decoder attention per patch: referent 13.4×1e-3, background
   1.5×1e-3, non-referent 2.0×1e-3; top patch is the referent in 76% of
-  images. Swaps (receiver asks about the target, donor asks about the
-  distractor): object tokens swapped → distractor's colour 0.88 at block 7,
+  images. Swaps (forward pass with the question about the target; tokens replaced
+  from the forward pass with the question about the distractor): object tokens swapped → distractor's colour 0.88 at block 7,
   0.97 at 9–10, 0.24 at 11; background tokens swapped → 0.00–0.02 through
   block 10, 0.71 at 11. So the selection sits in the object tokens at
   blocks 7–10 and is copied into the background tokens at block 11, where
