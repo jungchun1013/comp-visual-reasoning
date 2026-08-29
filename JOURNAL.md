@@ -22,6 +22,18 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-29 — X21 (H): head ablation scan — the selection effect is
+  written by whole GCA layers 7 and 9, not by single heads.** `--head-scan`
+  (258 zero-ablations with `analysis.patching_utils.HeadAblator`, files
+  `head_scan.json`, `head_scan_rows.jsonl`, `head_scan.png`). Measured: the
+  target's projection on its own colour direction, refer target − refer
+  distractor, per block. Single-head ablations change the block-11 effect by
+  a median of 0.0 (5th percentile −0.7) and never lower accuracy below 0.97;
+  the only large single-head effect is SA block 11 head 7 (11.4 → 5.1, blocks
+  9–10 unchanged, accuracy unchanged). Zeroing all heads of GCA layer 7 or 9
+  removes the effect at blocks 9–10 (+0.9/+0.8 and −0.8/−0.4 vs +5.3/+6.0)
+  with accuracy ≈0.7; GCA 1/3/11 do nothing. Head-level correlation with the
+  patching recovery is weak (≤0.28). Registry X21 (H) has the full table.
 - **2026-08-29 — X21 (F): SigLIP replication of the whole language-condition
   suite.** `outputs/analysis/patch_language_condition/siglip/` (grid 16 @ 256,
   same 324 pairs, masks inspected, X19-SigLIP reproduced on its 30 pairs).

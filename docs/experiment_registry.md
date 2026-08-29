@@ -593,6 +593,38 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   accuracy but not the effect measured at block 10; (iv) no SA head at
   blocks 0–4 changes the effect; (v) the per-head drop correlates
   positively with the patching recovery of the query group.
+  Result (2026-08-29, 258 ablations, zero mode, 324 pairs; on-the-fly
+  baseline reproduces the cached curve exactly: +5.3 / +6.0 / +11.4 at
+  blocks 9–11, accuracy 0.994): no single head is necessary — over the 240
+  single-head ablations the change of the block-11 effect has median 0.0,
+  5th percentile −0.7, and no single-head ablation lowers accuracy below
+  0.97; the one exception is SA block 11 head 7, whose removal halves the
+  block-11 effect (11.4 → 5.1) while blocks 9–10 stay at baseline and
+  accuracy stays 0.99 — a head of the final block's copy step, not of the
+  selection. The selection is written by whole GCA layers: zeroing all 16
+  heads of GCA layer 7 or layer 9 brings the effect at blocks 9–10 to
+  +0.9/+0.8 and −0.8/−0.4 (baseline +5.3/+6.0) and the block-11 effect to
+  +4.2, with accuracy 0.73/0.69 and 0.76/0.75; layer 5 halves it
+  (+1.9/+2.3); layers 1, 3 and 11 do nothing (block-11 effect 11.1 / 10.6 /
+  10.8, accuracy ≥0.98). Zeroing a whole SA block reduces the block 9–10
+  effect by 2–3 for blocks 0, 3, 5–8 (distributed, each with accuracy
+  0.83–0.97) and zeroing SA block 11 leaves blocks 9–10 at baseline but
+  drops the block-11 effect to +2.0 and accuracy to 0.20. Correlation
+  across heads between the block-11 drop and the headwise patching
+  recovery is weak (Spearman −0.02 to +0.28; largest for the what_size and
+  what_color query groups on GCA heads, +0.28 / +0.21). Reading against the
+  expectations: (i) confirmed at the layer level (GCA 7 and 9 are the
+  writing sites; GCA 5 partial), not at the single-head level — the
+  selection is distributed over many heads within those layers; (ii) SA
+  heads at 9–10 do not carry it individually; SA blocks 5–8 contribute
+  collectively; (iii) confirmed — SA block 11 (and its head 7) affect the
+  block-11 value and accuracy, not blocks 9–10; (iv) confirmed for single
+  heads, but SA block 0 and 3 as wholes reduce the effect by ~2–3 (with
+  accuracy loss, i.e. generic damage); (v) not confirmed — head-level
+  patching recovery and head-level selection drop are only weakly
+  related. Link to the causal localisation therefore holds at the layer
+  level (patching's query-routing heads sit in GCA 7/9) and not head by
+  head.
 - **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
   2026-08-28; readout check (D), attribute directions (E) and SigLIP
   replication (F) done 2026-08-29; G and H launched 2026-08-29. Site

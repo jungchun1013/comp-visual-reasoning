@@ -1132,46 +1132,50 @@ def run_head_scan(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n
 
 
 def plot_head_scan(res, label, out_path):
+    """Heatmaps: change of the selection effect (target's own queried-attribute
+    projection, refer target − refer distractor) at block 10 and at block 11
+    when one head is zeroed; bars: all heads of one layer zeroed."""
     base = np.array(res["baseline"]["S_target"])
     gl, n_sa, n_gca = res["gca_layers"], res["n_sa_heads"], res["n_gca_heads"]
-    dS = {"sa": np.full((NUM_LAYERS, n_sa), np.nan), "gca": np.full((len(gl), n_gca), np.nan)}
-    dacc = {"sa": np.full((NUM_LAYERS, n_sa), np.nan), "gca": np.full((len(gl), n_gca), np.nan)}
-    layer_rows = {"sa": np.full(NUM_LAYERS, np.nan), "gca": np.full(len(gl), np.nan)}
+    blocks = (10, 11)
+    dS = {(k, b): np.full(shape, np.nan) for k, shape in (("sa", (NUM_LAYERS, n_sa)), ("gca", (len(gl), n_gca))) for b in blocks}
+    layer = {(k, b): np.full(n, np.nan) for k, n in (("sa", NUM_LAYERS), ("gca", len(gl))) for b in blocks}
+    worst_acc = 1.0
     for r in res["rows"]:
         li = r["layer"] if r["kind"] == "sa" else gl.index(r["layer"])
-        if r["head"] is None:
-            layer_rows[r["kind"]][li] = r["S_target"][-1] - base[-1]
-            continue
-        dS[r["kind"]][li, r["head"]] = r["S_target"][-1] - base[-1]
-        dacc[r["kind"]][li, r["head"]] = min(r["acc_c1"], r["acc_c2"]) - min(res["baseline"]["acc_c1"], res["baseline"]["acc_c2"])
-    fig, axes = plt.subplots(2, 3, figsize=(16, 7.5), gridspec_kw={"width_ratios": [1, 1.3, 0.5]})
-    vmax = max(np.nanmax(np.abs(dS["sa"])), np.nanmax(np.abs(dS["gca"])), 1e-6)
-    for row, (kind, title) in enumerate((("sa", "self-attention heads (12 blocks × 12 heads)"),
-                                         ("gca", "gated cross-attention heads (6 layers × 16 heads)"))):
-        ax = axes[row, 0]
-        im = ax.imshow(dS[kind], cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
-        ax.set_title(f"{title}: change of the selection effect at block 11 when the head is zeroed", fontsize=9)
-        ax.set_xlabel("head"); ax.set_ylabel("block" if kind == "sa" else "GCA layer")
-        if kind == "gca":
-            ax.set_yticks(range(len(gl))); ax.set_yticklabels([str(l) for l in gl])
-        fig.colorbar(im, ax=ax, fraction=0.03)
-        ax = axes[row, 1]
-        im = ax.imshow(dacc[kind], cmap="Reds_r", vmin=-1, vmax=0, aspect="auto")
-        ax.set_title("change of accuracy (min over the two questions) when the head is zeroed", fontsize=9)
-        ax.set_xlabel("head"); ax.set_ylabel("block" if kind == "sa" else "GCA layer")
-        if kind == "gca":
-            ax.set_yticks(range(len(gl))); ax.set_yticklabels([str(l) for l in gl])
-        fig.colorbar(im, ax=ax, fraction=0.03)
-        ax = axes[row, 2]
-        ys = layer_rows[kind]
-        ax.barh(range(len(ys)), ys, color="0.4")
-        ax.set_yticks(range(len(ys))); ax.set_yticklabels([str(l) for l in (range(NUM_LAYERS) if kind == "sa" else gl)])
-        ax.invert_yaxis()
-        ax.axvline(0, color="k", linewidth=0.6)
-        ax.set_title("all heads of one layer zeroed", fontsize=9)
-        ax.set_xlabel("change of selection effect at block 11")
-    fig.suptitle(f"{label} — head ablation scan (questions ask about {res['queried']}); baseline selection effect at block 11 = "
-                 f"{base[-1]:+.1f}, accuracy {res['baseline']['acc_c1']:.3f} / {res['baseline']['acc_c2']:.3f}", fontsize=10)
+        for b in blocks:
+            if r["head"] is None:
+                layer[(r["kind"], b)][li] = r["S_target"][b] - base[b]
+            else:
+                dS[(r["kind"], b)][li, r["head"]] = r["S_target"][b] - base[b]
+        if r["head"] is not None:
+            worst_acc = min(worst_acc, r["acc_c1"], r["acc_c2"])
+    vmax = max(np.nanmax(np.abs(v)) for v in dS.values())
+    fig, axes = plt.subplots(2, 4, figsize=(17, 7), gridspec_kw={"width_ratios": [1, 1, 0.45, 0.45]})
+    for row, (kind, title) in enumerate((("sa", "self-attention heads"), ("gca", "gated cross-attention heads"))):
+        ylab = "block" if kind == "sa" else "GCA layer"
+        yt = list(range(NUM_LAYERS)) if kind == "sa" else gl
+        for col, b in enumerate(blocks):
+            ax = axes[row, col]
+            im = ax.imshow(dS[(kind, b)], cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+            ax.set_title(f"{title}: one head zeroed → change of the selection effect at block {b}", fontsize=9)
+            ax.set_xlabel("head"); ax.set_ylabel(ylab)
+            ax.set_yticks(range(len(yt))); ax.set_yticklabels([str(l) for l in yt], fontsize=8)
+            if col == 1:
+                fig.colorbar(im, ax=ax, fraction=0.04)
+        for col, b in enumerate(blocks):
+            ax = axes[row, 2 + col]
+            ys = layer[(kind, b)]
+            ax.barh(range(len(ys)), ys, color="0.4")
+            ax.set_yticks(range(len(ys))); ax.set_yticklabels([str(l) for l in yt], fontsize=8)
+            ax.invert_yaxis()
+            ax.axvline(0, color="k", linewidth=0.6)
+            ax.set_xlim(min(-1.0, np.nanmin(ys) * 1.1), max(1.0, np.nanmax(ys) * 1.1))
+            ax.set_title(f"all heads of one layer zeroed,\nchange at block {b}", fontsize=9)
+            ax.set_xlabel("change of selection effect")
+    fig.suptitle(f"{label} — head ablation scan (questions ask about {res['queried']}); baseline selection effect "
+                 f"+{base[10]:.1f} at block 10, +{base[11]:.1f} at block 11; no single-head ablation lowers accuracy "
+                 f"below {worst_acc:.2f} (baseline {res['baseline']['acc_c1']:.3f})", fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
