@@ -22,6 +22,21 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-29 — X21 (D): where the decoder reads the answer — decoder
+  attention by owner and token swaps between conditions.** New `--readout`
+  mode in `scripts/analysis/patch_language_condition.py` (new files only:
+  `readout_attention.json`, `readout_swap.json`, `readout_swap_trials.jsonl`,
+  `readout.png`, `log_readout.txt`). Checks passed: generate() = first-token
+  argmax; c1/c2 accuracy 0.994; attention rows sum to 1; block-11 capture +
+  trunk.norm equals the decoder input; identity swap reproduces the baseline
+  at all blocks. Decoder attention per patch: referent 13.4×1e-3, background
+  1.5×1e-3, non-referent 2.0×1e-3; top patch is the referent in 76% of
+  images. Swaps (receiver asks about the target, donor asks about the
+  distractor): object tokens swapped → distractor's colour 0.88 at block 7,
+  0.97 at 9–10, 0.24 at 11; background tokens swapped → 0.00–0.02 through
+  block 10, 0.71 at 11. So the selection sits in the object tokens at
+  blocks 7–10 and is copied into the background tokens at block 11, where
+  the decoder reads it. Registry X21 updated.
 - **2026-08-28 — X21: RSA position control closed with the per-position
   background template.** New `--rsa-template` mode in
   `scripts/analysis/patch_language_condition.py` (writes only

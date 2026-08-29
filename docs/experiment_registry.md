@@ -464,8 +464,34 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   is removed from its own patches, matching Δ_nonref. The 84-way identity
   RDM (all four attributes) is a weak model RDM (nearly every pair differs)
   and stays at 0.13–0.17; colour is the informative one.
+  (D, readout check 2026-08-29, `--readout`, `readout_attention.json`,
+  `readout_swap.json`, `readout_swap_trials.jsonl`, `readout.png`): the
+  claim "the last block's readout draws on background tokens" (from B)
+  tested directly. (i) Decoder cross-attention (1-layer VQADecoder, bos →
+  576 patches, 8 heads, head-mean): 81% of the mass sits on background
+  tokens because they are 97% of the tokens; per patch the referent object
+  receives 13.4×1e-3 vs 1.5×1e-3 for a background patch (≈9×) and 2.0×1e-3
+  for the non-referent; the top-attended patch is the referent in 76–77%
+  of images, the non-referent in 1%, background in 21–23%; without a
+  question both objects get ≈7–8×1e-3. (ii) Activation patching between
+  conditions at every block output (receiver: refer target; masked patch
+  tokens replaced by the donor run's tokens at that block; identity control
+  donor = receiver reproduces the baseline 1.00 at all 12 blocks; n = 320
+  images correct under both questions). Donor = refer distractor:
+  swapping the two objects' tokens makes the answer the distractor's colour
+  0.88 (block 7), 0.97 (9–10), 0.24 (11); swapping the background tokens
+  0.00–0.02 through block 10, 0.71 at block 11; swapping only the
+  distractor's tokens 0.36–0.50 at 7–10, only the target's ≤0.03 (0.10 at
+  11). Donor = no question: object tokens swapped drop P(target colour) to
+  0.32–0.57 at 7–10 (answers become "other", not the distractor) and 1.00
+  at 11; background swapped 0.99 through 10 and 0.87 at 11. Reading: the
+  referent selection is carried by the object tokens from block 7 to 10
+  (dominantly by the non-referent's tokens — suppression, matching Δ_nonref
+  and the template RSA), and at block 11 it is copied into the background
+  tokens, from which the decoder reads it; the block-11 exceptions in B
+  (target+Δ 0.27, background+Δ 0.79) are the same effect.
 - **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
-  2026-08-28. Site edits await the user.
+  2026-08-28; readout check (D) done 2026-08-29. Site edits await the user.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

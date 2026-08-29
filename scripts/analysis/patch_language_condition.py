@@ -661,6 +661,251 @@ def first_token_logits(model, steervit, images, questions):
     return model.decoder(bos, patches)[:, 0, :]
 
 
+# ---------------------------------------------------------------------------
+# Readout check — where does the decoder read the answer from at the last block?
+# (i) decoder cross-attention mass by patch owner; (ii) activation patching of
+# background / object tokens between conditions at every block output.
+# ---------------------------------------------------------------------------
+
+class BlockCapture:
+    """Forward hooks on all trunk blocks; stores each block's patch output."""
+
+    def __init__(self, trunk):
+        self.trunk, self.prefix, self.out, self.hs = trunk, trunk.num_prefix_tokens, {}, []
+
+    def __enter__(self):
+        for li, blk in enumerate(self.trunk.blocks):
+            def mk(li):
+                def fn(mod, inp, out):
+                    self.out[li] = out[0][:, self.prefix:, :].detach().clone()
+                return fn
+            self.hs.append(blk.register_forward_hook(mk(li)))
+        return self
+
+    def __exit__(self, *a):
+        for h in self.hs:
+            h.remove()
+
+
+class TokenSwapper:
+    """Forward hook on trunk.blocks[layer]: masked patch tokens of the current
+    (receiver) run are replaced by the donor run's output at the same block."""
+
+    def __init__(self, trunk, layer, donor, mask):
+        self.blk, self.prefix, self.donor, self.mask, self.h = trunk.blocks[layer], trunk.num_prefix_tokens, donor, mask, None
+
+    def __enter__(self):
+        def fn(mod, inp, out):
+            x = out[0].clone()
+            x[:, self.prefix:, :] = torch.where(self.mask[:, :, None], self.donor.to(x.dtype), x[:, self.prefix:, :])
+            return (x, out[1], out[2])
+        self.h = self.blk.register_forward_hook(fn)
+        return self
+
+    def __exit__(self, *a):
+        self.h.remove()
+
+
+class DecoderAttention:
+    """Captures the decoder's cross-attention weights (B, H, Tq, P) by forcing
+    need_weights=True on the MultiheadAttention call via a kwargs pre-hook."""
+
+    def __init__(self, decoder):
+        self.mha = [l.base_layer.multihead_attn for l in decoder.layers]
+        self.weights, self.hs = [], []
+
+    def __enter__(self):
+        def pre(mod, args, kwargs):
+            kwargs = dict(kwargs)
+            kwargs["need_weights"] = True
+            kwargs["average_attn_weights"] = False
+            return args, kwargs
+
+        def post(mod, args, out):
+            self.weights.append(out[1].detach().float())
+        for m in self.mha:
+            self.hs.append(m.register_forward_pre_hook(pre, with_kwargs=True))
+            self.hs.append(m.register_forward_hook(post))
+        return self
+
+    def __exit__(self, *a):
+        for h in self.hs:
+            h.remove()
+
+
+@torch.no_grad()
+def run_readout(out_dir, args, state, images_n2, owners_n2, labels_n2):
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    prefix = trunk.num_prefix_tokens
+    inv = {v: k for k, v in model.vocab.items()}
+    N, bs = len(labels_n2), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner_t = torch.from_numpy(np.stack(owners_n2))
+    A_id = np.array([model.vocab[r["target"]["color"]] for r in labels_n2])
+    Ad_id = np.array([model.vocab[r["distractors"][0]["color"]] for r in labels_n2])
+    conds = ["c0", "c1", "c2"]
+    bos = lambda b: torch.full((b, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
+
+    # ---- (i) baselines + decoder attention by owner ----
+    base_pred = {c: np.zeros(N, int) for c in conds}
+    attn_rows = {c: [] for c in conds}          # per image: (H, 3) mass on bg / target / distractor
+    attn_top = {c: [] for c in conds}           # owner of the top-attended patch (head-mean)
+    attn_topk = {c: [] for c in conds}          # object share among the top-8 patches (head-mean)
+    for s in range(0, N, bs):
+        e = min(s + bs, N)
+        ow = owner_t[s:e].to(device)
+        for c in conds:
+            qs = None if c == "c0" else [labels_n2[i]["questions"][c] for i in range(s, e)]
+            feats = steervit.forward(imgs_t[s:e].to(device), qs)
+            patches = feats[:, prefix:, :]
+            with DecoderAttention(model.decoder) as da:
+                lg = model.decoder(bos(e - s), patches)[:, 0, :]
+            base_pred[c][s:e] = lg.argmax(-1).cpu().numpy()
+            w = da.weights[0][:, :, 0, :]                            # (B, H, P)
+            assert torch.allclose(w.sum(-1), torch.ones_like(w.sum(-1)), atol=1e-4), "attention rows must sum to 1"
+            mass = torch.stack([(w * (ow == k)[:, None, :]).sum(-1) for k in range(3)], -1)  # (B,H,3)
+            attn_rows[c].append(mass.cpu().numpy())
+            wm = w.mean(1)                                            # (B, P)
+            top = wm.argmax(-1)
+            attn_top[c].append(ow[torch.arange(e - s, device=device), top].cpu().numpy())
+            topk = wm.topk(8, dim=-1).indices
+            attn_topk[c].append((torch.gather(ow, 1, topk) > 0).float().mean(-1).cpu().numpy())
+        if s == 0:
+            gen = model.generate(imgs_t[:min(8, N)].to(device),
+                                 [labels_n2[i]["questions"]["c1"] for i in range(min(8, N))])
+            print(f"generate() vs first-token argmax on 8 images: {gen} | "
+                  f"{[inv.get(int(t), '?') for t in base_pred['c1'][:min(8, N)]]}")
+    acc = {"c1": float((base_pred["c1"] == A_id).mean()), "c2": float((base_pred["c2"] == Ad_id).mean()),
+           "c0_says_target": float((base_pred["c0"] == A_id).mean()),
+           "c0_says_distractor": float((base_pred["c0"] == Ad_id).mean())}
+    print(f"baseline accuracy: c1 {acc['c1']:.3f}  c2 {acc['c2']:.3f}; no question → target colour "
+          f"{acc['c0_says_target']:.3f}, distractor colour {acc['c0_says_distractor']:.3f}")
+    n_tok = {k: float((owner_t == k).float().sum(1).mean()) for k in range(3)}
+    attention = {"n_images": N, "tokens_per_owner_mean": {"bg": n_tok[0], "target": n_tok[1], "distractor": n_tok[2]},
+                 "baseline_accuracy": acc, "conditions": {}}
+    for c in conds:
+        m = np.concatenate(attn_rows[c])                              # (N, H, 3)
+        top = np.concatenate(attn_top[c])
+        share = np.concatenate(attn_topk[c])
+        mean_owner = m.mean(1)                                        # (N, 3) head-mean
+        attention["conditions"][c] = {
+            "mass_mean": {"bg": float(mean_owner[:, 0].mean()), "target": float(mean_owner[:, 1].mean()),
+                          "distractor": float(mean_owner[:, 2].mean())},
+            "mass_per_token": {"bg": float((mean_owner[:, 0] / np.maximum((owner_t == 0).sum(1).numpy(), 1)).mean()),
+                               "target": float((mean_owner[:, 1] / np.maximum((owner_t == 1).sum(1).numpy(), 1)).mean()),
+                               "distractor": float((mean_owner[:, 2] / np.maximum((owner_t == 2).sum(1).numpy(), 1)).mean())},
+            "mass_per_head": {"bg": m[:, :, 0].mean(0).tolist(), "target": m[:, :, 1].mean(0).tolist(),
+                              "distractor": m[:, :, 2].mean(0).tolist()},
+            "top_patch_owner_frac": {"bg": float((top == 0).mean()), "target": float((top == 1).mean()),
+                                     "distractor": float((top == 2).mean())},
+            "object_share_in_top8": float(share.mean())}
+        a = attention["conditions"][c]
+        print(f"decoder attention {c}: mass bg {a['mass_mean']['bg']:.3f} target {a['mass_mean']['target']:.3f} "
+              f"distractor {a['mass_mean']['distractor']:.3f} | per token ×1e3: bg {a['mass_per_token']['bg']*1e3:.2f} "
+              f"target {a['mass_per_token']['target']*1e3:.2f} distractor {a['mass_per_token']['distractor']*1e3:.2f} | "
+              f"top patch: bg {a['top_patch_owner_frac']['bg']:.2f} target {a['top_patch_owner_frac']['target']:.2f} "
+              f"distractor {a['top_patch_owner_frac']['distractor']:.2f}", flush=True)
+    with open(out_dir / "readout_attention.json", "w") as f:
+        json.dump(attention, f, indent=1)
+
+    # ---- (ii) activation patching between conditions at each block output ----
+    # receiver run c1 (asks about the target); masked tokens replaced by the donor run's block output
+    variants = [("c2", "bg"), ("c2", "objects"), ("c2", "target"), ("c2", "distractor"),
+                ("c0", "bg"), ("c0", "objects"), ("c1", "bg")]       # last = identity control
+    ok = (base_pred["c1"] == A_id) & (base_pred["c2"] == Ad_id)
+    counts = {(v, l): np.zeros(3, int) for v in variants for l in range(NUM_LAYERS)}   # [A, Ad, other]
+    fout = open(out_dir / "readout_swap_trials.jsonl", "w")
+    for s in range(0, N, bs):
+        e = min(s + bs, N)
+        idx = list(range(s, e))
+        ims = imgs_t[s:e].to(device)
+        ow = owner_t[s:e].to(device)
+        donors = {}
+        for c in ("c0", "c1", "c2"):
+            qs = None if c == "c0" else [labels_n2[i]["questions"][c] for i in idx]
+            with BlockCapture(trunk) as cap:
+                feats = steervit.forward(ims, qs)
+            donors[c] = cap.out
+            if c == "c1":   # the block-11 capture followed by trunk.norm must equal the decoder input
+                assert torch.allclose(trunk.norm(cap.out[NUM_LAYERS - 1]), feats[:, prefix:, :], atol=1e-4)
+        masks = {"bg": ow == 0, "objects": ow > 0, "target": ow == 1, "distractor": ow == 2}
+        qs1 = [labels_n2[i]["questions"]["c1"] for i in idx]
+        for (dc, mk) in variants:
+            for l in range(NUM_LAYERS):
+                with TokenSwapper(trunk, l, donors[dc][l], masks[mk]):
+                    lg = first_token_logits(model, steervit, ims, qs1)
+                pred = lg.argmax(-1).cpu().numpy()
+                for j, i in enumerate(idx):
+                    if not ok[i]:
+                        continue
+                    k = 0 if pred[j] == A_id[i] else (1 if pred[j] == Ad_id[i] else 2)
+                    counts[((dc, mk), l)][k] += 1
+                    fout.write(json.dumps({"img": i, "donor": dc, "mask": mk, "layer": l,
+                                           "pred": inv.get(int(pred[j]), "?"), "class": ["A", "Ad", "other"][k]}) + "\n")
+        print(f"  swaps {e}/{N}", flush=True)
+    fout.close()
+    rows = []
+    for (dc, mk) in variants:
+        for l in range(NUM_LAYERS):
+            cnt = counts[((dc, mk), l)]
+            n = int(cnt.sum())
+            rows.append({"donor": dc, "mask": mk, "layer": l, "n": n, "p_target": cnt[0] / max(n, 1),
+                         "p_distractor": cnt[1] / max(n, 1), "p_other": cnt[2] / max(n, 1)})
+    ident = [r for r in rows if r["donor"] == "c1"]
+    assert all(r["p_target"] == 1.0 for r in ident), "identity swap must reproduce the c1 baseline"
+    for (dc, mk) in variants:
+        rr = [r for r in rows if r["donor"] == dc and r["mask"] == mk]
+        print(f"swap donor {dc} mask {mk:<10} P(target colour) by block: " +
+              " ".join(f"{r['p_target']:.2f}" for r in rr) + " | P(distractor colour): " +
+              " ".join(f"{r['p_distractor']:.2f}" for r in rr), flush=True)
+    swap = {"n_images_ok": int(ok.sum()), "receiver": "c1", "variants": [list(v) for v in variants], "rows": rows}
+    with open(out_dir / "readout_swap.json", "w") as f:
+        json.dump(swap, f, indent=1)
+    return attention, swap
+
+
+def plot_readout(attention, swap, label, out_path, gca_layers):
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    # (a) attention mass per token by owner, per condition
+    ax = axes[0]
+    conds = list(attention["conditions"])
+    x = np.arange(3)
+    wd = 0.8 / len(conds)
+    for ci, c in enumerate(conds):
+        mpt = attention["conditions"][c]["mass_per_token"]
+        ax.bar(x + (ci - (len(conds) - 1) / 2) * wd, [mpt["bg"] * 1e3, mpt["target"] * 1e3, mpt["distractor"] * 1e3],
+               wd, label=COND_LABEL[c], color=["0.6", "#1f77b4", "#d62728"][ci])
+    ax.set_xticks(x)
+    ax.set_xticklabels(["background", "target", "distractor"])
+    ax.set_ylabel("decoder attention per patch (×1e-3)", fontsize=10)
+    ax.set_title("decoder cross-attention, per patch, by owner", fontsize=10)
+    ax.legend(fontsize=7)
+    # (b) swaps with donor c2 — does the answer follow the objects or the background?
+    styles = {"bg": ("0.3", "-", "s"), "objects": ("#ff7f0e", "-", "o"), "target": ("#1f77b4", "--", "^"),
+              "distractor": ("#d62728", "--", "v")}
+    for ax, dc, title in ((axes[1], "c2", "donor: refer distractor → P(answer = distractor's colour)"),
+                          (axes[2], "c0", "donor: no question → P(answer = target's colour)")):
+        key = "p_distractor" if dc == "c2" else "p_target"
+        for mk, (col, ls, mkr) in styles.items():
+            rr = [r for r in swap["rows"] if r["donor"] == dc and r["mask"] == mk]
+            if not rr:
+                continue
+            ax.plot([r["layer"] for r in rr], [r[key] for r in rr], ls, color=col, marker=mkr, markersize=3,
+                    label=f"{mk} tokens swapped")
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_ylabel(key.replace("p_", "P(answer = ") + " colour)", fontsize=10)
+        ax.set_title(title, fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=7)
+    fig.suptitle(f"{label} — where the answer is read from: decoder attention and token swaps between conditions "
+                 f"(receiver asks about the target; n={swap['n_images_ok']})")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def color_vectors(cache_n1, labels_n1):
     """Δ_ℓ(A→B) = mean raw target-patch token of color B − of color A, (12, D) each."""
     rom = cache_n1["raw_obj_mean"][:, 0].astype(np.float32)   # (N,12,D)
@@ -1099,6 +1344,8 @@ def main():
     ap.add_argument("--rsa-template", action="store_true",
                     help="only: RSA with the per-position background template (new files)")
     ap.add_argument("--intervene", action="store_true")
+    ap.add_argument("--readout", action="store_true",
+                    help="only: decoder attention by owner + token swaps between conditions (new files)")
     ap.add_argument("--with-absent", action="store_true")
     ap.add_argument("--n-pairs", type=int, default=0, help="subsample eligible pairs (0 = all)")
     ap.add_argument("--bg-per-image", type=int, default=64)
@@ -1163,6 +1410,12 @@ def main():
             for cond in conds[name]:
                 extract_condition_sparse(out_dir / name, cond, images[name], owners[name],
                                          labels[name], args, state)
+        if args.readout:
+            ensure_model(state, args)
+            attention, swap = run_readout(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])
+            gca_layers = [int(l) for l in np.load(out_dir / "n2" / "feats_c0.npz")["gca_layers"]]
+            plot_readout(attention, swap, label, out_dir / "readout.png", gca_layers)
+            return
         if args.intervene:
             ensure_model(state, args)
             cache_n1 = load_sparse(out_dir / "n1", "c1")
