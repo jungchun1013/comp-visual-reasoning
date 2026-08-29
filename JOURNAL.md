@@ -22,6 +22,21 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-29 — X21 (F): SigLIP replication of the whole language-condition
+  suite.** `outputs/analysis/patch_language_condition/siglip/` (grid 16 @ 256,
+  same 324 pairs, masks inspected, X19-SigLIP reproduced on its 30 pairs).
+  Same mechanism as DINOv2 with two differences: (1) the referent /
+  non-referent split appears earlier (Δ_ref +15 at block 5, +29 at 7; own-colour
+  split from block 7) and stays to block 11 — no last-block hand-off to the
+  background tokens: target+Δ flips 0.83–0.95 at every block including 11,
+  object-token swaps move the answer 0.80–0.88 through block 11, background
+  swaps ≤0.21; (2) the background tokens at blocks 9–11 carry the question
+  type — swapping in no-question background tokens there makes the decoder
+  answer "no" (93%) instead of a colour, while the object tokens keep which
+  object and its colour. Decoder attention per patch: referent 113×1e-3,
+  background 1.8, non-referent 0.1. Template RSA position ≤0.09 at block 11;
+  colour RDM 0.60 when the target is the referent, 0.10 when not. Probes:
+  referent 1.00 from L5, spatial-LOO within 0.05 of random. Registry X21 (F).
 - **2026-08-29 — X21 (E): attribute-specific directions (Song et al.
   concept vectors) — amplification vs suppression reconciled.** New
   `--attr-directions` mode (from cache; new files `partA_attr_directions.json`,

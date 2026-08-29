@@ -513,9 +513,46 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   amplification, not selective), and from block 9 the selection is
   expressed as removing the asked attribute from the non-referent; the
   whole-vector Δ_nonref of −26 at block 9 is mostly this colour component.
+  (F, SigLIP replication 2026-08-29, `clevr_siglip_decoder1l_scratch_s42`,
+  grid 16 @ 256, same 324 pairs, `outputs/analysis/patch_language_condition/siglip/`,
+  all phases A–E; masks inspected; c0 reproduces X19-SigLIP on its 30 pairs:
+  L11 within 0.915 / between 0.743 / n1↔n2 0.922 vs 0.915 / 0.742). Same
+  mechanism, earlier and without the last-block hand-off: Δ_ref 0 through
+  block 4, +15.3 (5), +18.9 (6), +28.7 (7), then +21 to +25 through block
+  11 (Δ_nonref the mirror); baseline accuracy 1.000 / 1.000. Interventions
+  α=1: target+Δ 0.76 (block 0), 0.90–0.95 (1–5), 0.83–0.89 (6–11) — no
+  block-11 exception; random / background-subset / distractor-under-c1 /
+  target-under-c2 0.00 everywhere; background-all ≤0.18; α=0.5 0.03–0.33;
+  distractor+Δ_D under c2 0.77–0.95. Readout: decoder attention per patch
+  113×1e-3 on the referent vs 1.8×1e-3 background and 0.1×1e-3 on the
+  non-referent (57% of the mass on the referent's few patches; top patch is
+  the referent in 76–78%); swaps (donor refer distractor): object tokens
+  → distractor's colour 0.85 (5), 0.80–0.88 (6–11); background tokens
+  0.05–0.21; distractor's tokens alone 0.26–0.44, target's alone ≤0.03.
+  Donor no question: object tokens swapped keep the target's colour
+  0.90–1.00 at every block, but background tokens swapped at blocks 9–11
+  make the answer "no" in 93% of images — in SigLIP the background tokens
+  at 9–11 carry the question type (that a colour is asked), the object
+  tokens carry which object and its colour. Template RSA: position 0.05–0.09
+  at block 11 under all conditions (image-mean offset 0.12–0.17); colour
+  0.60 when the target is the referent (refer target / non-referring),
+  0.23 without a question, 0.10 when the distractor is the referent.
+  Attribute directions: own-colour refer target − refer distractor +1.8
+  (6), +7.8 (7), +13.0 (8), +17.7 (11), other colours −1 to −3; vs no
+  question the referent's own colour rises (+6 to +10 at 8–11) and the
+  non-referent's falls (−7 at 7–11) — here the split starts at block 7,
+  not 9, and the non-referent goes below no-question already at block 7;
+  shape falls under any question on both objects (−10 to −12 at 7–11);
+  referent shape dip at 5–6 (−3). Single-patch probes (random / spatial-
+  LOO): background vs object 0.99–1.00; colour 1.00 (L1) → 0.94/0.93 (L11);
+  shape 0.86 → 1.00 (L3+); material 0.94 → 0.99; size 0.99 → 1.00;
+  referent 0.57 (L1), 0.77 (L3), 1.00 (L5–L11), no-question control 0.50;
+  spatial-LOO within 0.05 of random. Caveat: 16×16 grid — objects are
+  1–20 patches, so per-patch probes and attention masses rest on fewer
+  tokens than on DINOv2.
 - **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
-  2026-08-28; readout check (D) and attribute directions (E) done
-  2026-08-29. Site edits await the user.
+  2026-08-28; readout check (D), attribute directions (E) and SigLIP
+  replication (F) done 2026-08-29. Site edits await the user.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
