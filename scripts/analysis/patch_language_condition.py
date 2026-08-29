@@ -979,40 +979,40 @@ def run_readout(out_dir, args, state, images_n2, owners_n2, labels_n2):
 
 
 def plot_readout(attention, swap, label, out_path, gca_layers):
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    # (a) attention mass per token by owner, per condition
-    ax = axes[0]
-    conds = list(attention["conditions"])
-    x = np.arange(3)
-    wd = 0.8 / len(conds)
-    for ci, c in enumerate(conds):
-        mpt = attention["conditions"][c]["mass_per_token"]
-        ax.bar(x + (ci - (len(conds) - 1) / 2) * wd, [mpt["bg"] * 1e3, mpt["target"] * 1e3, mpt["distractor"] * 1e3],
-               wd, label=COND_LABEL[c], color=["0.6", "#1f77b4", "#d62728"][ci])
-    ax.set_xticks(x)
-    ax.set_xticklabels(["background", "target", "distractor"])
-    ax.set_ylabel("decoder attention per patch (×1e-3)", fontsize=10)
-    ax.set_title("decoder cross-attention, per patch, by owner", fontsize=10)
-    ax.legend(fontsize=7)
-    # (b) swaps with donor c2 — does the answer follow the objects or the background?
-    styles = {"bg": ("0.3", "-", "s"), "objects": ("#ff7f0e", "-", "o"), "target": ("#1f77b4", "--", "^"),
-              "distractor": ("#d62728", "--", "v")}
-    for ax, dc, title in ((axes[1], "c2", "donor: refer distractor → P(answer = distractor's colour)"),
-                          (axes[2], "c0", "donor: no question → P(answer = target's colour)")):
-        key = "p_distractor" if dc == "c2" else "p_target"
-        for mk, (col, ls, mkr) in styles.items():
+    """Two panels: at one block, a set of patch tokens of the run that asks
+    about the target is replaced by the same tokens from another run (the run
+    that asks about the distractor / the run without a question); the answer
+    is then read by the decoder. Decoder-attention numbers go into the title."""
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    styles = {"bg": ("0.3", "-", "s", "background patches"),
+              "objects": ("#ff7f0e", "-", "o", "both objects' patches"),
+              "target": ("#1f77b4", "--", "^", "target's patches only"),
+              "distractor": ("#d62728", "--", "v", "distractor's patches only")}
+    panels = ((axes[0], "c2", "p_distractor",
+               "replaced with tokens from the run that asks about the distractor",
+               "P(answer = distractor's colour)"),
+              (axes[1], "c0", "p_target",
+               "replaced with tokens from the run without a question",
+               "P(answer = target's colour)"))
+    for ax, dc, key, title, ylab in panels:
+        for mk, (col, ls, mkr, lab) in styles.items():
             rr = [r for r in swap["rows"] if r["donor"] == dc and r["mask"] == mk]
             if not rr:
                 continue
-            ax.plot([r["layer"] for r in rr], [r[key] for r in rr], ls, color=col, marker=mkr, markersize=3,
-                    label=f"{mk} tokens swapped")
+            ax.plot([r["layer"] for r in rr], [r[key] for r in rr], ls, color=col, marker=mkr,
+                    markersize=3, label=f"replaced: {lab}")
         ax.set_ylim(-0.02, 1.02)
-        ax.set_ylabel(key.replace("p_", "P(answer = ") + " colour)", fontsize=10)
+        ax.set_ylabel(ylab, fontsize=10)
         ax.set_title(title, fontsize=10)
-        _layers_axis(ax, gca_layers)
+        ax.set_xlabel("ViT block at which the tokens are replaced")
+        ax.set_xticks(range(NUM_LAYERS))
+        mark_gca_layers(ax)
         ax.legend(fontsize=7)
-    fig.suptitle(f"{label} — where the answer is read from: decoder attention and token swaps between conditions "
-                 f"(receiver asks about the target; n={swap['n_images_ok']})")
+    a1 = attention["conditions"]["c1"]["mass_per_token"]
+    fig.suptitle(f"{label} — the run asking about the target, with one block's patch tokens replaced from another run "
+                 f"(n={swap['n_images_ok']})\n"
+                 f"decoder attention per patch when asking about the target: target {a1['target']*1e3:.1f}, "
+                 f"distractor {a1['distractor']*1e3:.1f}, background {a1['bg']*1e3:.1f} (×1e-3)", fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -1608,6 +1608,11 @@ def main():
     if (out_dir / "intervention_results.json").exists():
         with open(out_dir / "intervention_results.json") as f:
             plot_interventions(json.load(f), label, out_dir / "intervention_flip.png")
+    if (out_dir / "readout_swap.json").exists():
+        with open(out_dir / "readout_attention.json") as f:
+            att = json.load(f)
+        with open(out_dir / "readout_swap.json") as f:
+            plot_readout(att, json.load(f), label, out_dir / "readout.png", gca_layers)
     if not args.skip_probes:
         print("\nPart C probes ...")
         res = part_c(caches_n2, labels["n2"], args)
