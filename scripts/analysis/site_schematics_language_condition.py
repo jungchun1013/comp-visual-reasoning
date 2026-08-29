@@ -133,20 +133,23 @@ def draw_design(out_path: Path, layer: int = 9):
 # 2. block-by-block summary grid from the result JSONs
 # ---------------------------------------------------------------------------
 
-ROWS = [
-    ("asked attribute (colour) on the target:\nquestion − no question", "refvs0_target_color_own", "attr", "div"),
-    ("unasked attribute (shape) on the target:\nquestion − no question", "refvs0_target_shape_own", "attr", "div"),
-    ("selection: target's own colour,\nrefer target − refer distractor", "ref_target_color_own", "attr", "div"),
-    ("answer = distractor's colour after replacing\nboth objects' tokens from the other question", ("c2", "objects"), "swap", "seq"),
-    ("answer = distractor's colour after replacing\nbackground tokens from the other question", ("c2", "bg"), "swap", "seq"),
-]
+def rows_for(queried: str):
+    other = "shape" if queried == "color" else "color"
+    q, o = ("colour" if queried == "color" else queried), ("colour" if other == "color" else other)
+    return [
+        (f"queried attribute ({q}) on the target:\nquestion − no question", f"refvs0_target_{queried}_own", "attr", "div"),
+        (f"unqueried attribute ({o}) on the target:\nquestion − no question", f"refvs0_target_{other}_own", "attr", "div"),
+        (f"selection: target's own {q},\nrefer target − refer distractor", f"ref_target_{queried}_own", "attr", "div"),
+        ("answer = distractor's value after replacing\nboth objects' tokens from the other question", ("c2", "objects"), "swap", "seq"),
+        ("answer = distractor's value after replacing\nbackground tokens from the other question", ("c2", "bg"), "swap", "seq"),
+    ]
 
 
-def load_rows(out_dir: Path):
+def load_rows(out_dir: Path, rows):
     attr = json.load(open(out_dir / "partA_attr_directions.json"))["delta"]
     swap = json.load(open(out_dir / "readout_swap.json"))["rows"]
     vals = []
-    for _, key, src, _ in ROWS:
+    for _, key, src, _ in rows:
         if src == "attr":
             vals.append([q["mean"] for q in attr[key]])
         else:
@@ -156,12 +159,14 @@ def load_rows(out_dir: Path):
     return np.array(vals)
 
 
-def draw_summary(dirs: dict[str, Path], out_path: Path):
-    fig, axes = plt.subplots(len(dirs), 1, figsize=(12, 3.0 * len(dirs)), squeeze=False)
-    for ax, (label, d) in zip(axes[:, 0], dirs.items()):
-        v = load_rows(d)
-        img = np.zeros((len(ROWS), NUM_LAYERS, 4))
-        for i, (_, _, _, kind) in enumerate(ROWS):
+def draw_summary(panels: list, out_path: Path):
+    """panels: list of (label, out_dir, queried)."""
+    fig, axes = plt.subplots(len(panels), 1, figsize=(12, 3.0 * len(panels)), squeeze=False)
+    for ax, (label, d, queried) in zip(axes[:, 0], panels):
+        rows = rows_for(queried)
+        v = load_rows(d, rows)
+        img = np.zeros((len(rows), NUM_LAYERS, 4))
+        for i, (_, _, _, kind) in enumerate(rows):
             row = v[i]
             if kind == "div":
                 m = np.abs(row).max() or 1.0
@@ -169,23 +174,23 @@ def draw_summary(dirs: dict[str, Path], out_path: Path):
             else:
                 img[i] = plt.get_cmap("Oranges")(0.1 + 0.8 * row)
         ax.imshow(img, aspect="auto", interpolation="nearest")
-        for i in range(len(ROWS)):
+        for i in range(len(rows)):
             for l in range(NUM_LAYERS):
                 x = v[i, l]
-                txt = ("0" if abs(x) < 0.5 else f"{x:+.0f}") if ROWS[i][3] == "div" else f"{x:.2f}"
+                txt = ("0" if abs(x) < 0.5 else f"{x:+.0f}") if rows[i][3] == "div" else f"{x:.2f}"
                 lum = 0.299 * img[i, l, 0] + 0.587 * img[i, l, 1] + 0.114 * img[i, l, 2]
                 ax.text(l, i, txt, ha="center", va="center", fontsize=7.5, color="white" if lum < 0.5 else "black")
-        ax.set_yticks(range(len(ROWS)))
-        ax.set_yticklabels([r[0] for r in ROWS], fontsize=7.5)
+        ax.set_yticks(range(len(rows)))
+        ax.set_yticklabels([r[0] for r in rows], fontsize=7.5)
         ax.set_xticks(range(NUM_LAYERS))
         ax.set_xticklabels([str(l) for l in range(NUM_LAYERS)], fontsize=9)
         ax.set_xlabel("ViT block", fontsize=9)
-        ax.set_title(label, fontsize=10, loc="left")
+        ax.set_title(f"{label}, questions ask about {'colour' if queried == 'color' else queried}", fontsize=10, loc="left")
         for l in (1, 3, 5, 7, 9, 11):
             ax.axvline(l - 0.5, color="white", linewidth=0.4)
-        ax.set_ylim(len(ROWS) - 0.5, -0.5)
+        ax.set_ylim(len(rows) - 0.5, -0.5)
     fig.suptitle("Block-by-block summary of the measured effects (rows 1–3: projection differences, units of the "
-                 "feature space, red = positive; rows 4–5: proportion of images, n ≥ 320)", fontsize=9.5)
+                 "feature space, red = positive; rows 4–5: proportion of images)", fontsize=9.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -200,7 +205,12 @@ def main():
     apply_style()
     out = Path(args.out_dir)
     draw_design(out / "schematic_token_swap_design.png", args.swap_layer)
-    draw_summary({"DINOv2": out, "SigLIP": out / "siglip"}, out / "schematic_mechanism_by_block.png")
+    panels = [("DINOv2", out, "color")]
+    if (out / "shape" / "readout_swap.json").exists():
+        panels.append(("DINOv2", out / "shape", "shape"))
+    if (out / "siglip" / "readout_swap.json").exists():
+        panels.append(("SigLIP", out / "siglip", "color"))
+    draw_summary(panels, out / "schematic_mechanism_by_block.png")
 
 
 if __name__ == "__main__":

@@ -574,6 +574,52 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   carry the selection at 7–10 and background at 11 as for colour; (v) shape
   difference vectors flip the answer at blocks 0–10 with the same controls at
   0. If (i)–(ii) fail for shape, the claim is narrowed to colour.
+  Result (2026-08-29, `patch_language_condition/shape/`, all phases; the
+  no-question condition reproduces the colour run's numbers exactly, so
+  every difference is due to the questions): (ii) holds — target's own-shape
+  projection, refer target − refer distractor: 0 through block 4, +0.9 (5),
+  +2.0 (6), +2.3 (7), +5.0 (8), +5.8 (9), +8.9 (10), +14.7 (11), mirrored on
+  the distractor (−15.0 at 11); the colour direction shows no selection
+  (|Δ| ≤ 1, +2.5 at 11). Template RSA, shape RDM: without a question the
+  target's offset organises by shape more and more with depth (0.02 → 0.77
+  at block 11, the opposite of colour which faded to 0.01); refer target
+  0.81 and non-referring 0.79 at block 11; refer distractor 0.05 (already
+  0.14 at block 5 vs 0.31 without a question). Colour RDM under shape
+  questions ≈0.01 at block 11 in every condition, i.e. colour fades as it
+  does without a question. (i) FAILS: relative to no question, the target's
+  own-shape projection does not rise under any shape question (refer target
+  −0.6 … −5.5, non-referring similar), the non-referent's falls far more
+  (−5.6 at 5, −11.3 at 9, −17.5 at 11); colour projections fall on both
+  (−2 to −7). Offset norms behave as in the colour run (block 11: 46 no
+  question, 31 referent, 23 non-referent), so this is not a norm artefact
+  peculiar to shape. (iii) the block 5–8 dip on the referring attribute's
+  direction was not tested (size/material directions have two values
+  each; not analysed). (iv) holds: token swaps (219 images with distinct
+  shapes) — both objects' tokens → distractor's shape 0.18 (3), 0.25 (5),
+  0.74 (7), 0.92 (9–10), 0.13 (11); background 0.00–0.05 through 10, 0.87
+  at 11; distractor only 0.32–0.37 at 7–10, target only ≤0.06; from the
+  no-question forward: objects 0.83–0.93 keep the target's shape, background
+  0.82/0.81 at 9–10 and 0.32 at 11. Decoder attention per patch (refer
+  target): target 11.6, distractor 3.3, background 1.5 ×1e-3. (v) holds
+  from block 5: shape difference vectors flip the answer 0.10 (5), 0.34 (6),
+  0.65 (7), 0.92–0.96 (8–10), 0.02 (11), all controls 0.00; background-all
+  0.90 at 11 — unlike colour vectors, which flipped from block 0, matching
+  the single-patch shape probe (0.72 at L1, 1.00 from L5). Probes: colour
+  0.99 → 0.91, shape 0.72 → 1.00 (L5+), referent 0.62 (L1) → 0.96 (L5) →
+  1.00, spatial-LOO within 0.06. Reading: what generalises across the two
+  queried attributes is (a) the non-referent loses the queried attribute's
+  component from its own tokens (RSA colour 0.59 vs 0.06; shape 0.81 vs
+  0.05), (b) the selection is carried by object tokens at blocks 7–10 and
+  copied into background tokens at block 11, (c) the queried attribute's
+  component is causally additive with all controls at 0, (d) the unqueried
+  attribute is not maintained. What does not generalise is the rise of the
+  queried attribute on both objects relative to no question: it occurs for
+  colour, whose representation otherwise decays with depth, and not for
+  shape, which the backbone keeps by itself. Inference (not measured
+  directly): the question keeps the queried attribute on the referent
+  against the backbone's default fate and removes it from the non-referent;
+  when the default already preserves the attribute, only the removal is
+  visible. The site claim is narrowed accordingly.
   (H, pre-registered 2026-08-29, head ablation scan, `--head-scan`,
   `head_scan.json`, `head_scan.png`): links the patch-level selection effect
   to the head-level causal localisation. Zero-ablate every self-attention
@@ -627,8 +673,8 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   head.
 - **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
   2026-08-28; readout check (D), attribute directions (E) and SigLIP
-  replication (F) done 2026-08-29; G and H launched 2026-08-29. Site
-  edits await the user.
+  replication (F) done 2026-08-29; G (queried = shape) and H (head scan)
+  done 2026-08-29. Site section updated the same day.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

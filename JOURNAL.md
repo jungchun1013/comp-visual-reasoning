@@ -22,6 +22,19 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-29 — X21 (G): queried attribute = shape — the removal from the
+  non-referent generalises, the rise on both objects does not.**
+  `patch_language_condition/shape/` (DINOv2, same 324 pairs, questions
+  "What shape is the {size/material/colour} object?"). Selection on the
+  target's own-shape direction (refer target − refer distractor) grows from
+  block 5 to +14.7 at block 11, mirrored on the distractor; template RSA shape
+  RDM at block 11: referent 0.81, non-referent 0.05, no question 0.77. But
+  relative to no question no shape projection rises (referent −3 to −5,
+  non-referent −11 to −17.5), unlike colour where both objects rose +12 to +15
+  through block 8. Token swaps and interventions reproduce the colour
+  structure (objects carry selection at 7–10, background at 11; shape vectors
+  flip from block 5 with controls at 0). Site claim narrowed; registry X21
+  (G) has the full table.
 - **2026-08-29 — X21 (H): head ablation scan — the selection effect is
   written by whole GCA layers 7 and 9, not by single heads.** `--head-scan`
   (258 zero-ablations with `analysis.patching_utils.HeadAblator`, files
