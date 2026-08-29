@@ -61,6 +61,7 @@ from patch_pca_cluster import (combo_key, offset_statistics_from_offsets,
 
 ATTRS = ("color", "shape", "material", "size")
 COLORS = ["red", "blue", "green", "brown", "purple", "cyan", "yellow"]  # gray excluded (segmentation)
+QUERIED = "color"          # queried attribute of every question; set from --queried in main()
 CONDITIONS_N2 = ["c0", "c1", "c2", "c3"]
 CONDITIONS_N1 = ["c0", "c1"]
 COND_LABEL = {"c0": "no question", "c1": "refer target", "c2": "refer distractor",
@@ -95,9 +96,9 @@ def referent_word(question):
 
 
 def build_questions(e, with_absent):
-    q = {"c1": minimal_referring_question(e, "color"),
-         "c2": minimal_referring_question(swap_roles(e), "color"),
-         "c3": "What color is the object?"}
+    q = {"c1": minimal_referring_question(e, QUERIED),
+         "c2": minimal_referring_question(swap_roles(e), QUERIED),
+         "c3": f"What {QUERIED} is the object?"}
     if with_absent:
         d = e["distractors"][0]
         shared = [a for a in ("shape", "size", "material") if e[a] == d[a]]
@@ -545,8 +546,10 @@ def rsa_template(caches, labels, grid):
     colour = np.array([rec["target"]["color"] for rec in labels])
     pos = np.array([[rec["position"]["x"], rec["position"]["y"]] for rec in labels])
     iu = np.triu_indices(N, 1)
+    shape = np.array([rec["target"]["shape"] for rec in labels])
     rdms = {"identity": (ident[:, None] != ident[None, :]).astype(float)[iu],
             "colour": (colour[:, None] != colour[None, :]).astype(float)[iu],
+            "shape": (shape[:, None] != shape[None, :]).astype(float)[iu],
             "position": np.linalg.norm(pos[:, None] - pos[None], axis=-1)[iu]}
     res = {"grid": grid, "n_images": N, "conditions": {}}
     for cond, c in caches.items():
@@ -573,13 +576,15 @@ def rsa_template(caches, labels, grid):
 
 def plot_rsa_template(res, label, out_path, gca_layers):
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    colours = {"identity": "#2ca02c", "colour": "#d62728", "position": "#9467bd"}
-    markers = {"identity": "o", "colour": "^", "position": "s"}
+    colours = {"identity": "#2ca02c", "colour": "#d62728", "shape": "#1f77b4", "position": "#9467bd"}
+    markers = {"identity": "o", "colour": "^", "shape": "v", "position": "s"}
     for ax, tag, title in ((axes[0], "imgmean", "offset = patch mean − image background mean"),
                            (axes[1], "template", "offset = patch mean − per-position background template")):
         for cond, r in res["conditions"].items():
             ls = COND_LS.get(cond, "-")
-            for name in ("identity", "colour", "position"):
+            for name in ("identity", "colour", "shape", "position"):
+                if f"{name}_{tag}" not in r:
+                    continue
                 ax.plot(range(NUM_LAYERS), r[f"{name}_{tag}"], ls, color=colours[name],
                         marker=markers[name], markersize=3,
                         label=f"{name} RDM, {COND_LABEL[cond]}")
@@ -589,7 +594,7 @@ def plot_rsa_template(res, label, out_path, gca_layers):
         ax.axhline(0, color="k", linewidth=0.6)
     h, l = axes[1].get_legend_handles_labels()
     fig.legend(h, l, fontsize=7, ncol=4, loc="lower center", bbox_to_anchor=(0.5, -0.12))
-    fig.suptitle(f"{label} — RSA of the target's offset: object identity / colour / position")
+    fig.suptitle(f"{label} — RSA of the target's offset: object identity / colour / shape / position (questions ask about {QUERIED})")
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -701,8 +706,8 @@ def plot_attr_directions(res, label, out_path, gca_layers):
         ax.set_ylabel("Δ projection", fontsize=10)
         _layers_axis(ax, gca_layers)
         ax.legend(fontsize=6)
-    fig.suptitle(f"{label} — attribute-specific directions (from 1-object images): asked attribute (colour) vs "
-                 f"unasked attribute (shape), own value vs other values")
+    fig.suptitle(f"{label} — attribute-specific directions (from 1-object images); questions ask about {QUERIED}: "
+                 f"colour and shape directions, own value vs other values")
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -855,8 +860,8 @@ def run_readout(out_dir, args, state, images_n2, owners_n2, labels_n2):
     N, bs = len(labels_n2), args.batch_size
     imgs_t = torch.stack([tf(im) for im in images_n2])
     owner_t = torch.from_numpy(np.stack(owners_n2))
-    A_id = np.array([model.vocab[r["target"]["color"]] for r in labels_n2])
-    Ad_id = np.array([model.vocab[r["distractors"][0]["color"]] for r in labels_n2])
+    A_id = np.array([model.vocab[r["target"][QUERIED]] for r in labels_n2])
+    Ad_id = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels_n2])
     conds = ["c0", "c1", "c2"]
     bos = lambda b: torch.full((b, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
 
@@ -926,7 +931,8 @@ def run_readout(out_dir, args, state, images_n2, owners_n2, labels_n2):
     # receiver run c1 (asks about the target); masked tokens replaced by the donor run's block output
     variants = [("c2", "bg"), ("c2", "objects"), ("c2", "target"), ("c2", "distractor"),
                 ("c0", "bg"), ("c0", "objects"), ("c1", "bg")]       # last = identity control
-    ok = (base_pred["c1"] == A_id) & (base_pred["c2"] == Ad_id)
+    ok = (base_pred["c1"] == A_id) & (base_pred["c2"] == Ad_id) & (A_id != Ad_id)   # both correct, answers distinct
+    print(f"token swaps on {int(ok.sum())} images (both questions correct, distinct answers)")
     counts = {(v, l): np.zeros(3, int) for v in variants for l in range(NUM_LAYERS)}   # [A, Ad, other]
     fout = open(out_dir / "readout_swap_trials.jsonl", "w")
     for s in range(0, N, bs):
@@ -1019,11 +1025,165 @@ def plot_readout(attention, swap, label, out_path, gca_layers):
     print(f"Saved: {out_path}")
 
 
+# ---------------------------------------------------------------------------
+# Head scan — which attention heads carry the selection effect?  Zero-ablate
+# one head (or one whole layer) with the shared HeadAblator, run the two
+# referring questions, and measure per block the target's projection onto its
+# own queried-attribute direction, refer target − refer distractor.
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def run_head_scan(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2):
+    from contextlib import nullcontext
+    from analysis.patching_utils import HeadAblator
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    prefix, norm = trunk.num_prefix_tokens, trunk.norm
+    N, bs = len(labels_n2), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner_t = torch.from_numpy(np.stack(owners_n2)).to(device)
+    V = attribute_directions(cache_n1, labels_n1)[QUERIED]
+    Vt = torch.from_numpy(np.stack([V[r["target"][QUERIED]] for r in labels_n2])).to(device)          # (N,12,D)
+    Vd = torch.from_numpy(np.stack([V[r["distractors"][0][QUERIED]] for r in labels_n2])).to(device)
+    A_id = np.array([model.vocab[r["target"][QUERIED]] for r in labels_n2])
+    Ad_id = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels_n2])
+    has_d = torch.from_numpy(np.array([r["n_distractor_patches"] > 0 for r in labels_n2])).to(device)
+    bos = lambda b: torch.full((b, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
+
+    def measure(ablator):
+        P = {}
+        preds = {}
+        for cond in ("c1", "c2"):
+            pt = torch.zeros(N, NUM_LAYERS, device=device)
+            pd = torch.zeros(N, NUM_LAYERS, device=device)
+            pr = np.zeros(N, int)
+            for s in range(0, N, bs):
+                e = min(s + bs, N)
+                qs = [labels_n2[i]["questions"][cond] for i in range(s, e)]
+                ctx = ablator if ablator is not None else nullcontext()
+                with ctx, BlockCapture(trunk) as cap:
+                    feats = steervit.forward(imgs_t[s:e].to(device), qs)
+                lg = model.decoder(bos(e - s), feats[:, prefix:, :])[:, 0, :]
+                pr[s:e] = lg.argmax(-1).cpu().numpy()
+                ow = owner_t[s:e]
+                mt = (ow == 1).float()[:, :, None]
+                md = (ow == 2).float()[:, :, None]
+                for l in range(NUM_LAYERS):
+                    x = norm(cap.out[l]).float()                          # (B,P,D)
+                    mean_t = (x * mt).sum(1) / mt.sum(1).clamp(min=1)
+                    mean_d = (x * md).sum(1) / md.sum(1).clamp(min=1)
+                    pt[s:e, l] = (mean_t * Vt[s:e, l]).sum(-1)
+                    pd[s:e, l] = (mean_d * Vd[s:e, l]).sum(-1)
+            P[cond] = (pt, pd)
+            preds[cond] = pr
+        S_t = (P["c1"][0] - P["c2"][0]).mean(0).cpu().numpy()                        # (12,)
+        S_d = (P["c1"][1] - P["c2"][1])[has_d].mean(0).cpu().numpy()
+        return {"S_target": S_t.tolist(), "S_distractor": S_d.tolist(),
+                "acc_c1": float((preds["c1"] == A_id).mean()), "acc_c2": float((preds["c2"] == Ad_id).mean())}
+
+    base = measure(None)
+    print("baseline selection effect (target, by block): " + " ".join(f"{v:+.1f}" for v in base["S_target"])
+          + f"  acc {base['acc_c1']:.3f}/{base['acc_c2']:.3f}", flush=True)
+    gca_layers = [i for i, b in enumerate(trunk.blocks) if getattr(b, "gated_cross_attn", None) is not None]
+    n_sa = trunk.blocks[0].attn.num_heads
+    n_gca = trunk.blocks[gca_layers[0]].gated_cross_attn.cross_attn.num_heads
+    runs = [("sa", l, h) for l in range(NUM_LAYERS) for h in range(n_sa)] + \
+           [("gca", l, h) for l in gca_layers for h in range(n_gca)]
+    layer_runs = [("sa", l, None) for l in range(NUM_LAYERS)] + [("gca", l, None) for l in gca_layers]
+    rows = []
+    fout = open(out_dir / "head_scan_rows.jsonl", "w")
+    for k, (kind, l, h) in enumerate(runs + layer_runs):
+        heads = [(kind, l, h)] if h is not None else [(kind, l, hh) for hh in range(n_sa if kind == "sa" else n_gca)]
+        r = measure(HeadAblator(steervit, heads, mode="zero"))
+        r.update(kind=kind, layer=l, head=h)
+        rows.append(r)
+        fout.write(json.dumps(r) + "\n")
+        fout.flush()
+        if h is None or (k % 24 == 0):
+            print(f"  {k + 1}/{len(runs) + len(layer_runs)} {kind} L{l} H{h}: S11 {r['S_target'][-1]:+.1f} "
+                  f"(base {base['S_target'][-1]:+.1f}) acc {r['acc_c1']:.2f}/{r['acc_c2']:.2f}", flush=True)
+    fout.close()
+    # compare with the headwise activation-patching recovery on the same checkpoint
+    comp = {}
+    stats_path = Path(args.patching_stats)
+    if stats_path.exists():
+        from scipy.stats import spearmanr
+        st = json.load(open(stats_path))
+        for group in ("fine_attribute_denoising", "fine_attribute_query_denoising"):
+            for cat, v in st[group].items():
+                for kind, key in (("sa", "sa_mean"), ("gca", "gca_mean")):
+                    rec = np.array(v[key])
+                    xs, ys = [], []
+                    for r in rows:
+                        if r["kind"] != kind or r["head"] is None:
+                            continue
+                        li = r["layer"] if kind == "sa" else gca_layers.index(r["layer"])
+                        xs.append(rec[li, r["head"]])
+                        ys.append(base["S_target"][-1] - r["S_target"][-1])
+                    comp[f"{group}/{cat}/{kind}"] = {"spearman_recovery_vs_dS11": float(spearmanr(xs, ys).correlation),
+                                                     "n": len(xs)}
+    res = {"queried": QUERIED, "mode": "zero", "n_images": N, "baseline": base, "rows": rows,
+           "gca_layers": gca_layers, "n_sa_heads": n_sa, "n_gca_heads": n_gca, "comparison_with_patching": comp}
+    with open(out_dir / "head_scan.json", "w") as f:
+        json.dump(res, f, indent=1)
+    for k, v in comp.items():
+        print(f"patching recovery vs selection drop, {k}: Spearman {v['spearman_recovery_vs_dS11']:+.2f}")
+    return res
+
+
+def plot_head_scan(res, label, out_path):
+    base = np.array(res["baseline"]["S_target"])
+    gl, n_sa, n_gca = res["gca_layers"], res["n_sa_heads"], res["n_gca_heads"]
+    dS = {"sa": np.full((NUM_LAYERS, n_sa), np.nan), "gca": np.full((len(gl), n_gca), np.nan)}
+    dacc = {"sa": np.full((NUM_LAYERS, n_sa), np.nan), "gca": np.full((len(gl), n_gca), np.nan)}
+    layer_rows = {"sa": np.full(NUM_LAYERS, np.nan), "gca": np.full(len(gl), np.nan)}
+    for r in res["rows"]:
+        li = r["layer"] if r["kind"] == "sa" else gl.index(r["layer"])
+        if r["head"] is None:
+            layer_rows[r["kind"]][li] = r["S_target"][-1] - base[-1]
+            continue
+        dS[r["kind"]][li, r["head"]] = r["S_target"][-1] - base[-1]
+        dacc[r["kind"]][li, r["head"]] = min(r["acc_c1"], r["acc_c2"]) - min(res["baseline"]["acc_c1"], res["baseline"]["acc_c2"])
+    fig, axes = plt.subplots(2, 3, figsize=(16, 7.5), gridspec_kw={"width_ratios": [1, 1.3, 0.5]})
+    vmax = max(np.nanmax(np.abs(dS["sa"])), np.nanmax(np.abs(dS["gca"])), 1e-6)
+    for row, (kind, title) in enumerate((("sa", "self-attention heads (12 blocks × 12 heads)"),
+                                         ("gca", "gated cross-attention heads (6 layers × 16 heads)"))):
+        ax = axes[row, 0]
+        im = ax.imshow(dS[kind], cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+        ax.set_title(f"{title}: change of the selection effect at block 11 when the head is zeroed", fontsize=9)
+        ax.set_xlabel("head"); ax.set_ylabel("block" if kind == "sa" else "GCA layer")
+        if kind == "gca":
+            ax.set_yticks(range(len(gl))); ax.set_yticklabels([str(l) for l in gl])
+        fig.colorbar(im, ax=ax, fraction=0.03)
+        ax = axes[row, 1]
+        im = ax.imshow(dacc[kind], cmap="Reds_r", vmin=-1, vmax=0, aspect="auto")
+        ax.set_title("change of accuracy (min over the two questions) when the head is zeroed", fontsize=9)
+        ax.set_xlabel("head"); ax.set_ylabel("block" if kind == "sa" else "GCA layer")
+        if kind == "gca":
+            ax.set_yticks(range(len(gl))); ax.set_yticklabels([str(l) for l in gl])
+        fig.colorbar(im, ax=ax, fraction=0.03)
+        ax = axes[row, 2]
+        ys = layer_rows[kind]
+        ax.barh(range(len(ys)), ys, color="0.4")
+        ax.set_yticks(range(len(ys))); ax.set_yticklabels([str(l) for l in (range(NUM_LAYERS) if kind == "sa" else gl)])
+        ax.invert_yaxis()
+        ax.axvline(0, color="k", linewidth=0.6)
+        ax.set_title("all heads of one layer zeroed", fontsize=9)
+        ax.set_xlabel("change of selection effect at block 11")
+    fig.suptitle(f"{label} — head ablation scan (questions ask about {res['queried']}); baseline selection effect at block 11 = "
+                 f"{base[-1]:+.1f}, accuracy {res['baseline']['acc_c1']:.3f} / {res['baseline']['acc_c2']:.3f}", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def color_vectors(cache_n1, labels_n1):
-    """Δ_ℓ(A→B) = mean raw target-patch token of color B − of color A, (12, D) each."""
+    """Per value of the queried attribute: mean raw target-patch token of the
+    1-object images with that value, (12, D) each; Δ_ℓ(A→B) = means[B] − means[A]."""
     rom = cache_n1["raw_obj_mean"][:, 0].astype(np.float32)   # (N,12,D)
-    cols = np.array([rec["target"]["color"] for rec in labels_n1])
-    means = {c: rom[cols == c].mean(0) for c in COLORS if (cols == c).any()}
+    cols = np.array([rec["target"][QUERIED] for rec in labels_n1])
+    means = {c: rom[cols == c].mean(0) for c in ATTR_VALUES[QUERIED] if (cols == c).any()}
     return means
 
 
@@ -1038,11 +1198,13 @@ def run_interventions(out_dir, args, state, cache_n1, labels_n1, images_n2, owne
     # trial design: B != A round-robin
     trials = []
     for i, rec in enumerate(labels_n2):
-        A = rec["target"]["color"]
-        Ad = rec["distractors"][0]["color"]
-        # B differs from BOTH objects' colours so a flip cannot be confused with
+        A = rec["target"][QUERIED]
+        Ad = rec["distractors"][0][QUERIED]
+        # B differs from BOTH objects' values so a flip cannot be confused with
         # answering about the other object
-        others = [c for c in COLORS if c not in (A, Ad) and c in means]
+        others = [c for c in ATTR_VALUES[QUERIED] if c not in (A, Ad) and c in means]
+        if not others:            # only possible with few values (e.g. size) — skip image
+            others = [A]
         B = others[i % len(others)]
         Bd = others[(i + 1) % len(others)]
         trials.append({"img": i, "A": A, "B": B, "Ad": Ad, "Bd": Bd})
@@ -1295,7 +1457,7 @@ def plot_patch_change(m, label, out_path, gca_layers):
         if key != "rel_norm":
             ax.axhline(0, color="k", linewidth=0.6)
     axes[0].legend(fontsize=6, ncol=1)
-    fig.suptitle(f"{label} — per-patch change induced by the question, split by patch owner")
+    fig.suptitle(f"{label} — per-patch change induced by the question, grouped by background / target / distractor")
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -1315,7 +1477,7 @@ def plot_gca(m, label, out_path, gca_layers):
         ax.set_xticks(gca_layers)
         ax.set_xlabel("GCA layer")
     axes[0].legend(fontsize=6)
-    fig.suptitle(f"{label} — what the gated cross-attention writes, by patch owner")
+    fig.suptitle(f"{label} — what the gated cross-attention writes, grouped by background / target / distractor")
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -1459,6 +1621,11 @@ def main():
     ap.add_argument("--rsa-template", action="store_true",
                     help="only: RSA with the per-position background template (new files)")
     ap.add_argument("--intervene", action="store_true")
+    ap.add_argument("--queried", default="color", choices=["color", "shape"],
+                    help="queried attribute of every question (c1/c2 refer by another attribute)")
+    ap.add_argument("--head-scan", action="store_true",
+                    help="only: zero-ablate every SA / GCA head and measure the selection effect per block (new files)")
+    ap.add_argument("--patching-stats", default="outputs/analysis/activation_patching/clevr_dinov2_decoder1l_scratch/headwise_by_type_stats.json")
     ap.add_argument("--readout", action="store_true",
                     help="only: decoder attention by owner + token swaps between conditions (new files)")
     ap.add_argument("--with-absent", action="store_true")
@@ -1489,6 +1656,8 @@ def main():
         stem = Path(args.checkpoint).parent.name
         args.model_label = next((v for k, v in BACKBONE_LABELS.items() if f"_{k}_" in f"_{stem}_"), stem)
     label = args.model_label
+    global QUERIED
+    QUERIED = args.queried
     print(f"args: {vars(args)}")
 
     n1_entries, n2_entries = load_entries(args.n1_dir), load_entries(args.n2_dir)
@@ -1525,6 +1694,12 @@ def main():
             for cond in conds[name]:
                 extract_condition_sparse(out_dir / name, cond, images[name], owners[name],
                                          labels[name], args, state)
+        if args.head_scan:
+            ensure_model(state, args)
+            cache_n1 = load_sparse(out_dir / "n1", "c0")
+            res = run_head_scan(out_dir, args, state, cache_n1, labels["n1"], images["n2"], owners["n2"], labels["n2"])
+            plot_head_scan(res, label, out_dir / "head_scan.png")
+            return
         if args.readout:
             ensure_model(state, args)
             attention, swap = run_readout(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])

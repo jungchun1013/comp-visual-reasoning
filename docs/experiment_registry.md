@@ -550,9 +550,53 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   spatial-LOO within 0.05 of random. Caveat: 16×16 grid — objects are
   1–20 patches, so per-patch probes and attention masses rest on fewer
   tokens than on DINOv2.
+  (G, pre-registered 2026-08-29, queried attribute = shape): every
+  analysis so far asked about colour, so "the queried attribute is
+  amplified on both objects, the non-referent's queried-attribute component
+  is removed from block 9" rests on one attribute. Rerun the whole suite
+  (`--queried shape`, out-dir `patch_language_condition/shape/`, DINOv2,
+  same 324 pairs) with questions "What shape is the {referring word} object?"
+  where the referring word follows the dataset's fixed rule (first differing
+  attribute in the order shape → size → material → colour, excluding the
+  queried one): size for 186 pairs, material for 92, colour for 46; 101 pairs
+  have the same shape for both objects and are excluded from the token swaps,
+  the non-referring "What shape is the object?", and shape difference-of-
+  means vectors for the interventions. Expectations written before the run:
+  (i) the target's projection on its own shape direction rises on both
+  objects through block 8 under any shape question, and its colour
+  projection falls on both; (ii) from block 9 the non-referent's shape
+  component is removed (refer target − refer distractor on own shape > 0,
+  mirrored on the distractor); (iii) the block 5–8 dip previously seen on the
+  shape direction when the referring word was a shape word now appears on the
+  direction of the referring attribute (size for most pairs; split by
+  referring-word type as before) — this tests the "matching the referring
+  word" reading; (iv) token swaps: object tokens
+  carry the selection at 7–10 and background at 11 as for colour; (v) shape
+  difference vectors flip the answer at blocks 0–10 with the same controls at
+  0. If (i)–(ii) fail for shape, the claim is narrowed to colour.
+  (H, pre-registered 2026-08-29, head ablation scan, `--head-scan`,
+  `head_scan.json`, `head_scan.png`): links the patch-level selection effect
+  to the head-level causal localisation. Zero-ablate every self-attention
+  head (12 × 12) and every GCA head (6 × 16) one at a time, plus all heads of
+  one layer at a time, with `analysis.patching_utils.HeadAblator`; under
+  each ablation run refer-target and refer-distractor on the 324 pairs and
+  measure per block the target's projection on its own colour direction,
+  refer target − refer distractor (baseline +5.3 / +6.0 / +11.4 at blocks
+  9–11), plus accuracy. Report the change at block 11 per head and the
+  Spearman correlation across heads between this change and the headwise
+  activation-patching recovery on the same checkpoint
+  (`headwise_by_type_stats.json`, colour-described and query groups).
+  Expectations: (i) the largest drops come from GCA heads at layers 5–9,
+  in particular the query-routing heads patching found at L7/L9; (ii) SA
+  heads at blocks 9–10 reduce the effect if the removal is executed by
+  self-attention after the GCA write; (iii) SA heads at block 11 change
+  accuracy but not the effect measured at block 10; (iv) no SA head at
+  blocks 0–4 changes the effect; (v) the per-head drop correlates
+  positively with the patching recovery of the query group.
 - **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
   2026-08-28; readout check (D), attribute directions (E) and SigLIP
-  replication (F) done 2026-08-29. Site edits await the user.
+  replication (F) done 2026-08-29; G and H launched 2026-08-29. Site
+  edits await the user.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
