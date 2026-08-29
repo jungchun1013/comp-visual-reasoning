@@ -504,6 +504,98 @@ def part_a(caches, labels, gca_layers, norm_std=False):
     return metrics
 
 
+def position_templates(cache, grid):
+    """Per-position background template (P, 12, D) from the sparse cache: the
+    mean over all sampled background tokens at each patch position across
+    images (X19's `background_templates`, computed from the sparse table).
+    Returns (template, count per position)."""
+    P = grid * grid
+    bg = cache["tok_owner"] == 0
+    pos = cache["tok_pos"][bg].astype(int)
+    tok = cache["tok"][bg].astype(np.float32)                 # (T, 12, D)
+    tpl = np.zeros((P, tok.shape[1], tok.shape[2]), np.float32)
+    cnt = np.bincount(pos, minlength=P).astype(np.float32)
+    np.add.at(tpl, pos, tok)
+    tpl /= np.maximum(cnt, 1.0)[:, None, None]
+    return tpl, cnt
+
+
+def offsets_template(cache, tpl, n_images):
+    """Per image: object patch mean − mean of the per-position template at the
+    object's own positions, (N, 2, 12, D). Zero rows where the object has no
+    patches."""
+    img, pos, own = cache["tok_img"].astype(int), cache["tok_pos"].astype(int), cache["tok_owner"]
+    om = cache["obj_mean"].astype(np.float32)
+    out = np.zeros_like(om)
+    for i in range(n_images):
+        sel_i = img == i
+        for oid in (1, 2):
+            sel = sel_i & (own == oid)
+            if sel.any():
+                out[i, oid - 1] = om[i, oid - 1] - tpl[pos[sel]].mean(0)
+    return out
+
+
+def rsa_template(caches, labels, grid):
+    """RSA of the target's offset against identity / colour / position RDMs,
+    with the per-position background template subtracted (the X19 template),
+    alongside the image-mean-subtracted offset used in part_a."""
+    N = len(labels)
+    ident = np.array(["-".join(combo_key(rec["target"])) for rec in labels])
+    colour = np.array([rec["target"]["color"] for rec in labels])
+    pos = np.array([[rec["position"]["x"], rec["position"]["y"]] for rec in labels])
+    iu = np.triu_indices(N, 1)
+    rdms = {"identity": (ident[:, None] != ident[None, :]).astype(float)[iu],
+            "colour": (colour[:, None] != colour[None, :]).astype(float)[iu],
+            "position": np.linalg.norm(pos[:, None] - pos[None], axis=-1)[iu]}
+    res = {"grid": grid, "n_images": N, "conditions": {}}
+    for cond, c in caches.items():
+        tpl, cnt = position_templates(c, grid)
+        o_tpl = offsets_template(c, tpl, N)[:, 0]              # target, (N, 12, D)
+        o_img = offsets_from_cache(c)[:, 0]
+        r = {"template_count_min": float(cnt.min()), "template_count_mean": float(cnt.mean()),
+             "template_positions_empty": int((cnt == 0).sum())}
+        for tag, o in (("template", o_tpl), ("imgmean", o_img)):
+            for name, rdm_m in rdms.items():
+                vals = []
+                for l in range(NUM_LAYERS):
+                    f = o[:, l]
+                    rdm = 1 - _cos(f[:, None], f[None])[iu]
+                    vals.append(float(spearmanr(rdm, rdm_m).correlation))
+                r[f"{name}_{tag}"] = vals
+        res["conditions"][cond] = r
+        print(f"RSA template {cond}: template count min/mean {cnt.min():.0f}/{cnt.mean():.1f}; "
+              f"L11 identity {r['identity_template'][-1]:+.3f} colour {r['colour_template'][-1]:+.3f} "
+              f"position {r['position_template'][-1]:+.3f} "
+              f"(image-mean offset: position {r['position_imgmean'][-1]:+.3f})", flush=True)
+    return res
+
+
+def plot_rsa_template(res, label, out_path, gca_layers):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    colours = {"identity": "#2ca02c", "colour": "#d62728", "position": "#9467bd"}
+    markers = {"identity": "o", "colour": "^", "position": "s"}
+    for ax, tag, title in ((axes[0], "imgmean", "offset = patch mean − image background mean"),
+                           (axes[1], "template", "offset = patch mean − per-position background template")):
+        for cond, r in res["conditions"].items():
+            ls = COND_LS.get(cond, "-")
+            for name in ("identity", "colour", "position"):
+                ax.plot(range(NUM_LAYERS), r[f"{name}_{tag}"], ls, color=colours[name],
+                        marker=markers[name], markersize=3,
+                        label=f"{name} RDM, {COND_LABEL[cond]}")
+        ax.set_ylabel("Spearman(offset RDM, model RDM)", fontsize=10)
+        ax.set_title(title, fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.axhline(0, color="k", linewidth=0.6)
+    h, l = axes[1].get_legend_handles_labels()
+    fig.legend(h, l, fontsize=7, ncol=4, loc="lower center", bbox_to_anchor=(0.5, -0.12))
+    fig.suptitle(f"{label} — RSA of the target's offset: object identity / colour / position")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def token_norm_stats(c0):
     rn = c0["raw_norm"].astype(np.float32)                    # (N,12,P)
     own = c0["owner"]
@@ -1004,6 +1096,8 @@ def main():
     ap.add_argument("--x19-dir", default="outputs/analysis/patch_pca_cluster")
     ap.add_argument("--masks-only", action="store_true")
     ap.add_argument("--replot", action="store_true")
+    ap.add_argument("--rsa-template", action="store_true",
+                    help="only: RSA with the per-position background template (new files)")
     ap.add_argument("--intervene", action="store_true")
     ap.add_argument("--with-absent", action="store_true")
     ap.add_argument("--n-pairs", type=int, default=0, help="subsample eligible pairs (0 = all)")
@@ -1083,6 +1177,12 @@ def main():
                  if (out_dir / "n2" / f"feats_{c}.npz").exists()}
     cache_n1 = load_sparse(out_dir / "n1", "c0")
     gca_layers = [int(l) for l in caches_n2["c0"]["gca_layers"]]
+    if args.rsa_template:
+        res = rsa_template(caches_n2, labels["n2"], args.grid)
+        with open(out_dir / "partA_rsa_template.json", "w") as f:
+            json.dump(res, f, indent=1)
+        plot_rsa_template(res, label, out_dir / "rsa_template.png", gca_layers)
+        return
 
     for tag, norm_std in (("", False), ("_normstd", True)):
         m = part_a(caches_n2, labels["n2"], gca_layers, norm_std)

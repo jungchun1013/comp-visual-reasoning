@@ -22,6 +22,19 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-28 — X21: RSA position control closed with the per-position
+  background template.** New `--rsa-template` mode in
+  `scripts/analysis/patch_language_condition.py` (writes only
+  `partA_rsa_template.json` + `rsa_template.png`; nothing regenerated). The
+  template is X19's per-position background mean, built from the sparse
+  cache (19–60 background tokens per position). Position RDM correlation of
+  the target's offset drops from 0.6–0.8 (image-mean subtraction) to 0.1–0.3
+  without a question and ≈0 from block 5 under a question. Colour RDM: 0.43
+  at block 0 in all conditions; no question → 0.01 at block 11; target is
+  referent → 0.59; distractor is referent → 0.06 at block 11. So the
+  non-referent's colour is removed from its own patches from block 5 on,
+  the same profile as Δ_nonref. Full-identity RDM is uninformative
+  (84 combos, nearly all pairs differ). Registry X21 updated.
 - **2026-08-27 — X21: language condition on the patch object vector; Parts A
   and B done, Part C (single-patch probes) running.** User ruling: the
   no-question-only design of X19 was a design error; literature survey first

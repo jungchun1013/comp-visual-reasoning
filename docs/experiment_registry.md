@@ -449,10 +449,23 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   per-patch object code generalises to unseen positions (supervised
   position-invariance). Colour's decline with depth mirrors X19's
   fragmentation and the intervention's block-11 exception.
-  Open: RSA on offsets is still position-dominated (0.6–0.8) — subtracting
-  the image-wide background mean does not remove the position-specific
-  background component; redo with X19's per-position template.
-- **Status**: ✅ A, B, C done 2026-08-27. Site edits await the user.
+  (A, RSA redone 2026-08-28, `--rsa-template`, `partA_rsa_template.json`,
+  `rsa_template.png`): subtracting the image-wide background mean leaves the
+  target's offset position-dominated (position RDM 0.6–0.8 through block 8);
+  subtracting X19's per-position background template (built from the sparse
+  cache: 19–60 background tokens per position, mean 36) removes it — position
+  correlation 0.1–0.3 without a question (peak 0.59 at block 3, 0.11 at 11)
+  and ≈0 from block 5 under any question. What remains is colour: the
+  colour RDM correlates 0.43 at block 0 in every condition; without a
+  question it decays to 0.01 by block 11 (X19's fragmentation); when the
+  target is the referent (refer target / non-referring) it rises to
+  0.59 / 0.53 at block 11; when the distractor is the referent the target's
+  colour correlation falls to 0.06 at block 11 — the non-referent's colour
+  is removed from its own patches, matching Δ_nonref. The 84-way identity
+  RDM (all four attributes) is a weak model RDM (nearly every pair differs)
+  and stays at 0.13–0.17; colour is the informative one.
+- **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
+  2026-08-28. Site edits await the user.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
