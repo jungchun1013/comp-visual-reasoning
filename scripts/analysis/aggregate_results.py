@@ -234,6 +234,15 @@ def main():
         lines += ["", "## Linear probe — readout × backbone", "",
                   f"(probe_table.py failed: {e})"]
 
+    # Language-condition suite (X21): one row per backbone / queried attribute;
+    # same numbers as outputs/analysis/patch_language_condition/summary_table.md.
+    try:
+        from language_condition_table import language_condition_section_lines
+        lc_lines, _ = language_condition_section_lines()
+        lines += [""] + lc_lines
+    except Exception as e:
+        lines += ["", "## Language-condition suite", "", f"(language_condition_table.py failed: {e})"]
+
     lines += ["", "## Analysis artifact inventory", "",
               "| outputs/analysis/ dir | files | last modified |", "|---|---|---|"]
     for name, n, mtime in inventory:
