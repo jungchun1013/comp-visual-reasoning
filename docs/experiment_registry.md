@@ -757,7 +757,44 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   advance: MAE's VQA accuracy is 0.742 and the 14×14 grid gives few patches
   per object; baseline accuracy on the referring questions may be low, which
   shrinks the usable image set for swaps and interventions.
-- **Status**: ✅ A–J done; K (MAE) running 2026-08-31.
+  Result (2026-08-31, all phases, 324 pairs, 14×14 grid; c0 reproduces
+  X19-MAE on its 30 pairs: within 0.869 / between 0.417 vs 0.869 / 0.418;
+  baseline accuracy on the referring questions 0.997 / 0.997, so the swap
+  set is 323 images): MAE selects WITHOUT removal. (a) The token-level
+  selection effect is an order of magnitude smaller than in DINOv2 — Δ_ref
+  on the whole-object direction ≤ +1.3 (block 11; DINOv2 +26 at 9), the
+  own-colour contrast ≤ +1.6, and the colour RDM correlation of the target's
+  offset stays at 0.48–0.55 in every block and every condition (refer
+  distractor 0.51 at block 11 vs refer target 0.54): the non-referent keeps
+  its colour. Question − no question projections are ≤ 3 in magnitude and
+  identical for referent and non-referent. (b) Referent identity is
+  nevertheless linearly readable per patch from mid-depth (probe 0.53 L1,
+  0.79 L7, 0.97 L9, 0.99 L11; no-question control 0.50) and GCA write norms
+  are largest at layers 9 and 11 (17–25), so the question writes a
+  referent marker onto the object tokens without altering their attribute
+  content. (c) The decoder's attention does the selecting: per patch
+  127.8×1e-3 on the referent, 1.3 on the non-referent, 2.9 on background
+  (top patch on the referent in 90% of images; no question: 36.6 / 33.4,
+  no preference). Token swaps: both objects' tokens from the other question
+  change the answer 0.13–0.15 at blocks 7–10 and 0.90 at block 11;
+  background tokens 0.00 through 10 and 0.12 at 11; distractor only 0.49 at
+  11, target only 0.03; from the no-question forward, background tokens at
+  block 11 drop P(target colour) to 0.53 (a question-type dependence of
+  background tokens at the last block, as in SigLIP) and object tokens to
+  0.67. (d) Colour difference vectors flip the answer at every block (0.54
+  at 0, 0.81 at 2, ≥0.92 from 5, 0.95 at 11), random / distractor / target-
+  under-c2 controls 0.00, background-all ≤ 0.23 — no final-block exception.
+  Reading for the backbone-specific question: the DINOv2 copy into
+  background tokens at block 11 is not shared by SigLIP or MAE, so it is
+  DINOv2-specific. Larger point: the "removal from the non-referent" seen
+  in DINOv2 and SigLIP is not a property of gated cross-attention per se —
+  on MAE, whose tokens keep every attribute to the last block (X19), the
+  same architecture leaves the attributes intact and marks the referent
+  for the decoder's attention, with the answer-determining step at block
+  11. Whether this reflects the backbone's representational default (MAE
+  keeps both objects separate to the end) is an inference, not measured.
+  Caveat: 14×14 grid, 1–8 patches per object.
+- **Status**: ✅ A–K done 2026-08-31. Site section updated the same day.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

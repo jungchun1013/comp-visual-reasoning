@@ -22,6 +22,17 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-31 — X21 (K): MAE replication — selection without removal.**
+  `patch_language_condition/mae/` (14×14, 324 pairs, referring accuracy
+  0.997). The non-referent keeps its colour (colour RDM 0.51 vs 0.54 at block
+  11; token-level selection contrast ≤ +1.6 vs DINOv2's +11.4); the referent
+  is marked (per-patch referent probe 0.79 at L7 → 0.99 at L11) and the
+  decoder's attention selects it (127.8 vs 1.3 ×1e-3 per patch); the
+  answer-determining tokens are the object tokens at block 11 (swap 0.90),
+  no background copy. Colour vectors flip at every block (0.54 → 0.95).
+  So the DINOv2 block-11 background copy is DINOv2-specific, and "removal"
+  is not architecture-general — it is what DINOv2/SigLIP do, MAE marks
+  instead. Registry X21 (K). Site updated.
 - **2026-08-31 — X21 (J): queried = material and size — the boost of the
   queried attribute tracks the backbone's default.** Template-RSA of the
   target's offset with the queried attribute's RDM at block 11: material
