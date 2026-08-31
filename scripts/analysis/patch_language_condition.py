@@ -1032,10 +1032,10 @@ def plot_readout(attention, swap, label, out_path, gca_layers):
 # own queried-attribute direction, refer target − refer distractor.
 # ---------------------------------------------------------------------------
 
-@torch.no_grad()
-def run_head_scan(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2):
+def make_selection_measurer(args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2):
+    """Returns measure(ablator) -> selection effect per block + accuracy, the
+    quantity the head scan and the head-combination runs share."""
     from contextlib import nullcontext
-    from analysis.patching_utils import HeadAblator
     model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
     trunk = steervit.vision_model.trunk
     prefix, norm = trunk.num_prefix_tokens, trunk.norm
@@ -1081,6 +1081,16 @@ def run_head_scan(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n
         return {"S_target": S_t.tolist(), "S_distractor": S_d.tolist(),
                 "acc_c1": float((preds["c1"] == A_id).mean()), "acc_c2": float((preds["c2"] == Ad_id).mean())}
 
+    return measure
+
+
+@torch.no_grad()
+def run_head_scan(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2):
+    from analysis.patching_utils import HeadAblator
+    steervit = state["steervit"]
+    trunk = steervit.vision_model.trunk
+    N = len(labels_n2)
+    measure = make_selection_measurer(args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2)
     base = measure(None)
     print("baseline selection effect (target, by block): " + " ".join(f"{v:+.1f}" for v in base["S_target"])
           + f"  acc {base['acc_c1']:.3f}/{base['acc_c2']:.3f}", flush=True)
@@ -1128,6 +1138,51 @@ def run_head_scan(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n
         json.dump(res, f, indent=1)
     for k, v in comp.items():
         print(f"patching recovery vs selection drop, {k}: Spearman {v['spearman_recovery_vs_dS11']:+.2f}")
+    return res
+
+
+@torch.no_grad()
+def run_head_combos(out_dir, args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2):
+    """Sufficiency test on GCA layers 7 and 9: keep only the top-4 heads (by the
+    single-head scan), zero only the top-4, keep / zero random subsets."""
+    from analysis.patching_utils import HeadAblator
+    steervit = state["steervit"]
+    measure = make_selection_measurer(args, state, cache_n1, labels_n1, images_n2, owners_n2, labels_n2)
+    hs = json.load(open(out_dir / "head_scan.json"))
+    base11 = hs["baseline"]["S_target"][-1]
+    n_gca = hs["n_gca_heads"]
+    top = {}
+    for L in (7, 9):
+        rows = [(r["head"], base11 - r["S_target"][-1]) for r in hs["rows"]
+                if r["kind"] == "gca" and r["layer"] == L and r["head"] is not None]
+        rows.sort(key=lambda x: -x[1])
+        top[L] = [h for h, _ in rows[:4]]
+    print(f"top-4 heads by single-head drop: L7 {top[7]}  L9 {top[9]}")
+    rng = np.random.RandomState(args.seed)
+    conds = []
+    for L in (7, 9):
+        allh = list(range(n_gca))
+        conds.append((f"L{L}_keep_top4", [("gca", L, h) for h in allh if h not in top[L]]))
+        conds.append((f"L{L}_zero_top4", [("gca", L, h) for h in top[L]]))
+        for si in range(3):
+            keep = list(rng.choice(allh, 4, replace=False))
+            conds.append((f"L{L}_keep_rand4_s{si}", [("gca", L, h) for h in allh if h not in keep]))
+            drop = list(rng.choice(allh, 8, replace=False))
+            conds.append((f"L{L}_zero_rand8_s{si}", [("gca", L, int(h)) for h in drop]))
+        conds.append((f"L{L}_zero_all", [("gca", L, h) for h in allh]))
+    conds.append(("L7L9_keep_top4", [("gca", L, h) for L in (7, 9) for h in range(n_gca) if h not in top[L]]))
+    base = measure(None)
+    print("baseline S by block: " + " ".join(f"{v:+.1f}" for v in base["S_target"]))
+    rows = [dict(name="baseline", n_zeroed=0, **base)]
+    for name, heads in conds:
+        r = measure(HeadAblator(steervit, heads, mode="zero"))
+        r = dict(name=name, n_zeroed=len(heads), **r)
+        rows.append(r)
+        print(f"  {name:<22} zeroed {len(heads):2d}  S9 {r['S_target'][9]:+5.1f} S10 {r['S_target'][10]:+5.1f} "
+              f"S11 {r['S_target'][11]:+5.1f}  acc {r['acc_c1']:.2f}/{r['acc_c2']:.2f}", flush=True)
+    res = {"queried": QUERIED, "top4": {str(k): v for k, v in top.items()}, "rows": rows}
+    with open(out_dir / "head_combos.json", "w") as f:
+        json.dump(res, f, indent=1)
     return res
 
 
@@ -1625,8 +1680,10 @@ def main():
     ap.add_argument("--rsa-template", action="store_true",
                     help="only: RSA with the per-position background template (new files)")
     ap.add_argument("--intervene", action="store_true")
-    ap.add_argument("--queried", default="color", choices=["color", "shape"],
+    ap.add_argument("--queried", default="color", choices=["color", "shape", "material", "size"],
                     help="queried attribute of every question (c1/c2 refer by another attribute)")
+    ap.add_argument("--head-combos", action="store_true",
+                    help="only: keep/zero head subsets of GCA layers 7 and 9 (needs head_scan.json)")
     ap.add_argument("--head-scan", action="store_true",
                     help="only: zero-ablate every SA / GCA head and measure the selection effect per block (new files)")
     ap.add_argument("--patching-stats", default="outputs/analysis/activation_patching/clevr_dinov2_decoder1l_scratch/headwise_by_type_stats.json")
@@ -1698,6 +1755,11 @@ def main():
             for cond in conds[name]:
                 extract_condition_sparse(out_dir / name, cond, images[name], owners[name],
                                          labels[name], args, state)
+        if args.head_combos:
+            ensure_model(state, args)
+            cache_n1 = load_sparse(out_dir / "n1", "c0")
+            run_head_combos(out_dir, args, state, cache_n1, labels["n1"], images["n2"], owners["n2"], labels["n2"])
+            return
         if args.head_scan:
             ensure_model(state, args)
             cache_n1 = load_sparse(out_dir / "n1", "c0")

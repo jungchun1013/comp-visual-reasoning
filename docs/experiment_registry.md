@@ -671,10 +671,49 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   related. Link to the causal localisation therefore holds at the layer
   level (patching's query-routing heads sit in GCA 7/9) and not head by
   head.
-- **Status**: ✅ A, B, C done 2026-08-27; RSA position control closed
-  2026-08-28; readout check (D), attribute directions (E) and SigLIP
-  replication (F) done 2026-08-29; G (queried = shape) and H (head scan)
-  done 2026-08-29. Site section updated the same day.
+  (I, pre-registered 2026-08-31, head combinations, `--head-combos`,
+  `head_combos.json`): sufficiency test on GCA layers 7 and 9. Conditions
+  per layer: keep only the top-4 heads of the single-head scan (L7:
+  H11/H2/H9/H3, L9: H2/H10/H9/H7) and zero the other 12; zero only the
+  top-4; keep 4 random heads (3 seeds); zero 8 random heads (3 seeds);
+  zero all 16 (reference); plus keep-top-4 on both layers at once.
+  Expectations: if the writing is distributed, keeping the top-4 recovers
+  less than half of the selection effect at blocks 9–10, zeroing the top-4
+  costs no more than the sum of the single-head drops (≈2.8 at L7, ≈1.3 at
+  L9, against a baseline of 11.4 at block 11), random-4 ≈ top-4, and
+  zeroing 8 random heads removes roughly half — i.e. the effect scales
+  with the number of heads kept, not with which ones.
+  (J, pre-registered 2026-08-31, queried = material and queried = size,
+  out-dirs `patch_language_condition/{material,size}/`, no intervention
+  phase — with two values per attribute a flip target B ∉ {A, A_distractor}
+  rarely exists): direct test of the inference from G. Measured on the
+  existing no-question cache before launching, the template-RSA correlation
+  of the target's offset with the material RDM stays at 0.09–0.23 across
+  depth and with the size RDM at 0.09–0.19 — both attributes sit between
+  colour (0.43 → 0.01, discarded) and shape (0.02 → 0.77, kept).
+  Expectations: (i) the removal generalises — at block 11 the queried-
+  attribute RDM correlation is high for the referent and near the
+  no-question value or lower for the non-referent, and the projection
+  contrast (refer target − refer distractor on the own-value direction) is
+  positive from the middle blocks; (ii) the both-object rise relative to no
+  question is small (clearly below colour's +12 to +15 at block 8) because
+  the backbone loses little of either attribute — if material or size shows
+  a colour-sized rise, the inference "the rise exists only where the
+  backbone would discard the attribute" is wrong; (iii) token swaps behave
+  as before (object tokens carry the selection mid-depth, background at
+  block 11), on the subset of pairs whose two objects differ in the queried
+  attribute.
+  (K, launched 2026-08-31): MAE replication of the whole suite
+  (`clevr_mae_decoder1l_scratch_s42`, grid 14 @ 224, out-dir
+  `patch_language_condition/mae/`, all phases). Purpose: third backbone for
+  the backbone-specific final-block step — DINOv2 copies the selection into
+  background tokens at block 11, SigLIP does not; MAE keeps object-vs-object
+  separation to the last block (X19), so if it also shows no final-block
+  copy, the copy is DINOv2-specific rather than shared. Caveat recorded in
+  advance: MAE's VQA accuracy is 0.742 and the 14×14 grid gives few patches
+  per object; baseline accuracy on the referring questions may be low, which
+  shrinks the usable image set for swaps and interventions.
+- **Status**: ✅ A–H done (see above); I, J, K launched 2026-08-31.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
