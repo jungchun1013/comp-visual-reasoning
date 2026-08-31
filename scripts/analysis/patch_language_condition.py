@@ -546,11 +546,12 @@ def rsa_template(caches, labels, grid):
     colour = np.array([rec["target"]["color"] for rec in labels])
     pos = np.array([[rec["position"]["x"], rec["position"]["y"]] for rec in labels])
     iu = np.triu_indices(N, 1)
-    shape = np.array([rec["target"]["shape"] for rec in labels])
     rdms = {"identity": (ident[:, None] != ident[None, :]).astype(float)[iu],
-            "colour": (colour[:, None] != colour[None, :]).astype(float)[iu],
-            "shape": (shape[:, None] != shape[None, :]).astype(float)[iu],
             "position": np.linalg.norm(pos[:, None] - pos[None], axis=-1)[iu]}
+    for attr in ATTRS:
+        vals = np.array([rec["target"][attr] for rec in labels])
+        key = "colour" if attr == "color" else attr
+        rdms[key] = (vals[:, None] != vals[None, :]).astype(float)[iu]
     res = {"grid": grid, "n_images": N, "conditions": {}}
     for cond, c in caches.items():
         tpl, cnt = position_templates(c, grid)
@@ -576,13 +577,14 @@ def rsa_template(caches, labels, grid):
 
 def plot_rsa_template(res, label, out_path, gca_layers):
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    colours = {"identity": "#2ca02c", "colour": "#d62728", "shape": "#1f77b4", "position": "#9467bd"}
-    markers = {"identity": "o", "colour": "^", "shape": "v", "position": "s"}
+    colours = {"identity": "#2ca02c", "colour": "#d62728", "shape": "#1f77b4",
+               "material": "#8c564b", "size": "#e377c2", "position": "#9467bd"}
+    markers = {"identity": "o", "colour": "^", "shape": "v", "material": "D", "size": "P", "position": "s"}
     for ax, tag, title in ((axes[0], "imgmean", "offset = patch mean − image background mean"),
                            (axes[1], "template", "offset = patch mean − per-position background template")):
         for cond, r in res["conditions"].items():
             ls = COND_LS.get(cond, "-")
-            for name in ("identity", "colour", "shape", "position"):
+            for name in ("identity", "colour", "shape", "material", "size", "position"):
                 if f"{name}_{tag}" not in r:
                     continue
                 ax.plot(range(NUM_LAYERS), r[f"{name}_{tag}"], ls, color=colours[name],
@@ -646,7 +648,7 @@ def attr_direction_analysis(caches_n2, labels_n2, V):
     P = {}
     for cond in caches_n2:
         for oid, name, key in ((0, "target", "target"), (1, "distractor", "distractors")):
-            for attr in ("color", "shape"):
+            for attr in dict.fromkeys(["color", "shape", QUERIED]):
                 value_of = (lambda i, a=attr: labels_n2[i]["target"][a]) if oid == 0 else \
                            (lambda i, a=attr: labels_n2[i]["distractors"][0][a])
                 own, other = proj(cond, oid, attr, value_of)
@@ -656,7 +658,7 @@ def attr_direction_analysis(caches_n2, labels_n2, V):
                     "own": [_boot(own[valid, l]) for l in range(NUM_LAYERS)],
                     "other": [_boot(other[valid, l]) for l in range(NUM_LAYERS)]}
     # referent − non-referent contrasts, per attribute, own vs other value
-    for attr in ("color", "shape"):
+    for attr in dict.fromkeys(["color", "shape", QUERIED]):
         for what, k in (("own", 0), ("other", 1)):
             t1, t2 = P[("c1", "target", attr)], P[("c2", "target", attr)]
             d1, d2 = P[("c1", "distractor", attr)], P[("c2", "distractor", attr)]
@@ -683,23 +685,26 @@ def plot_attr_directions(res, label, out_path, gca_layers):
         ax.plot(x, m, ls, color=color, marker=marker, markersize=3, label=lab)
         ax.fill_between(x, lo, hi, color=color, alpha=0.12, linewidth=0)
 
+    contrast = "shape" if QUERIED != "shape" else "color"
+    qL = "colour" if QUERIED == "color" else QUERIED
+    cL = "colour" if contrast == "color" else contrast
     ax = axes[0]
-    line(ax, "ref_target_color_own", "#d62728", "-", "target: own colour direction")
-    line(ax, "ref_target_color_other", "#d62728", ":", "target: other colour directions (mean)")
-    line(ax, "ref_target_shape_own", "#1f77b4", "-", "target: own shape direction", "^")
-    line(ax, "ref_target_shape_other", "#1f77b4", ":", "target: other shape directions (mean)", "^")
+    line(ax, f"ref_target_{QUERIED}_own", "#d62728", "-", f"target: own {qL} direction")
+    line(ax, f"ref_target_{QUERIED}_other", "#d62728", ":", f"target: other {qL} directions (mean)")
+    line(ax, f"ref_target_{contrast}_own", "#1f77b4", "-", f"target: own {cL} direction", "^")
+    line(ax, f"ref_target_{contrast}_other", "#1f77b4", ":", f"target: other {cL} directions (mean)", "^")
     ax.set_title("target: refer target − refer distractor", fontsize=10)
     ax = axes[1]
-    line(ax, "nonref_distractor_color_own", "#d62728", "-", "distractor: own colour direction")
-    line(ax, "nonref_distractor_color_other", "#d62728", ":", "distractor: other colour directions (mean)")
-    line(ax, "nonref_distractor_shape_own", "#1f77b4", "-", "distractor: own shape direction", "^")
-    line(ax, "nonref_distractor_shape_other", "#1f77b4", ":", "distractor: other shape directions (mean)", "^")
+    line(ax, f"nonref_distractor_{QUERIED}_own", "#d62728", "-", f"distractor: own {qL} direction")
+    line(ax, f"nonref_distractor_{QUERIED}_other", "#d62728", ":", f"distractor: other {qL} directions (mean)")
+    line(ax, f"nonref_distractor_{contrast}_own", "#1f77b4", "-", f"distractor: own {cL} direction", "^")
+    line(ax, f"nonref_distractor_{contrast}_other", "#1f77b4", ":", f"distractor: other {cL} directions (mean)", "^")
     ax.set_title("distractor: refer target − refer distractor", fontsize=10)
     ax = axes[2]
-    line(ax, "refvs0_target_color_own", "#d62728", "-", "refer target − no question, own colour")
-    line(ax, "nonrefvs0_target_color_own", "#d62728", "--", "refer distractor − no question, own colour", "s")
-    line(ax, "refvs0_target_shape_own", "#1f77b4", "-", "refer target − no question, own shape", "^")
-    line(ax, "nonrefvs0_target_shape_own", "#1f77b4", "--", "refer distractor − no question, own shape", "v")
+    line(ax, f"refvs0_target_{QUERIED}_own", "#d62728", "-", f"refer target − no question, own {qL}")
+    line(ax, f"nonrefvs0_target_{QUERIED}_own", "#d62728", "--", f"refer distractor − no question, own {qL}", "s")
+    line(ax, f"refvs0_target_{contrast}_own", "#1f77b4", "-", f"refer target − no question, own {cL}", "^")
+    line(ax, f"nonrefvs0_target_{contrast}_own", "#1f77b4", "--", f"refer distractor − no question, own {cL}", "v")
     ax.set_title("target: question − no question", fontsize=10)
     for ax in axes:
         ax.axhline(0, color="k", linewidth=0.6)
@@ -707,7 +712,7 @@ def plot_attr_directions(res, label, out_path, gca_layers):
         _layers_axis(ax, gca_layers)
         ax.legend(fontsize=6)
     fig.suptitle(f"{label} — attribute-specific directions (from 1-object images); questions ask about {QUERIED}: "
-                 f"colour and shape directions, own value vs other values")
+                 f"queried and contrast directions, own value vs other values")
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -1790,7 +1795,8 @@ def main():
         V = attribute_directions(cache_n1, labels["n1"])
         print("directions per attribute: " + ", ".join(f"{a}: {sorted(V[a])}" for a in V))
         res = attr_direction_analysis(caches_n2, labels["n2"], V)
-        for key in ("ref_target_color_own", "ref_target_color_other", "ref_target_shape_own",
+        for key in (f"ref_target_{QUERIED}_own", f"refvs0_target_{QUERIED}_own", f"nonrefvs0_target_{QUERIED}_own",
+                    "ref_target_color_own", "ref_target_color_other", "ref_target_shape_own",
                     "nonref_distractor_color_own", "nonref_distractor_shape_own",
                     "refvs0_target_color_own", "refvs0_target_shape_own",
                     "nonrefvs0_target_color_own", "nonrefvs0_target_shape_own", "c3vs0_target_color_own"):
