@@ -720,6 +720,33 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   as before (object tokens carry the selection mid-depth, background at
   block 11), on the subset of pairs whose two objects differ in the queried
   attribute.
+  Result (2026-08-31, both runs complete; template-RSA correlations of the
+  target's offset with the queried attribute's RDM, template subtraction):
+  material — no question stays at 0.16–0.23 from block 5 on; refer target
+  0.86 at block 11, non-referring 0.80, refer distractor (target is the
+  non-referent) 0.04. Size — no question 0.10–0.19; refer target 0.73–0.75
+  from block 9, non-referring 0.73–0.81, refer distractor 0.09 at block 11.
+  So (i) holds: the non-referent loses the queried attribute in both.
+  Against (ii), the referent's organisation by the queried attribute RISES
+  far above the no-question level (0.19 → 0.86 material, 0.10 → 0.73 size),
+  i.e. material and size behave like colour (an attribute the backbone
+  keeps only weakly is boosted when queried), not like shape; the
+  projection rise stays small (refer target − no question on the own-value
+  direction ≤ +2.8 for both, vs colour's +12 to +15), so the boost shows in
+  the rank-order organisation more than in the raw projection — the
+  difference between the two measures is recorded, not explained. The
+  whole-vector selection contrast peaks at block 9 (+25.7 material, +28.4
+  size) and the own-value contrast at block 11 (+10.3, +4.9). (iii) holds:
+  token swaps (183 / 174 images with distinct answers) — objects' tokens
+  move the answer from block 7 (0.99 material, 0.86–0.99 size at 7–10),
+  background tokens only at block 11 (0.96–0.97 material, 0.67 size),
+  target keeps its value at block 11 when objects are swapped (0.96, 0.75)
+  — the DINOv2 final-block copy appears for all four queried attributes.
+  Summary across the four: the removal from the non-referent and the
+  final-block copy are attribute-general; the boost of the queried
+  attribute tracks how weakly the backbone keeps it by default (colour,
+  material, size boosted; shape, already kept at 0.77, not), which
+  supports the inference of (G) in rank-order terms.
   (K, launched 2026-08-31): MAE replication of the whole suite
   (`clevr_mae_decoder1l_scratch_s42`, grid 14 @ 224, out-dir
   `patch_language_condition/mae/`, all phases). Purpose: third backbone for
@@ -730,7 +757,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   advance: MAE's VQA accuracy is 0.742 and the 14×14 grid gives few patches
   per object; baseline accuracy on the referring questions may be low, which
   shrinks the usable image set for swaps and interventions.
-- **Status**: ✅ A–I done; J (material/size) and K (MAE) running 2026-08-31.
+- **Status**: ✅ A–J done; K (MAE) running 2026-08-31.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

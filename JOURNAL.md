@@ -22,6 +22,16 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-31 — X21 (J): queried = material and size — the boost of the
+  queried attribute tracks the backbone's default.** Template-RSA of the
+  target's offset with the queried attribute's RDM at block 11: material
+  0.19 (no question) → 0.86 (refer target) → 0.04 (refer distractor); size
+  0.10 → 0.73 → 0.09. Removal from the non-referent and the block-11
+  background copy hold for all four queried attributes; the boost appears
+  for colour, material and size (weakly kept by default) and not for shape
+  (kept at 0.77 anyway). Projection rises stay ≤ +2.8 for material/size —
+  the boost is visible in rank-order organisation more than raw projection
+  (difference recorded, unexplained). Registry X21 (J).
 - **2026-08-31 — X21 (I): head combinations on GCA layers 7/9 — graded
   concentration, no sufficient or necessary four-head subset.** Keeping only
   the top-4 heads (ranked by the single-head scan) preserves ≈70% (L7) /
