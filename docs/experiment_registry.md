@@ -683,6 +683,23 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   L9, against a baseline of 11.4 at block 11), random-4 ≈ top-4, and
   zeroing 8 random heads removes roughly half — i.e. the effect scales
   with the number of heads kept, not with which ones.
+  Result (2026-08-31, `head_combos.json`; baseline S9/S10/S11 = +5.3/+6.0/
+  +11.4, accuracy 0.994): the writing is graded, not uniform. Keeping only
+  the top-4 heads of layer 7 preserves S9/S10 at +3.6/+4.2 (≈70% of the
+  layer's contribution) with accuracy 0.98; keeping 4 random heads
+  preserves +1.3 to +2.0 (3 seeds) with accuracy 0.75–0.93 — so the top-4
+  are far better than random, against the fully-distributed expectation.
+  Zeroing only the top-4 of layer 7 still leaves +2.4/+2.7 (about half),
+  matching the near-additive sum of single-head drops, so the top-4 are
+  not necessary either. Layer 9 same pattern, weaker concentration
+  (keep-top-4 +2.8/+2.8, random +0.2 to +1.0, zero-top-4 +3.0/+3.2).
+  Zeroing 8 random heads ≈ zeroing the top-4 (S9 +2.4 to +3.6). Keeping the
+  top-4 of both layers at once gives +2.2/+2.4 with accuracy 0.73–0.81.
+  Reading: within GCA layers 7 and 9 the selection writing is concentrated
+  in about a quarter of the heads, which carry roughly half to two thirds
+  of it, and the rest is spread over the remaining heads; no subset of 4 is
+  sufficient for the full effect and none is strictly necessary. The site
+  sentence "分散在許多 head 上" is refined accordingly.
   (J, pre-registered 2026-08-31, queried = material and queried = size,
   out-dirs `patch_language_condition/{material,size}/`, no intervention
   phase — with two values per attribute a flip target B ∉ {A, A_distractor}
@@ -713,7 +730,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   advance: MAE's VQA accuracy is 0.742 and the 14×14 grid gives few patches
   per object; baseline accuracy on the referring questions may be low, which
   shrinks the usable image set for swaps and interventions.
-- **Status**: ✅ A–H done (see above); I, J, K launched 2026-08-31.
+- **Status**: ✅ A–I done; J (material/size) and K (MAE) running 2026-08-31.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

@@ -22,6 +22,13 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-08-31 — X21 (I): head combinations on GCA layers 7/9 — graded
+  concentration, no sufficient or necessary four-head subset.** Keeping only
+  the top-4 heads (ranked by the single-head scan) preserves ≈70% (L7) /
+  ≈50% (L9) of the selection effect at blocks 9–10 with accuracy 0.96–0.98;
+  4 random heads preserve far less (+0.2 to +2.0) and cost accuracy;
+  zeroing only the top-4 removes about half. Registry X21 (I) has the
+  table. Material/size runs and the MAE replication are queued behind it.
 - **2026-08-29 — X21 (G): queried attribute = shape — the removal from the
   non-referent generalises, the rise on both objects does not.**
   `patch_language_condition/shape/` (DINOv2, same 324 pairs, questions
