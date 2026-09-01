@@ -6,6 +6,9 @@ in the repo — every other script plots measured curves only).
    reads the answer.
 2. schematic_mechanism_by_block.png — 12-block × 5-row grid of the measured
    quantities per backbone (numbers from the result JSONs, nothing hand-set).
+3. schematic_vector_decomposition.png — the vector relations (template,
+   object vector, question-general component q, selection component s) and
+   their measured projections per run.
 
 Run from main/ (CPU):
   PYTHONPATH=src <py> scripts/analysis/site_schematics_language_condition.py
@@ -197,6 +200,123 @@ def draw_summary(panels: list, out_path: Path):
     print(f"Saved: {out_path}")
 
 
+# ---------------------------------------------------------------------------
+# 3. vector decomposition: who minus whom is what
+# ---------------------------------------------------------------------------
+
+RUNS_DECOMP = [  # (label, subdir, queried attribute, block)
+    ("DINOv2\ncolour\nblock 8", ".", "color", 8),
+    ("DINOv2\ncolour\nblock 11", ".", "color", 11),
+    ("DINOv2\nshape\nblock 11", "shape", "shape", 11),
+    ("DINOv2\nmaterial\nblock 11", "material", "material", 11),
+    ("DINOv2\nsize\nblock 11", "size", "size", 11),
+    ("SigLIP\ncolour\nblock 11", "siglip", "color", 11),
+    ("MAE\ncolour\nblock 11", "mae", "color", 11),
+]
+
+
+def _decomp_rows(root):
+    """Per run: q = <q, v> (non-referring question − no question),
+    s_ref = (referent − no question) − q, s_nonref = (non-referent − no question) − q.
+    All three are projections of the target's mean token on its own
+    queried-attribute direction, from partA_attr_directions.json."""
+    rows = []
+    for label, sub, attr, blk in RUNS_DECOMP:
+        f = root / sub / "partA_attr_directions.json"
+        if not f.exists():
+            continue
+        d = json.load(open(f))["delta"]
+        q = d[f"c3vs0_target_{attr}_own"][blk]["mean"]
+        r = d[f"refvs0_target_{attr}_own"][blk]["mean"]
+        n = d[f"nonrefvs0_target_{attr}_own"][blk]["mean"]
+        rows.append((label, q, r - q, n - q))
+    return rows
+
+
+def _arrow(ax, a, b, color, lw=2.5, ls="-", z=3):
+    ax.add_patch(FancyArrowPatch(a, b, arrowstyle="-|>", mutation_scale=18,
+                                 color=color, lw=lw, linestyle=ls, zorder=z))
+
+
+def _vector_panel(ax, mode):
+    """mode = 'removal' (DINOv2 / SigLIP) or 'marking' (MAE)."""
+    ax.set_xlim(-0.7, 4.7)
+    ax.set_ylim(-0.9, 3.2)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    # axes: horizontal = the object's own queried-attribute direction v
+    _arrow(ax, (-0.4, 0), (4.5, 0), "k", lw=1.5, z=1)
+    _arrow(ax, (0, -0.3), (0, 2.9), "k", lw=1.5, z=1)
+    ax.text(2.2, -0.55, "own queried-attribute direction $v$", ha="center", va="top", fontsize=12)
+    ax.text(-0.15, 2.85, "other directions", ha="right", va="top", fontsize=12, rotation=90)
+    ax.plot([0], [0], "ko", ms=6, zorder=4)
+    ax.text(-0.15, 0.12, "$t_\\ell(p)$\nbackground\ntemplate", ha="right", va="bottom", fontsize=10)
+    P0 = (1.9, 1.0)      # no question
+    _arrow(ax, (0, 0), P0, "0.35")
+    ax.text(0.75, 0.75, "$o^{\\varnothing}$", fontsize=14, color="0.35", ha="right")
+    ax.plot([P0[0]], [P0[1]], "o", color="0.35", ms=6, zorder=4)
+    ax.text(P0[0] - 0.1, P0[1] + 0.12, "no question", fontsize=11, color="0.35", ha="right")
+    if mode == "removal":
+        P1 = (3.6, 1.4)  # after the question-general component q
+        _arrow(ax, P0, P1, "#2ca02c")
+        ax.text(2.7, 1.35, "$q$", fontsize=14, color="#2ca02c")
+        ax.plot([P1[0]], [P1[1]], "o", color=TARGET_RGB, ms=8, zorder=5)
+        ax.text(P1[0] + 0.1, P1[1] - 0.05, "referent\n$s_{\\mathrm{ref}} \\approx 0$", fontsize=11, color=TARGET_RGB, va="top")
+        P2 = (0.8, 1.9)
+        _arrow(ax, P1, P2, DISTRACTOR_RGB)
+        ax.text(2.3, 1.9, "$s_{\\mathrm{non\\text{-}ref}}$", fontsize=14, color=DISTRACTOR_RGB)
+        ax.plot([P2[0]], [P2[1]], "o", color=DISTRACTOR_RGB, ms=8, zorder=5)
+        ax.text(P2[0], P2[1] + 0.18, "non-referent", fontsize=11, color=DISTRACTOR_RGB, ha="center")
+        # projections on v
+        for P, c in ((P0, "0.35"), (P1, TARGET_RGB), (P2, DISTRACTOR_RGB)):
+            ax.plot([P[0], P[0]], [0, P[1]], ls=":", color=c, lw=1.2, zorder=2)
+        ax.text(P0[0], -0.1, "$\\pi^{\\varnothing}$", ha="center", va="top", fontsize=12, color="0.35")
+        ax.text(P1[0], -0.1, "$\\pi_{\\mathrm{ref}}$", ha="center", va="top", fontsize=12, color=TARGET_RGB)
+        ax.text(P2[0], -0.1, "$\\pi_{\\mathrm{non\\text{-}ref}}$", ha="center", va="top", fontsize=12, color=DISTRACTOR_RGB)
+        ax.set_title("DINOv2, SigLIP: selection by removal", fontsize=S["subplot_title_fontsize"])
+    else:
+        ax.plot([P0[0]], [P0[1]], "o", color=DISTRACTOR_RGB, ms=8, zorder=5)
+        ax.text(P0[0] + 0.15, P0[1] - 0.05, "non-referent:\nunchanged", fontsize=11, color=DISTRACTOR_RGB, va="top")
+        P1 = (1.9, 2.5)
+        _arrow(ax, P0, P1, TARGET_RGB)
+        ax.text(2.05, 1.7, "$m$: referent marker,\n$\\perp v$", fontsize=12, color=TARGET_RGB)
+        ax.plot([P1[0]], [P1[1]], "o", color=TARGET_RGB, ms=8, zorder=5)
+        ax.text(P1[0] + 0.1, P1[1] + 0.05, "referent", fontsize=11, color=TARGET_RGB)
+        ax.plot([P0[0], P0[0]], [0, P0[1]], ls=":", color="0.35", lw=1.2, zorder=2)
+        ax.text(P0[0], -0.1, "$\\pi^{\\varnothing} = \\pi_{\\mathrm{ref}} = \\pi_{\\mathrm{non\\text{-}ref}}$",
+                ha="center", va="top", fontsize=12)
+        ax.text(4.6, 0.55, "decoder attention selects\nthe marked object", fontsize=11, ha="right", va="top")
+        ax.set_title("MAE: selection by marking", fontsize=S["subplot_title_fontsize"])
+
+
+def draw_vectors(root, out_path):
+    rows = _decomp_rows(root)
+    fig = plt.figure(figsize=(22, 6.2))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 1.5], wspace=0.3)
+    _vector_panel(fig.add_subplot(gs[0]), "removal")
+    _vector_panel(fig.add_subplot(gs[1]), "marking")
+    ax = fig.add_subplot(gs[2])
+    x = np.arange(len(rows))
+    w = 0.27
+    ax.bar(x - w, [r[1] for r in rows], w, color="#2ca02c", label="$\\langle q, v\\rangle$: question, both objects")
+    ax.bar(x, [r[2] for r in rows], w, color=TARGET_RGB, label="$\\langle s_{\\mathrm{ref}}, v\\rangle$: referent only")
+    ax.bar(x + w, [r[3] for r in rows], w, color=DISTRACTOR_RGB, label="$\\langle s_{\\mathrm{non\\text{-}ref}}, v\\rangle$: non-referent only")
+    ax.axhline(0, color="k", lw=1)
+    ax.set_xticks(x)
+    ax.set_xticklabels([r[0] for r in rows], fontsize=11)
+    ax.set_ylabel("projection change vs. no question", fontsize=S["label_fontsize"])
+    ax.tick_params(axis="y", labelsize=S["tick_labelsize"], width=S["tick_width"])
+    ax.legend(fontsize=12, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, frameon=False)
+    ax.set_title("Measured decomposition (target object)", fontsize=S["subplot_title_fontsize"])
+    fig.suptitle("Token = background template + object vector;  object vector = no-question vector + q + s",
+                 fontsize=S["suptitle_fontsize"], y=1.02)
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+    for r in rows:
+        print("  %-22s q=%+6.1f  s_ref=%+6.1f  s_nonref=%+6.1f" % (r[0].replace("\n", " "), r[1], r[2], r[3]))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", default="outputs/analysis/patch_language_condition")
@@ -211,6 +331,7 @@ def main():
     if (out / "siglip" / "readout_swap.json").exists():
         panels.append(("SigLIP", out / "siglip", "color"))
     draw_summary(panels, out / "schematic_mechanism_by_block.png")
+    draw_vectors(out, out / "schematic_vector_decomposition.png")
 
 
 if __name__ == "__main__":
