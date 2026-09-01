@@ -299,15 +299,20 @@ def main(cfg: DictConfig):
         }
         torch.save(ckpt_data, output_dir / "last.pt")
 
-        # Validate
-        if task_type in ("decoder", "transfusion", "mot"):
+        # Validate (training.eval_final_only=true skips all but the last epoch;
+        # default false keeps the per-epoch eval of every existing recipe)
+        if cfg.training.get("eval_final_only", False) and epoch < cfg.training.epochs - 1:
+            val_results = {"accuracy": float("nan"), "breakdown": {}}
+            log.info(f"Epoch {epoch} | validation skipped (eval_final_only)")
+        elif task_type in ("decoder", "transfusion", "mot"):
             val_results = evaluate_decoder(model, val_loader, device, vocab)
         else:
             val_results = evaluate_classification(model, val_loader, device)
 
         val_acc = val_results["accuracy"]
-        log.info(f"Epoch {epoch} | Val acc: {val_acc:.4f}")
-        log.info(format_results(val_results))
+        if val_acc == val_acc:  # not NaN
+            log.info(f"Epoch {epoch} | Val acc: {val_acc:.4f}")
+            log.info(format_results(val_results))
 
         # Update last.pt with val results + save best/periodic
         ckpt_data["val_acc"] = val_acc

@@ -7,4 +7,5 @@ mixed_precision: bf16
 log_every: 100
 save_every: 5
 eval_every_steps: null  # null = eval only at epoch end
+eval_final_only: false  # true = validate only after the last epoch
 resume: null  # path to checkpoint for resuming training

@@ -1456,6 +1456,121 @@ def part_c(caches, labels, args):
     return results
 
 
+
+# ---------------------------------------------------------------------------
+# Part D — readout probes on the cached no-question tokens: which aggregation
+# can read the target's attribute when no question is given?
+#   mean_pool                     mean over all cached tokens -> logistic regression
+#   attention_all_tokens          one learned query, content attention over all tokens
+#   attention_target_tokens       same, attention restricted to the target's tokens (oracle position)
+#   attention_distractor_tokens   same, restricted to the distractor's tokens (control)
+# "All tokens" = the cached set (every object patch + 64 background patches).
+# Feature standardisation uses token statistics of the whole layer (unsupervised).
+# ---------------------------------------------------------------------------
+
+class _AttnReadout(torch.nn.Module):
+    def __init__(self, d, n_cls):
+        super().__init__()
+        self.q = torch.nn.Parameter(torch.zeros(d))
+        self.head = torch.nn.Linear(d, n_cls)
+
+    def forward(self, x, mask):                      # x (B,T,D), mask (B,T) bool
+        s = (x @ self.q) / x.shape[-1] ** 0.5
+        w = torch.softmax(s.masked_fill(~mask, -1e9), -1)
+        return self.head((w[..., None] * x).sum(1))
+
+
+def _pad_images(X, img, n_img):
+    """(T,D) tokens with image index -> (N,Tmax,D) array, valid mask, index lists."""
+    idx = [np.nonzero(img == i)[0] for i in range(n_img)]
+    tmax = max(len(t) for t in idx)
+    out = np.zeros((n_img, tmax, X.shape[1]), np.float32)
+    valid = np.zeros((n_img, tmax), bool)
+    for i, t in enumerate(idx):
+        out[i, :len(t)] = X[t]
+        valid[i, :len(t)] = True
+    return out, valid, idx
+
+
+def _train_attn(Xtr, Mtr, ytr, Xte, Mte, n_cls, seed, epochs=300):
+    torch.manual_seed(seed)
+    m = _AttnReadout(Xtr.shape[-1], n_cls)
+    opt = torch.optim.Adam(m.parameters(), lr=1e-2, weight_decay=1e-3)
+    Xtr_t, Mtr_t, ytr_t = torch.as_tensor(Xtr), torch.as_tensor(Mtr), torch.as_tensor(ytr)
+    for _ in range(epochs):
+        opt.zero_grad()
+        torch.nn.functional.cross_entropy(m(Xtr_t, Mtr_t), ytr_t).backward()
+        opt.step()
+    with torch.no_grad():
+        return m(torch.as_tensor(Xte), torch.as_tensor(Mte)).argmax(-1).numpy()
+
+
+READOUT_KINDS = ("mean_pool", "attention_all_tokens", "attention_target_tokens", "attention_distractor_tokens")
+
+
+def part_d(c0, labels, args):
+    from sklearn.model_selection import KFold
+    layers = [int(l) for l in args.probe_layers.split(",")]
+    N = len(labels)
+    img, own = c0["tok_img"], c0["tok_owner"]
+    y_all = {a: np.array([labels[i]["target"][a] for i in range(N)]) for a in ATTRS}
+    results = {}
+    for l in layers:
+        X = token_table(c0, l)
+        X = (X - X.mean(0)) / (X.std(0) + 1e-6)
+        Xp, valid, idx = _pad_images(X, img, N)
+        own_p = np.zeros(valid.shape, int)
+        for i, t in enumerate(idx):
+            own_p[i, :len(t)] = own[t]
+        masks = {"attention_all_tokens": valid,
+                 "attention_target_tokens": valid & (own_p == 1),
+                 "attention_distractor_tokens": valid & (own_p == 2)}
+        pooled = np.stack([Xp[i][valid[i]].mean(0) for i in range(N)])
+        res = {}
+        for a in ATTRS:
+            classes, y = np.unique(y_all[a], return_inverse=True)
+            res[f"{a}/majority"] = float(np.bincount(y).max() / N)
+            accs = {k: [] for k in READOUT_KINDS}
+            for tr, te in KFold(5, shuffle=True, random_state=args.seed).split(pooled):
+                clf = LogisticRegression(max_iter=2000).fit(pooled[tr], y[tr])
+                accs["mean_pool"].append(float((clf.predict(pooled[te]) == y[te]).mean()))
+                for k, M in masks.items():
+                    pred = _train_attn(Xp[tr], M[tr], y[tr], Xp[te], M[te], len(classes), args.seed)
+                    accs[k].append(float((pred == y[te]).mean()))
+            for k, v in accs.items():
+                res[f"{a}/{k}"] = float(np.mean(v))
+        results[f"L{l}"] = res
+        print(f"L{l}: " + " ".join(f"{k}={v:.3f}" for k, v in res.items()))
+    return results
+
+
+def plot_readout_probe(res, label, out_path):
+    layers = sorted(int(k[1:]) for k in res)
+    styles = {"mean_pool": ("0.4", "-"), "attention_all_tokens": ("#1f77b4", "-"),
+              "attention_target_tokens": ("#d62728", "-"), "attention_distractor_tokens": ("#1f77b4", "--")}
+    names = {"mean_pool": "mean pooling", "attention_all_tokens": "attention, all tokens",
+             "attention_target_tokens": "attention, target tokens only (oracle position)",
+             "attention_distractor_tokens": "attention, distractor tokens only (control)"}
+    fig, axes = plt.subplots(1, len(ATTRS), figsize=(4.6 * len(ATTRS), 4.2), sharey=True)
+    for ax, a in zip(axes, ATTRS):
+        for k in READOUT_KINDS:
+            c, ls = styles[k]
+            ax.plot(layers, [res[f"L{l}"][f"{a}/{k}"] for l in layers], color=c, ls=ls, marker="o", lw=2, label=names[k])
+        ax.plot(layers, [res[f"L{l}"][f"{a}/majority"] for l in layers], color="k", ls=":", lw=1.5, label="majority baseline")
+        ax.set_title(f"target {a}", fontsize=S["subplot_title_fontsize"])
+        ax.set_xlabel("ViT block", fontsize=S["label_fontsize"])
+        ax.set_xticks(layers)
+        ax.set_ylim(0, 1.02)
+        ax.tick_params(labelsize=S["tick_labelsize"])
+    axes[0].set_ylabel("5-fold accuracy", fontsize=S["label_fontsize"])
+    axes[0].legend(fontsize=10, loc="lower left")
+    fig.suptitle(f"{label}: readouts on no-question tokens, 2-object images (n={res[f'L{layers[0]}'].get('n', 324)})",
+                 fontsize=S["suptitle_fontsize"])
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
 # ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
@@ -1706,6 +1821,8 @@ def main():
     ap.add_argument("--hue-thresh", type=float, default=0.17)
     ap.add_argument("--alphas", default="0.5,1,2")
     ap.add_argument("--intervene-layers", default=",".join(str(l) for l in range(NUM_LAYERS)))
+    ap.add_argument("--readout-probe", action="store_true",
+                    help="Part D: mean-pool / attention / oracle-position readouts on no-question tokens")
     ap.add_argument("--probe-layers", default=",".join(str(l) for l in GCA_LAYERS))
     ap.add_argument("--probe-max-tokens-per-object", type=int, default=6)
     ap.add_argument("--probe-max-bg", type=int, default=12)
@@ -1791,6 +1908,13 @@ def main():
                  if (out_dir / "n2" / f"feats_{c}.npz").exists()}
     cache_n1 = load_sparse(out_dir / "n1", "c0")
     gca_layers = [int(l) for l in caches_n2["c0"]["gca_layers"]]
+    if args.readout_probe:
+        print("\nPart D readout probes ...")
+        res = part_d(caches_n2["c0"], labels["n2"], args)
+        with open(out_dir / "readout_probe.json", "w") as f:
+            json.dump(res, f, indent=1)
+        plot_readout_probe(res, label, out_dir / "readout_probe.png")
+        return
     if args.attr_directions:
         V = attribute_directions(cache_n1, labels["n1"])
         print("directions per attribute: " + ", ".join(f"{a}: {sorted(V[a])}" for a in V))
@@ -1860,6 +1984,9 @@ def main():
             att = json.load(f)
         with open(out_dir / "readout_swap.json") as f:
             plot_readout(att, json.load(f), label, out_dir / "readout.png", gca_layers)
+    if (out_dir / "readout_probe.json").exists():
+        with open(out_dir / "readout_probe.json") as f:
+            plot_readout_probe(json.load(f), label, out_dir / "readout_probe.png")
     if not args.skip_probes:
         print("\nPart C probes ...")
         res = part_c(caches_n2, labels["n2"], args)
