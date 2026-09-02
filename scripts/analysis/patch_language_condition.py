@@ -1031,6 +1031,212 @@ def plot_readout(attention, swap, label, out_path, gca_layers):
 
 
 # ---------------------------------------------------------------------------
+# Marker causal test — is the referent marker a portable tag?  The marker
+# direction m_l = mean over images of [target's raw patch mean under c1 (it is
+# the referent) - the same under c2 (it is not)].  Transplanting m_l onto the
+# DISTRACTOR's patches (a different image position) under the c1 question tests
+# whether decoder attention and the answer follow the tag: if they do, the
+# marker is a content-addressed identity code (Saravanan-style); if not, it is
+# bound to the referent's position (Assouel-style position ID).
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def run_marker_test(out_dir, args, state, images_n2, owners_n2, labels_n2):
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    c1 = load_sparse(out_dir / "n2", "c1")
+    c2 = load_sparse(out_dir / "n2", "c2")
+    marker = (c1["raw_obj_mean"][:, 0].astype(np.float32)
+              - c2["raw_obj_mean"][:, 0].astype(np.float32)).mean(0)          # (12, 768)
+    m_norm = np.linalg.norm(marker, axis=-1)
+    print("marker norm by block: " + " ".join(f"{v:.1f}" for v in m_norm))
+
+    N, bs = len(labels_n2), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner_t = torch.from_numpy(np.stack(owners_n2))
+    A_id = np.array([model.vocab[r["target"][QUERIED]] for r in labels_n2])
+    Ad_id = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels_n2])
+    qs1_all = [r["questions"]["c1"] for r in labels_n2]
+    bos = lambda b: torch.full((b, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
+    prefix = trunk.num_prefix_tokens
+
+    def forward_with_attn(ims, qs):
+        feats = steervit.forward(ims, qs)
+        patches = feats[:, prefix:, :]
+        with DecoderAttention(model.decoder) as da:
+            lg = model.decoder(bos(ims.shape[0]), patches)[:, 0, :]
+        w = da.weights[0][:, :, 0, :].mean(1)                                  # (B, P) head-mean
+        return lg.argmax(-1).cpu().numpy(), w
+
+    # baseline under c1
+    base_pred = np.zeros(N, int)
+    base_mass = []
+    for s in range(0, N, bs):
+        e = min(s + bs, N)
+        pred, w = forward_with_attn(imgs_t[s:e].to(device), qs1_all[s:e])
+        base_pred[s:e] = pred
+        ow = owner_t[s:e].to(device)
+        base_mass.append(torch.stack([(w * (ow == k)).sum(-1) for k in range(3)], -1).cpu().numpy())
+    ok = (base_pred == A_id) & (A_id != Ad_id)
+    bm = np.concatenate(base_mass)[ok].mean(0)
+    print(f"baseline c1: accuracy {ok.mean():.3f} on {N} images; attention mass "
+          f"bg {bm[0]:.3f} target {bm[1]:.3f} distractor {bm[2]:.3f}")
+
+    rng = np.random.default_rng(args.seed)
+    rand = rng.standard_normal(marker.shape).astype(np.float32)
+    rand = rand / np.linalg.norm(rand, axis=-1, keepdims=True) * m_norm[:, None]
+    layers = [int(l) for l in args.intervene_layers.split(",")]
+    alphas = [float(a) for a in args.marker_alphas.split(",")]
+    variants = ["marker_to_distractor", "marker_minus_target", "swap", "random_to_distractor"]
+    rows = []
+    for layer in layers:
+        d_m = torch.from_numpy(marker[layer]).to(device)
+        d_r = torch.from_numpy(rand[layer]).to(device)
+        for alpha in alphas:
+            for var in variants:
+                if var == "random_to_distractor" and alpha != alphas[0]:
+                    continue
+                cnt = np.zeros(3, int)
+                mass = []
+                for s in range(0, N, bs):
+                    e = min(s + bs, N)
+                    ims = imgs_t[s:e].to(device)
+                    ow = owner_t[s:e].to(device)
+                    delta = (d_r if var == "random_to_distractor" else d_m).expand(e - s, -1)
+                    adders = []
+                    if var in ("marker_to_distractor", "swap", "random_to_distractor"):
+                        adders.append(ResidualAdder(trunk, layer, delta, ow == 2, alpha))
+                    if var in ("marker_minus_target", "swap"):
+                        adders.append(ResidualAdder(trunk, layer, delta, ow == 1, -alpha))
+                    for a in adders:
+                        a.__enter__()
+                    try:
+                        pred, w = forward_with_attn(ims, qs1_all[s:e])
+                    finally:
+                        for a in adders:
+                            a.__exit__()
+                    m3 = torch.stack([(w * (ow == k)).sum(-1) for k in range(3)], -1).cpu().numpy()
+                    for j, i in enumerate(range(s, e)):
+                        if not ok[i]:
+                            continue
+                        cnt[0 if pred[j] == A_id[i] else (1 if pred[j] == Ad_id[i] else 2)] += 1
+                        mass.append(m3[j])
+                n = int(cnt.sum())
+                mass = np.stack(mass).mean(0)
+                rows.append({"layer": layer, "alpha": alpha, "variant": var, "n": n,
+                             "p_target": cnt[0] / max(n, 1), "p_distractor": cnt[1] / max(n, 1),
+                             "p_other": cnt[2] / max(n, 1),
+                             "attn_bg": float(mass[0]), "attn_target": float(mass[1]),
+                             "attn_distractor": float(mass[2])})
+                r = rows[-1]
+                print(f"L{layer:2d} a={alpha:g} {var:<22} P(target) {r['p_target']:.2f} "
+                      f"P(distractor) {r['p_distractor']:.2f} | attn target {r['attn_target']:.3f} "
+                      f"distractor {r['attn_distractor']:.3f}", flush=True)
+    res = {"n_images_ok": int(ok.sum()), "queried": QUERIED,
+           "marker_norm_by_block": m_norm.tolist(),
+           "baseline": {"accuracy_c1": float(ok.mean()),
+                        "attn_mass": {"bg": float(bm[0]), "target": float(bm[1]),
+                                      "distractor": float(bm[2])}},
+           "rows": rows}
+    with open(out_dir / "marker_test.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"Saved: {out_dir / 'marker_test.json'}")
+    return res
+
+
+def plot_marker_test(res, label, out_path):
+    """Left: answer flip; right: decoder-attention mass on the distractor."""
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4))
+    styles = {"marker_to_distractor": ("#d62728", "-", "o", "marker added to distractor patches"),
+              "marker_minus_target": ("#1f77b4", "--", "^", "marker subtracted from target patches"),
+              "swap": ("#9467bd", "-", "s", "both (moved from target to distractor)"),
+              "random_to_distractor": ("0.4", ":", "x", "norm-matched random vector on distractor")}
+    alphas = sorted({r["alpha"] for r in res["rows"]})
+    a0 = alphas[0]
+    for ax, key, ylab in ((axes[0], "p_distractor", "P(answer = distractor's colour)"),
+                          (axes[1], "attn_distractor", "decoder attention mass on distractor patches")):
+        for var, (col, ls, mk, lab) in styles.items():
+            rr = [r for r in res["rows"] if r["variant"] == var and r["alpha"] == a0]
+            if rr:
+                ax.plot([r["layer"] for r in rr], [r[key] for r in rr], ls, color=col,
+                        marker=mk, markersize=3, label=lab)
+        ax.set_xlabel("ViT block at which the vector is added")
+        ax.set_ylabel(ylab, fontsize=10)
+        ax.set_xticks(range(NUM_LAYERS))
+        ax.set_ylim(-0.02, 1.02)
+        mark_gca_layers(ax)
+    axes[1].axhline(res["baseline"]["attn_mass"]["distractor"], color="0.6", lw=0.8,
+                    label="baseline (no intervention)")
+    axes[0].legend(fontsize=7)
+    axes[1].legend(fontsize=7)
+    fig.suptitle(f"{label} — transplanting the referent-marker direction (difference of the target's patch mean, "
+                 f"refer-target vs refer-distractor)\nquestion asks the target; n={res['n_images_ok']}, "
+                 f"scale {a0:g}x", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# Attention-vs-norm control (Darcet / attention-sink guard): is the decoder's
+# attention concentration on the referent explained by token norm?
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def run_attn_norm_control(out_dir, args, state, images_n2, owners_n2, labels_n2):
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    prefix = steervit.vision_model.trunk.num_prefix_tokens
+    norm11 = load_sparse(out_dir / "n2", "c1")["raw_norm"][:, NUM_LAYERS - 1].astype(np.float32)  # (N, P)
+    N, bs = len(labels_n2), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner = np.stack(owners_n2)
+    bos = lambda b: torch.full((b, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
+    res = {}
+    for cond in ("c0", "c1"):
+        W = []
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            qs = None if cond == "c0" else [labels_n2[i]["questions"]["c1"] for i in range(s, e)]
+            feats = steervit.forward(imgs_t[s:e].to(device), qs)
+            with DecoderAttention(model.decoder) as da:
+                model.decoder(bos(e - s), feats[:, prefix:, :])
+            W.append(da.weights[0][:, :, 0, :].mean(1).cpu().numpy())
+        W = np.concatenate(W)                                                  # (N, P)
+        rho_all, rho_bg, hi_mass, hi_bgfrac, ratio_all, ratio_excl = [], [], [], [], [], []
+        for i in range(N):
+            w, nm, ow = W[i], norm11[i], owner[i]
+            rho_all.append(spearmanr(w, nm)[0])
+            rho_bg.append(spearmanr(w[ow == 0], nm[ow == 0])[0])
+            hi = nm > 5 * np.median(nm)
+            hi_mass.append(w[hi].sum() if hi.any() else 0.0)
+            hi_bgfrac.append((ow[hi] == 0).mean() if hi.any() else np.nan)
+            per_tok = lambda m: w[m].mean() if m.any() else np.nan
+            ratio_all.append(per_tok(ow == 1) / per_tok(ow == 0))
+            keep = ~hi
+            ratio_excl.append(per_tok((ow == 1) & keep) / per_tok((ow == 0) & keep))
+        res[cond] = {
+            "spearman_attn_norm_mean": float(np.nanmean(rho_all)),
+            "spearman_attn_norm_bg_only_mean": float(np.nanmean(rho_bg)),
+            "high_norm_tokens_per_image": float((norm11 > 5 * np.median(norm11, 1, keepdims=True)).sum(1).mean()),
+            "attn_mass_on_high_norm_mean": float(np.nanmean(hi_mass)),
+            "high_norm_bg_fraction_mean": float(np.nanmean(hi_bgfrac)),
+            "per_token_ratio_target_over_bg": float(np.nanmean(ratio_all)),
+            "per_token_ratio_excluding_high_norm": float(np.nanmean(ratio_excl))}
+        r = res[cond]
+        print(f"{cond}: rho(attn,norm) {r['spearman_attn_norm_mean']:.3f} (bg only "
+              f"{r['spearman_attn_norm_bg_only_mean']:.3f}); high-norm tokens/image "
+              f"{r['high_norm_tokens_per_image']:.1f}, their attention mass {r['attn_mass_on_high_norm_mean']:.3f} "
+              f"(bg fraction {r['high_norm_bg_fraction_mean']:.2f}); target/bg per-token ratio "
+              f"{r['per_token_ratio_target_over_bg']:.1f} -> {r['per_token_ratio_excluding_high_norm']:.1f} "
+              f"excluding high-norm", flush=True)
+    with open(out_dir / "attn_norm_control.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"Saved: {out_dir / 'attn_norm_control.json'}")
+    return res
+
+
+# ---------------------------------------------------------------------------
 # Head scan — which attention heads carry the selection effect?  Zero-ablate
 # one head (or one whole layer) with the shared HeadAblator, run the two
 # referring questions, and measure per block the target's projection onto its
@@ -1809,6 +2015,11 @@ def main():
     ap.add_argument("--patching-stats", default="outputs/analysis/activation_patching/clevr_dinov2_decoder1l_scratch/headwise_by_type_stats.json")
     ap.add_argument("--readout", action="store_true",
                     help="only: decoder attention by owner + token swaps between conditions (new files)")
+    ap.add_argument("--marker-test", action="store_true",
+                    help="only: transplant the referent-marker direction onto the distractor's patches (new files)")
+    ap.add_argument("--marker-alphas", default="1,2")
+    ap.add_argument("--attn-norm-control", action="store_true",
+                    help="only: decoder attention vs token norm (attention-sink guard, new files)")
     ap.add_argument("--with-absent", action="store_true")
     ap.add_argument("--n-pairs", type=int, default=0, help="subsample eligible pairs (0 = all)")
     ap.add_argument("--bg-per-image", type=int, default=64)
@@ -1893,6 +2104,15 @@ def main():
             attention, swap = run_readout(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])
             gca_layers = [int(l) for l in np.load(out_dir / "n2" / "feats_c0.npz")["gca_layers"]]
             plot_readout(attention, swap, label, out_dir / "readout.png", gca_layers)
+            return
+        if args.marker_test:
+            ensure_model(state, args)
+            res = run_marker_test(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])
+            plot_marker_test(res, label, out_dir / "marker_test.png")
+            return
+        if args.attn_norm_control:
+            ensure_model(state, args)
+            run_attn_norm_control(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])
             return
         if args.intervene:
             ensure_model(state, args)
