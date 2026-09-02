@@ -317,6 +317,102 @@ def draw_vectors(root, out_path):
         print("  %-22s q=%+6.1f  s_ref=%+6.1f  s_nonref=%+6.1f" % (r[0].replace("\n", " "), r[1], r[2], r[3]))
 
 
+# ---------------------------------------------------------------------------
+# 4. background-template definition
+# ---------------------------------------------------------------------------
+
+def _mini_grid(ax, x0, y0, n, cell, objs=(), hl=None, excl=False):
+    """n x n grid at (x0,y0). objs: {(r,c): colour}. hl: (r,c) highlighted position.
+    excl: cross over the highlighted cell (position not background in this image)."""
+    for r in range(n):
+        for c in range(n):
+            col = objs.get((r, c), "#e8e6e1")
+            ax.add_patch(Rectangle((x0 + c * cell, y0 + (n - 1 - r) * cell), cell, cell,
+                                   facecolor=col, edgecolor="white", lw=0.6))
+    if hl is None:
+        return None
+    r, c = hl
+    x, y = x0 + c * cell, y0 + (n - 1 - r) * cell
+    ax.add_patch(Rectangle((x, y), cell, cell, facecolor="none", edgecolor="k", lw=2.2, zorder=5))
+    if excl:
+        ax.plot([x + 0.12 * cell, x + 0.88 * cell], [y + 0.12 * cell, y + 0.88 * cell], "k-", lw=1.6, zorder=6)
+        ax.plot([x + 0.12 * cell, x + 0.88 * cell], [y + 0.88 * cell, y + 0.12 * cell], "k-", lw=1.6, zorder=6)
+    return x + cell / 2, y + cell / 2
+
+
+def draw_template(out_path):
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(20, 6.2), gridspec_kw={"width_ratios": [1.35, 1]})
+    for ax, xmax in ((a1, 15.2), (a2, 11.2)):
+        ax.set_xlim(0, xmax)
+        ax.set_ylim(-2.0, 6.4)
+        ax.set_aspect("equal")
+        ax.axis("off")
+    n, cell = 6, 0.55
+    gw = n * cell                                   # 3.3
+    HL = (3, 2)                                     # the position p, same in every image
+    OBJ1 = {(1, 4): TARGET_RGB, (1, 5): TARGET_RGB, (2, 4): TARGET_RGB}
+    OBJ2 = {(3, 2): DISTRACTOR_RGB, (3, 3): DISTRACTOR_RGB, (4, 2): DISTRACTOR_RGB}   # covers p
+    OBJ3 = {(4, 0): TARGET_RGB, (5, 0): TARGET_RGB, (5, 1): TARGET_RGB}
+    y0 = 1.6
+    centers = []
+    for k, (name, objs, excl) in enumerate([("image 1", OBJ1, False), ("image 2", OBJ2, True),
+                                            ("image 3", OBJ3, False)]):
+        xg = 0.2 + k * (gw + 0.55)
+        cx, cy = _mini_grid(a1, xg, y0, n, cell, objs, HL, excl)
+        a1.text(xg + gw / 2, y0 - 0.3, name, ha="center", va="top", fontsize=11, clip_on=True)
+        a1.text(xg + gw / 2, y0 + gw + 0.12,
+                "$p$ on background ✓" if not excl else "$p$ on an object ✗",
+                ha="center", va="bottom", fontsize=10, color="k" if not excl else "0.45", clip_on=True)
+        if not excl:
+            centers.append((cx, cy))
+    a1.text(0.2 + 3 * (gw + 0.55) + 0.15, y0 + gw / 2, "· · ·", fontsize=15, va="center")
+    tx, ty = 13.6, y0 + gw / 2 - 0.4
+    a1.add_patch(Rectangle((tx, ty), 0.8, 0.8, facecolor="#c8c4bc", edgecolor="k", lw=2.2))
+    a1.text(tx + 0.4, ty + 0.95, "$t_\\ell(p)$", ha="center", fontsize=15)
+    a1.text(tx + 0.4, ty - 0.3, "mean of the\n✓ tokens", ha="center", va="top", fontsize=10)
+    for cx, cy in centers:
+        a1.add_patch(FancyArrowPatch((cx, cy), (tx, ty + 0.4), arrowstyle="-|>", mutation_scale=12,
+                                     color="0.45", lw=1.2, connectionstyle="arc3,rad=-0.22"))
+    a1.set_title("Step 1 — background template $t_\\ell(p)$", fontsize=S["subplot_title_fontsize"])
+    a1.text(7.6, -0.8,
+            "$t_\\ell(p)$ = mean of the block-$\\ell$ tokens at grid position $p$, over the images in which $p$ is background\n"
+            "(19–60 images per position, 36 on average; computed once, from the no-question forward passes only)",
+            ha="center", va="top", fontsize=12)
+    # ---- step 2
+    OBJ = {(2, 1): TARGET_RGB, (2, 2): TARGET_RGB, (3, 1): TARGET_RGB}
+    x0 = 0.3
+    _mini_grid(a2, x0, y0, n, cell, OBJ)
+    pcs = []
+    for (r, c) in sorted(OBJ):
+        x, y = x0 + c * cell, y0 + (n - 1 - r) * cell
+        a2.add_patch(Rectangle((x, y), cell, cell, facecolor="none", edgecolor="k", lw=2.0, zorder=5))
+        pcs.append((x + cell / 2, y + cell / 2))
+    a2.text(x0 + gw / 2, y0 - 0.3, "one image; object $i$ occupies patches $p_1, p_2, p_3$",
+            ha="center", va="top", fontsize=11)
+    colx = 5.6
+    rows = [4.5, 3.2, 1.9]
+    for (cx, cy), ry, k in zip(pcs, rows, (1, 2, 3)):
+        a2.add_patch(FancyArrowPatch((cx, cy), (colx - 0.35, ry + 0.25), arrowstyle="-|>", mutation_scale=11,
+                                     color="0.45", lw=1.1, connectionstyle="arc3,rad=0.12"))
+        a2.add_patch(Rectangle((colx, ry), 0.5, 0.5, facecolor=TARGET_RGB, edgecolor="k", lw=1.2))
+        a2.text(colx + 0.63, ry + 0.25, "$-$", fontsize=13, va="center")
+        a2.add_patch(Rectangle((colx + 0.85, ry), 0.5, 0.5, facecolor="#c8c4bc", edgecolor="k", lw=1.2))
+        a2.text(colx + 1.5, ry + 0.25, f"$h_\\ell(p_{k}) - t_\\ell(p_{k})$", fontsize=12, va="center")
+    a2.add_patch(FancyArrowPatch((colx + 2.0, 1.7), (colx + 2.0, 0.9), arrowstyle="-|>", mutation_scale=14,
+                                 color="k", lw=1.6))
+    a2.text(colx + 2.3, 1.3, "mean over the object's patches", fontsize=10, va="center")
+    a2.text(colx + 2.0, 0.45, "$o_\\ell(i)$  object vector", ha="center", fontsize=14)
+    a2.set_title("Step 2 — object vector $o_\\ell(i)$: each patch subtracts its own position's template",
+                 fontsize=S["subplot_title_fontsize"])
+    a2.text(5.6, -0.8,
+            "$o_\\ell(i) = \\frac{1}{|P_i|}\\sum_{p \\in P_i}\\left[h_\\ell(p) - t_\\ell(p)\\right]$;"
+            "  the same $t_\\ell$ is used in all four question conditions",
+            ha="center", va="top", fontsize=12)
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", default="outputs/analysis/patch_language_condition")
@@ -332,6 +428,7 @@ def main():
         panels.append(("SigLIP", out / "siglip", "color"))
     draw_summary(panels, out / "schematic_mechanism_by_block.png")
     draw_vectors(out, out / "schematic_vector_decomposition.png")
+    draw_template(out / "schematic_background_template.png")
 
 
 if __name__ == "__main__":
