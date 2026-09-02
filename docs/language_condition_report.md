@@ -1,6 +1,6 @@
 # 問題怎麼改變物件的 patch token：語言條件實驗整理報告
 
-整理日期 2026-08-31。對應 registry 條目 X21（A 到 K）、程式
+整理日期 2026-08-31。本報告描述語言條件實驗套件全部十一個 run（registry 條目 X21 A 到 K，編號只在 `docs/experiment_registry.md` 內部使用）、程式
 `scripts/analysis/patch_language_condition.py`、結果目錄
 `outputs/analysis/patch_language_condition/`，數據總表見文末（由
 `scripts/analysis/language_condition_table.py` 產生，`summary_table.{md,csv}`）。

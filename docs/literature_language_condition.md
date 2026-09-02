@@ -2,25 +2,25 @@
 
 整理日期 2026-08-31。兩次網路搜尋（各一個 agent，2026-08-31），只收錄有
 arXiv 編號或 DOI 可核對的論文。每一條先寫文獻量到什麼，再寫與本專案哪一項結
-果對應（結果編號依 `docs/language_condition_report.md` 與 registry X21）。
+果對應（各結果的完整描述見 `docs/language_condition_report.md`；registry 條目編號 X21 只在 `docs/experiment_registry.md` 內部使用，本文以實驗內容稱呼）。
 
 ## 一、selection 是「移除」還是「標記」
 
-**與 MAE 的標記式 selection 對應（X21 K）**
+**與 MAE 的標記式 selection 對應（MAE 重跑：referent probe 與 decoder 注意力）**
 
 - Song, Lepori & Pavlick (2026). *Linguistic Context Recodes Visual Representations in Vision-Language Models.* arXiv:2608.00035。在 Qwen2.5-VL-7B 與 InternVL3-8B 上量到影像 token 上有可線性讀出的「reference」標記（中後層達峰，steering 可翻轉答案），以及 referent 的 shape／colour 投影在後層上升。對應：MAE 的 referent probe 由 block 7 的 0.79 升到 0.99，是同一種標記；他們的「屬性放大」與我們 DINOv2／SigLIP 的「從 non-referent 移除」方向相反，但他們沒有量 non-referent 的投影是否下降，所以兩者並不矛盾；本專案在四個屬性上量到的「抬升幅度隨 backbone 預設保留程度而變」，文獻中沒有找到先例。
 - Assouel, Campbell, Bengio & Webb (2025). *Visual symbolic mechanisms.* arXiv:2506.15871。七個 VLM 中找到與內容無關的位置 ID：ID-retrieval head（第 12–16 層）、ID-selection head（18–19）、feature-retrieval head（20–27）以 ID 為指標取屬性。對應：指標式 selection 加讀出端取值、不改動 non-target 的內容，與 MAE 的路徑同一類；三階段順序與「中段標記、最後由 decoder 注意力取值」平行。
 - Hasani et al. (2025). *Uncovering Grounding IDs.* arXiv:2509.24072。外部分割線索在 object patch 上誘發潛在識別碼（第 20–27 層），交換 patch 活化後預測跟著識別碼走（0.98）。對應：同樣是把 selection 寫成 token 上的識別碼而非屬性內容。
 - Haputhanthri, Campbell, Assouel, Cohen & Webb (2026). *Binding Visual Features Point by Point.* arXiv:2605.25427。訓練 VLM 輸出座標會誘發序列式的視覺搜尋。對應：把 selection 框成一次注意一個物件，與 decoder 注意力集中在 referent 的讀出一致。
 
-**與 DINOv2／SigLIP 的移除式 selection 對應（X21 E、G、J）**
+**與 DINOv2／SigLIP 的移除式 selection 對應（attribute-direction 投影：colour、shape、material、size）**
 
 - Golovanevsky et al. (2024/2025). *What Do VLMs NOTICE?* arXiv:2406.16320。在 BLIP 類模型上以 activation patching 找到中層 cross-attention head 做「object inhibition」「outlier inhibition」。對應：唯一明確以 cross-attention head 的「抑制」描述物件層級 selection 的機制文獻，但沒有量屬性內容是否從 patch token 移除；本專案補上了這一步。
 - Cui et al. (2026). *The Dual Mechanisms of Spatial Variable Binding in VLMs.* arXiv:2603.22278。binding 用的空間資訊分佈在包含背景在內的全部視覺 token。對應：DINOv2 在 block 11 把 selection 資訊複製到背景 token。
 - Campbell et al. (2024). *Understanding the Limits of VLMs Through the Lens of the Binding Problem.* arXiv:2411.00238（NeurIPS 2024）。從認知科學論證多物件失效來自共享表徵需要序列注意力。對應：本專案「物件數超過兩個」的規劃依據；biased-competition 傳統（Desimone & Duncan 1995）在 2024–2026 的 ML 文獻中只經由此篇連結。
 - *Latent Noise Mask for Reducing Visual Redundancy in MLLMs* (2026). arXiv:2606.30168。與問題無關的視覺 token 會與證據 token 競爭，需另外學一個依問題的相關性遮罩。對應：工程面把「壓掉無關 token」當成模型預設做不好的事；本專案顯示 gated cross-attention 自己學會了這件事（DINOv2／SigLIP），而 MAE 上則改為標記。
 
-**讀出端的 selection（X21 D、K）**
+**讀出端的 selection（token 交換與 decoder 注意力；MAE 重跑）**
 
 - Neo et al. (2025). ICLR 2025, arXiv:2410.07149：LLaVA 中物件資訊留在物件自己的視覺 token，後層由最後一個位置取出。對應：答案由物件 token 而非全域摘要決定。
 - Zhang, Yadav, Han & Shutova (2025). CVPR 2025, arXiv:2411.18620：中層只搬運與問題相關那個物件的資訊。對應：中段的 selection。
@@ -30,7 +30,7 @@ arXiv 編號或 DOI 可核對的論文。每一條先寫文獻量到什麼，再
 - Kang et al. (2025). ICLR 2025, arXiv:2503.03321；Luo et al. (2025). arXiv:2510.08510；Jiang, Dravid, Efros & Gandelsman (2025). NeurIPS 2025, arXiv:2506.08010：高 norm 的 sink／register token 不論問題都吸引注意力。對應：**需要補一項對照**——decoder 對 referent 的注意力（每 patch 約 100 倍於背景）要對 token norm 檢查，確認集中來自物件而非高 norm token；DINOv2 無 register，是已知易出現 sink 的 backbone。
 - Liu et al. (2025). arXiv:2510.04819：LM 內部的影像 value token 可零樣本做 referring-expression 偵測。對應：referent selection 可由語言條件下的影像 token 讀出。
 
-## 二、預訓練目標與 patch token 保留哪些屬性（X19、X21 G、J、K）
+## 二、預訓練目標與 patch token 保留哪些屬性（不給問題的加性結構實驗；shape／material／size 與 MAE 重跑）
 
 - Park et al. (2023). ICLR 2023, arXiv:2305.00729：contrastive 模型後層偏向低頻、形狀導向的全域樣式，masked-image-modelling 偏向高頻、紋理導向且主要在淺層。對應：DINOv2／SigLIP「shape 隨深度增加、colour 消失」對 MAE「全部保留」的分野最接近的先例。
 - Dorszewski et al. (2025). arXiv:2503.24071：逐層神經元標記；所有模型第一層以顏色概念為主、到最後一層幾乎消失；MAE 中層近半神經元對應材質與紋理。對應：與本專案的 colour RSA 曲線（0.43 → 0.01）一致；**但他們的顏色消失包含 MAE，與本專案 MAE 到 block 11 仍保留顏色（RSA 0.52）相反**，寫報告時要明說這個分歧（他們量的是神經元概念標記，我們量的是 patch 向量的 RSA，量法不同）。
