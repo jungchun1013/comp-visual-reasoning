@@ -341,10 +341,10 @@ def _mini_grid(ax, x0, y0, n, cell, objs=(), hl=None, excl=False):
 
 
 def draw_template(out_path):
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(20, 6.2), gridspec_kw={"width_ratios": [1.35, 1]})
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(21, 8.0), gridspec_kw={"width_ratios": [1.35, 1]})
     for ax, xmax in ((a1, 15.2), (a2, 11.2)):
         ax.set_xlim(0, xmax)
-        ax.set_ylim(-2.0, 6.4)
+        ax.set_ylim(-2.6, 6.6)
         ax.set_aspect("equal")
         ax.axis("off")
     n, cell = 6, 0.55
@@ -359,25 +359,27 @@ def draw_template(out_path):
                                             ("image 3", OBJ3, False)]):
         xg = 0.2 + k * (gw + 0.55)
         cx, cy = _mini_grid(a1, xg, y0, n, cell, objs, HL, excl)
-        a1.text(xg + gw / 2, y0 - 0.3, name, ha="center", va="top", fontsize=11, clip_on=True)
+        a1.text(xg + gw / 2, y0 - 0.32, name, ha="center", va="top", fontsize=14, clip_on=True)
         a1.text(xg + gw / 2, y0 + gw + 0.12,
                 "$p$ on background ✓" if not excl else "$p$ on an object ✗",
-                ha="center", va="bottom", fontsize=10, color="k" if not excl else "0.45", clip_on=True)
+                ha="center", va="bottom", fontsize=13, color="k" if not excl else "0.45", clip_on=True)
         if not excl:
             centers.append((cx, cy))
-    a1.text(0.2 + 3 * (gw + 0.55) + 0.15, y0 + gw / 2, "· · ·", fontsize=15, va="center")
-    tx, ty = 13.6, y0 + gw / 2 - 0.4
-    a1.add_patch(Rectangle((tx, ty), 0.8, 0.8, facecolor="#c8c4bc", edgecolor="k", lw=2.2))
-    a1.text(tx + 0.4, ty + 0.95, "$t_\\ell(p)$", ha="center", fontsize=15)
-    a1.text(tx + 0.4, ty - 0.3, "mean of the\n✓ tokens", ha="center", va="top", fontsize=10)
+    a1.text(0.2 + 3 * (gw + 0.55) + 0.15, y0 + gw / 2, "· · ·", fontsize=16, va="center")
+    tx, ty = 13.5, y0 + gw / 2 - 0.4
+    a1.add_patch(Rectangle((tx, ty), 0.9, 0.9, facecolor="#c8c4bc", edgecolor="k", lw=2.4))
+    a1.text(tx + 0.45, ty + 1.05, "$\\hat t_\\ell(p)$", ha="center", fontsize=18)
+    a1.text(tx + 0.45, ty - 0.3, "mean of the\n✓ tokens", ha="center", va="top", fontsize=13)
     for cx, cy in centers:
-        a1.add_patch(FancyArrowPatch((cx, cy), (tx, ty + 0.4), arrowstyle="-|>", mutation_scale=12,
-                                     color="0.45", lw=1.2, connectionstyle="arc3,rad=-0.22"))
-    a1.set_title("Step 1 — background template $t_\\ell(p)$", fontsize=S["subplot_title_fontsize"])
-    a1.text(7.6, -0.8,
-            "$t_\\ell(p)$ = mean of the block-$\\ell$ tokens at grid position $p$, over the images in which $p$ is background\n"
-            "(19–60 images per position, 36 on average; computed once, from the no-question forward passes only)",
-            ha="center", va="top", fontsize=12)
+        a1.add_patch(FancyArrowPatch((cx, cy), (tx, ty + 0.45), arrowstyle="-|>", mutation_scale=13,
+                                     color="0.45", lw=1.3, connectionstyle="arc3,rad=-0.22"))
+    a1.set_title("Step 1 — estimate the background template", fontsize=21, pad=14)
+    a1.text(7.6, -1.0,
+            "$\\hat t_\\ell(p) \\;=\\; \\frac{1}{|\\mathcal{I}_p|}\\sum_{I \\in \\mathcal{I}_p} h_\\ell(p;\\, I)$,"
+            "$\\qquad \\mathcal{I}_p = \\{\\,\\mathrm{images}\\ I:\\ p\\ \\mathrm{is\\ background\\ in}\\ I\\,\\}$",
+            ha="center", va="top", fontsize=17)
+    a1.text(7.6, -2.0, "$|\\mathcal{I}_p|$ = 19–60 per position (mean 36); estimated once, from the no-question passes only",
+            ha="center", va="top", fontsize=13, color="0.35")
     # ---- step 2
     OBJ = {(2, 1): TARGET_RGB, (2, 2): TARGET_RGB, (3, 1): TARGET_RGB}
     x0 = 0.3
@@ -387,27 +389,31 @@ def draw_template(out_path):
         x, y = x0 + c * cell, y0 + (n - 1 - r) * cell
         a2.add_patch(Rectangle((x, y), cell, cell, facecolor="none", edgecolor="k", lw=2.0, zorder=5))
         pcs.append((x + cell / 2, y + cell / 2))
-    a2.text(x0 + gw / 2, y0 - 0.3, "one image; object $i$ occupies patches $p_1, p_2, p_3$",
-            ha="center", va="top", fontsize=11)
-    colx = 5.6
-    rows = [4.5, 3.2, 1.9]
+    a2.text(x0 + gw / 2, y0 - 0.32, "one image; object $i$ occupies $p_1, p_2, p_3$",
+            ha="center", va="top", fontsize=14)
+    colx = 5.4
+    rows = [4.7, 3.3, 1.9]
     for (cx, cy), ry, k in zip(pcs, rows, (1, 2, 3)):
-        a2.add_patch(FancyArrowPatch((cx, cy), (colx - 0.35, ry + 0.25), arrowstyle="-|>", mutation_scale=11,
-                                     color="0.45", lw=1.1, connectionstyle="arc3,rad=0.12"))
-        a2.add_patch(Rectangle((colx, ry), 0.5, 0.5, facecolor=TARGET_RGB, edgecolor="k", lw=1.2))
-        a2.text(colx + 0.63, ry + 0.25, "$-$", fontsize=13, va="center")
-        a2.add_patch(Rectangle((colx + 0.85, ry), 0.5, 0.5, facecolor="#c8c4bc", edgecolor="k", lw=1.2))
-        a2.text(colx + 1.5, ry + 0.25, f"$h_\\ell(p_{k}) - t_\\ell(p_{k})$", fontsize=12, va="center")
-    a2.add_patch(FancyArrowPatch((colx + 2.0, 1.7), (colx + 2.0, 0.9), arrowstyle="-|>", mutation_scale=14,
-                                 color="k", lw=1.6))
-    a2.text(colx + 2.3, 1.3, "mean over the object's patches", fontsize=10, va="center")
-    a2.text(colx + 2.0, 0.45, "$o_\\ell(i)$  object vector", ha="center", fontsize=14)
-    a2.set_title("Step 2 — object vector $o_\\ell(i)$: each patch subtracts its own position's template",
-                 fontsize=S["subplot_title_fontsize"])
-    a2.text(5.6, -0.8,
-            "$o_\\ell(i) = \\frac{1}{|P_i|}\\sum_{p \\in P_i}\\left[h_\\ell(p) - t_\\ell(p)\\right]$;"
-            "  the same $t_\\ell$ is used in all four question conditions",
-            ha="center", va="top", fontsize=12)
+        a2.add_patch(FancyArrowPatch((cx, cy), (colx - 0.35, ry + 0.27), arrowstyle="-|>", mutation_scale=12,
+                                     color="0.45", lw=1.2, connectionstyle="arc3,rad=0.12"))
+        a2.add_patch(Rectangle((colx, ry), 0.55, 0.55, facecolor=TARGET_RGB, edgecolor="k", lw=1.2))
+        a2.text(colx + 0.7, ry + 0.27, "$-$", fontsize=15, va="center")
+        a2.add_patch(Rectangle((colx + 0.95, ry), 0.55, 0.55, facecolor="#c8c4bc", edgecolor="k", lw=1.2))
+        a2.text(colx + 1.68, ry + 0.27, f"$h_\\ell(p_{k}) - \\hat t_\\ell(p_{k})$", fontsize=15, va="center")
+    a2.add_patch(FancyArrowPatch((colx + 2.2, 1.65), (colx + 2.2, 0.85), arrowstyle="-|>", mutation_scale=15,
+                                 color="k", lw=1.8))
+    a2.text(colx + 2.5, 1.25, "mean over the\nobject's patches", fontsize=13, va="center")
+    a2.text(colx + 2.2, 0.35, "$\\hat o_\\ell(i)$", ha="center", fontsize=18)
+    a2.set_title("Step 2 — recover the object vector", fontsize=21, pad=14)
+    a2.text(5.6, -1.0,
+            "$\\hat o_\\ell(i) \\;=\\; \\frac{1}{|P_i|}\\sum_{p \\in P_i}\\left[\\,h_\\ell(p) - \\hat t_\\ell(p)\\,\\right]$",
+            ha="center", va="top", fontsize=17)
+    a2.text(5.6, -2.0, "the same $\\hat t_\\ell$ is subtracted in all four question conditions",
+            ha="center", va="top", fontsize=13, color="0.35")
+    fig.suptitle("Additive model:  $h_\\ell(p) \\;=\\; t_\\ell(p) \\;+\\; o_\\ell(i)\\,\\cdot\\,"
+                 "\\mathbf{1}[\\,p \\in \\mathrm{object}\\ i\\,]$"
+                 "  —  every patch contains the background term; only object patches add an object term",
+                 fontsize=20, y=1.02)
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out_path}")
