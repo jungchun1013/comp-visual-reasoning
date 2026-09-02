@@ -109,7 +109,7 @@ def language_condition_section_lines():
     lines = ["## Language-condition suite (patch tokens under referring questions)", "",
              "One row per run (backbone / queried attribute). Selection contrast = target's projection on its own "
              "queried-attribute direction, refer target − refer distractor. RSA = Spearman correlation of the "
-             "target's offset (per-position template subtracted) with the queried-attribute model RDM. "
+             "target's object vector (per-position background vector subtracted) with the queried-attribute model RDM. "
              "'Answer follows X' = proportion of images whose answer becomes the distractor's value after "
              "replacing token group X from the refer-distractor forward pass at that block.", "",
              "| run | " + " | ".join(name for name, _ in COLS) + " |",

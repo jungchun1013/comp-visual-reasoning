@@ -6,7 +6,7 @@ in the repo — every other script plots measured curves only).
    reads the answer.
 2. schematic_mechanism_by_block.png — 12-block × 5-row grid of the measured
    quantities per backbone (numbers from the result JSONs, nothing hand-set).
-3. schematic_vector_decomposition.png — the vector relations (template,
+3. schematic_vector_decomposition.png — the vector relations (background vector,
    object vector, question-general component q, selection component s) and
    their measured projections per run.
 
@@ -247,13 +247,13 @@ def _vector_panel(ax, mode):
     # axes: horizontal = the object's own queried-attribute direction v
     _arrow(ax, (-0.4, 0), (4.5, 0), "k", lw=1.5, z=1)
     _arrow(ax, (0, -0.3), (0, 2.9), "k", lw=1.5, z=1)
-    ax.text(2.2, -0.55, "own queried-attribute direction $v$", ha="center", va="top", fontsize=12)
+    ax.text(2.2, -0.55, "own queried-attribute direction $u$", ha="center", va="top", fontsize=12)
     ax.text(-0.15, 2.85, "other directions", ha="right", va="top", fontsize=12, rotation=90)
     ax.plot([0], [0], "ko", ms=6, zorder=4)
-    ax.text(-0.15, 0.12, "$t_\\ell(p)$\nbackground\ntemplate", ha="right", va="bottom", fontsize=10)
+    ax.text(-0.15, 0.12, "$V_{b,\\ell}(p)$\nbackground\nvector", ha="right", va="bottom", fontsize=10)
     P0 = (1.9, 1.0)      # no question
     _arrow(ax, (0, 0), P0, "0.35")
-    ax.text(0.75, 0.75, "$o^{\\varnothing}$", fontsize=14, color="0.35", ha="right")
+    ax.text(0.75, 0.75, "$V_o^{\\varnothing}$", fontsize=14, color="0.35", ha="right")
     ax.plot([P0[0]], [P0[1]], "o", color="0.35", ms=6, zorder=4)
     ax.text(P0[0] - 0.1, P0[1] + 0.12, "no question", fontsize=11, color="0.35", ha="right")
     if mode == "removal":
@@ -298,9 +298,9 @@ def draw_vectors(root, out_path):
     ax = fig.add_subplot(gs[2])
     x = np.arange(len(rows))
     w = 0.27
-    ax.bar(x - w, [r[1] for r in rows], w, color="#2ca02c", label="$\\langle q, v\\rangle$: question, both objects")
-    ax.bar(x, [r[2] for r in rows], w, color=TARGET_RGB, label="$\\langle s_{\\mathrm{ref}}, v\\rangle$: referent only")
-    ax.bar(x + w, [r[3] for r in rows], w, color=DISTRACTOR_RGB, label="$\\langle s_{\\mathrm{non\\text{-}ref}}, v\\rangle$: non-referent only")
+    ax.bar(x - w, [r[1] for r in rows], w, color="#2ca02c", label="$\\langle q, u\\rangle$: question, both objects")
+    ax.bar(x, [r[2] for r in rows], w, color=TARGET_RGB, label="$\\langle s_{\\mathrm{ref}}, u\\rangle$: referent only")
+    ax.bar(x + w, [r[3] for r in rows], w, color=DISTRACTOR_RGB, label="$\\langle s_{\\mathrm{non\\text{-}ref}}, u\\rangle$: non-referent only")
     ax.axhline(0, color="k", lw=1)
     ax.set_xticks(x)
     ax.set_xticklabels([r[0] for r in rows], fontsize=11)
@@ -308,7 +308,7 @@ def draw_vectors(root, out_path):
     ax.tick_params(axis="y", labelsize=S["tick_labelsize"], width=S["tick_width"])
     ax.legend(fontsize=12, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, frameon=False)
     ax.set_title("Measured decomposition (target object)", fontsize=S["subplot_title_fontsize"])
-    fig.suptitle("Token = background template + object vector;  object vector = no-question vector + q + s",
+    fig.suptitle("$V_{\\mathrm{patch}}(p) = V_b(p) + V_o(i)$;   after a question: $V_o = V_o^{\\varnothing} + q + s$",
                  fontsize=S["suptitle_fontsize"], y=1.02)
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
@@ -318,7 +318,7 @@ def draw_vectors(root, out_path):
 
 
 # ---------------------------------------------------------------------------
-# 4. background-template definition
+# 4. background-vector definition
 # ---------------------------------------------------------------------------
 
 def _mini_grid(ax, x0, y0, n, cell, objs=(), hl=None, excl=False):
@@ -368,14 +368,14 @@ def draw_template(out_path):
     a1.text(0.2 + 3 * (gw + 0.55) + 0.15, y0 + gw / 2, "· · ·", fontsize=16, va="center")
     tx, ty = 13.5, y0 + gw / 2 - 0.4
     a1.add_patch(Rectangle((tx, ty), 0.9, 0.9, facecolor="#c8c4bc", edgecolor="k", lw=2.4))
-    a1.text(tx + 0.45, ty + 1.05, "$\\hat t_\\ell(p)$", ha="center", fontsize=18)
+    a1.text(tx + 0.45, ty + 1.05, "$\\hat V_{b,\\ell}(p)$", ha="center", fontsize=18)
     a1.text(tx + 0.45, ty - 0.3, "mean of the\n✓ tokens", ha="center", va="top", fontsize=13)
     for cx, cy in centers:
         a1.add_patch(FancyArrowPatch((cx, cy), (tx, ty + 0.45), arrowstyle="-|>", mutation_scale=13,
                                      color="0.45", lw=1.3, connectionstyle="arc3,rad=-0.22"))
-    a1.set_title("Step 1 — estimate the background template", fontsize=21, pad=14)
+    a1.set_title("Step 1 — estimate the background vector", fontsize=21, pad=14)
     a1.text(7.6, -1.0,
-            "$\\hat t_\\ell(p) \\;=\\; \\frac{1}{|\\mathcal{I}_p|}\\sum_{I \\in \\mathcal{I}_p} h_\\ell(p;\\, I)$,"
+            "$\\hat V_{b,\\ell}(p) \\;=\\; \\frac{1}{|\\mathcal{I}_p|}\\sum_{I \\in \\mathcal{I}_p} V_{\\mathrm{patch},\\ell}(p;\\, I)$,"
             "$\\qquad \\mathcal{I}_p = \\{\\,\\mathrm{images}\\ I:\\ p\\ \\mathrm{is\\ background\\ in}\\ I\\,\\}$",
             ha="center", va="top", fontsize=17)
     a1.text(7.6, -2.0, "$|\\mathcal{I}_p|$ = 19–60 per position (mean 36); estimated once, from the no-question passes only",
@@ -399,18 +399,18 @@ def draw_template(out_path):
         a2.add_patch(Rectangle((colx, ry), 0.55, 0.55, facecolor=TARGET_RGB, edgecolor="k", lw=1.2))
         a2.text(colx + 0.7, ry + 0.27, "$-$", fontsize=15, va="center")
         a2.add_patch(Rectangle((colx + 0.95, ry), 0.55, 0.55, facecolor="#c8c4bc", edgecolor="k", lw=1.2))
-        a2.text(colx + 1.68, ry + 0.27, f"$h_\\ell(p_{k}) - \\hat t_\\ell(p_{k})$", fontsize=15, va="center")
+        a2.text(colx + 1.68, ry + 0.27, f"$V_{{\\mathrm{{patch}}}}(p_{k}) - \\hat V_b(p_{k})$", fontsize=15, va="center")
     a2.add_patch(FancyArrowPatch((colx + 2.2, 1.65), (colx + 2.2, 0.85), arrowstyle="-|>", mutation_scale=15,
                                  color="k", lw=1.8))
     a2.text(colx + 2.5, 1.25, "mean over the\nobject's patches", fontsize=13, va="center")
-    a2.text(colx + 2.2, 0.35, "$\\hat o_\\ell(i)$", ha="center", fontsize=18)
+    a2.text(colx + 2.2, 0.35, "$\\hat V_{o,\\ell}(i)$", ha="center", fontsize=18)
     a2.set_title("Step 2 — recover the object vector", fontsize=21, pad=14)
     a2.text(5.6, -1.0,
-            "$\\hat o_\\ell(i) \\;=\\; \\frac{1}{|P_i|}\\sum_{p \\in P_i}\\left[\\,h_\\ell(p) - \\hat t_\\ell(p)\\,\\right]$",
+            "$\\hat V_{o,\\ell}(i) \\;=\\; \\frac{1}{|P_i|}\\sum_{p \\in P_i}\\left[\\,V_{\\mathrm{patch},\\ell}(p) - \\hat V_{b,\\ell}(p)\\,\\right]$",
             ha="center", va="top", fontsize=17)
-    a2.text(5.6, -2.0, "the same $\\hat t_\\ell$ is subtracted in all four question conditions",
+    a2.text(5.6, -2.0, "the same $\\hat V_{b,\\ell}$ is subtracted in all four question conditions",
             ha="center", va="top", fontsize=13, color="0.35")
-    fig.suptitle("Additive model:  $h_\\ell(p) \\;=\\; t_\\ell(p) \\;+\\; o_\\ell(i)\\,\\cdot\\,"
+    fig.suptitle("Additive model:  $V_{\\mathrm{patch},\\ell}(p) \\;=\\; V_{b,\\ell}(p) \\;+\\; V_{o,\\ell}(i)\\,\\cdot\\,"
                  "\\mathbf{1}[\\,p \\in \\mathrm{object}\\ i\\,]$"
                  "  —  every patch contains the background term; only object patches add an object term",
                  fontsize=20, y=1.02)
