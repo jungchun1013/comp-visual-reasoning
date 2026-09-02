@@ -43,6 +43,54 @@
   underpowered; no correlation with correctness is estimable. Net: the
   "anchor → target handoff" (RESULTS §9) is still correlational; the causal
   version is the 3-object transplant run launched today.
+- **2026-09-02 — Relational questions on 3-object scenes (DINOv2, local patches
+  + 1-layer decoder): the anchor → answer handoff is causal and in-stream; the
+  spatial relation is written first as an absolute-position field, then as an
+  anchor-centred one.** New `--relational {same,spatial}` mode of
+  `patch_language_condition.py` on `data/clevr_three_object_v2` (672 renders,
+  three pairwise-distinct non-gray colours). Roles: anchor A (named in the
+  question), answer object T, third object D. Same-as: "There is another thing
+  that is the same {attr} as the {A colour} object; what is its color?" (652
+  scenes; clean run names A → answer T, corrupted run names T → answer A;
+  accuracy 0.97 / 0.98). Spatial: "What color is the object {left of / right
+  of / in front of / behind} the {A colour} object?" (494 scenes, relation
+  from mask centroids with ≥2-patch margins; corrupted run = opposite relation
+  word → answer D; accuracy 1.00 / 1.00). Outputs
+  `patch_language_condition/relational_{same,spatial}/`.
+  (1) Projection of the question's change onto each object's own colour
+  direction at block 11: same-as answer T +8.7, named A −1.4, third D +1.7;
+  under the corrupted run the A and T curves swap exactly. Spatial: T +10.1,
+  A +0.8, D +1.6, and again the boost follows the answer object. So the final
+  state is the two-object removal pattern with the answer object in the
+  target role and the named anchor treated as a non-referent.
+  (2) Token replacement (one group of the clean run replaced by the corrupted
+  run's tokens at block ℓ; clean-self control 1.00 at every cell). Same-as:
+  the named anchor's patches are causally needed from block 3 through block
+  10 (P(clean answer) 0.83 → 0.63, answer moving to A's colour up to 0.36) and
+  become irrelevant at block 11 (0.84); the answer object's patches likewise
+  (0.68 → 0.46 at block 7, answer moving to the third object D up to 0.32);
+  D's patches never matter; background patches carry the answer only at block
+  11 (P(clean answer) 0.34, P(A colour) 0.66). This is the causal version of
+  the RESULTS §9 RSA handoff: anchor information is used through block 10,
+  suppressed at 11, and the answer is relocated to the background copy by the
+  last GCA layer. Spatial: no object group is causal before block 9; at block
+  9 the two candidates' patches matter (T 0.77, D 0.68, answer moving to D
+  0.32), the anchor's barely (0.96 — expected, the anchor is the same object
+  in both runs); background carries the answer at block 11 (0.32, P(D) 0.68).
+  (3) GCA write norms: the anchor's patches receive the largest write at layer
+  9 (same 9.3 vs 6.8–7.0 for the others; spatial 8.5 vs 7.3–7.8); the
+  background receives the most at layer 11.
+  (4) Spatial write-position regression (263k background patches, per-patch
+  write-norm difference between the two relation words): R² on the absolute
+  coordinate along the relation axis 0.61 / 0.38 / 0.43 / 0.34 / 0.09 / 0.34
+  at layers 1/3/5/7/9/11; on the coordinate relative to the anchor centroid
+  0.00 / 0.00 / 0.33 / 0.00 / 0.66 / 0.59. The relation word is first
+  broadcast as a global left/right (front/behind) gradient over the image and
+  only at layers 9–11 rewritten as a gradient centred on the anchor — the
+  position computation lives in the background patches, which is why the
+  candidates' tokens only become causal at block 9. Behavioural shortcut
+  test (same-side vs opposite-side of the image centre) is at ceiling (1.00
+  both, n = 26 / 468) and uninformative for this checkpoint.
 - **2026-09-02 — Flamingo-style LoRA run launched; mirror model implemented.**
   Why the earlier LoRA attempt "would not run": that was the LLaVA-style script
   (`clevr_llava_dinov2_lora_s42`, 2026-06-02) — 576 vision tokens inside a 7B

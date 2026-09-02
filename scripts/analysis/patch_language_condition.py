@@ -278,7 +278,7 @@ def ensure_model(state, args):
     return state
 
 
-def extract_condition_sparse(sub_dir, cond, images, owners, labels, args, state):
+def extract_condition_sparse(sub_dir, cond, images, owners, labels, args, state, n_obj=2):
     npz = sub_dir / f"feats_{cond}.npz"
     if npz.exists():
         print(f"Cached features exist, not re-extracting: {npz}")
@@ -308,9 +308,9 @@ def extract_condition_sparse(sub_dir, cond, images, owners, labels, args, state)
             acc["tok_img"].append(np.full(len(keep), i, dtype=np.int16))
             acc["tok_pos"].append(keep.astype(np.int16))
             acc["tok_owner"].append(ow[keep].astype(np.int8))
-            om = np.zeros((2, NUM_LAYERS, normed.shape[-1]), np.float32)
+            om = np.zeros((n_obj, NUM_LAYERS, normed.shape[-1]), np.float32)
             rom = np.zeros_like(om)
-            for oid in (1, 2):
+            for oid in range(1, n_obj + 1):
                 sel = ow == oid
                 if sel.any():
                     om[oid - 1] = normed[bi][:, sel, :].mean(1)
@@ -1991,6 +1991,538 @@ def plot_token_norms(tn, label, out_path, grid):
 
 
 # ---------------------------------------------------------------------------
+# Relational questions on 3-object scenes (--relational {same,spatial}).
+# Roles per scene: A = the object named in the question (anchor), T = the
+# answer of the clean run, D = the third object (answer of the corrupted run).
+# Conditions: c0 no question; c1 clean run; c2 corrupted run (same template,
+# other anchor for `same`, opposite relation for `spatial`).
+# ---------------------------------------------------------------------------
+
+ROLES = ("A", "T", "D")
+ROLE_RGB = {"A": (0.58, 0.40, 0.74), "T": CLUSTER_RGB["target"], "D": CLUSTER_RGB["distractor"],
+            "bg": OWNER_RGB["bg"]}
+ROLE_LABEL = {"A": "anchor A (named in the question)", "T": "answer object T (clean run)",
+              "D": "other object D (corrupted-run answer)", "bg": "background"}
+SPATIAL_RELATIONS = ["left of", "right of", "in front of", "behind"]
+SPATIAL_OPPOSITE = {"left of": "right of", "right of": "left of", "in front of": "behind", "behind": "in front of"}
+SPATIAL_MARGIN = 2          # patches along the relation axis
+
+
+def scene_objects(e):
+    return [{k: e[k] for k in ATTRS}] + [{k: d[k] for k in ATTRS} for d in e["distractors"]]
+
+
+def seg_ok3(e):
+    """Three objects with pairwise-distinct, non-gray colours (colour segmentation)."""
+    cols = [e["color"]] + [d["color"] for d in e["distractors"]]
+    return len(e["distractors"]) == 2 and "gray" not in cols and len(set(cols)) == 3
+
+
+def mask_centroids(owner, n_obj, grid):
+    """(n_obj, 2) centroid (row, column) of each object's patches in the patch grid."""
+    c = np.full((n_obj, 2), np.nan)
+    for oid in range(n_obj):
+        pos = np.nonzero(owner == oid + 1)[0]
+        if len(pos):
+            c[oid] = [(pos // grid).mean(), (pos % grid).mean()]
+    return c
+
+
+def same_question(attr, anchor_color):
+    return f"There is another thing that is the same {attr} as the {anchor_color} object; what is its color?"
+
+
+def spatial_question(rel, anchor_color):
+    return f"What color is the object {rel} the {anchor_color} object?"
+
+
+def check_same(objs, anchor, attr, answer):
+    """Ground-truth rule: exactly one non-anchor object shares `attr` with the anchor, and it is `answer`."""
+    return [j for j in range(len(objs)) if j != anchor and objs[j][attr] == objs[anchor][attr]] == [answer]
+
+
+def spatial_axis_sign(rel):
+    """(axis, sign): axis 1 = column for left/right, 0 = row for front/behind;
+    sign so that `sign * (coord_object - coord_anchor) > 0` means the relation holds
+    (front = larger row)."""
+    axis = 1 if rel in ("left of", "right of") else 0
+    sign = -1 if rel in ("left of", "behind") else 1
+    return axis, sign
+
+
+def spatial_holds(cent, j, anchor, rel, margin=SPATIAL_MARGIN):
+    axis, sign = spatial_axis_sign(rel)
+    return sign * (cent[j, axis] - cent[anchor, axis]) >= margin
+
+
+def check_spatial(cent, anchor, rel, answer):
+    """Ground-truth rule: exactly one non-anchor object satisfies `rel` w.r.t. the anchor
+    (margin SPATIAL_MARGIN patches), and it is `answer`."""
+    return [j for j in range(len(cent)) if j != anchor and spatial_holds(cent, j, anchor, rel)] == [answer]
+
+
+def assign_roles(mode, objs, cent, grid):
+    """First (anchor, attribute | relation) in fixed order that leaves exactly one
+    answer object (and, for spatial, exactly one object on the opposite side);
+    returns the role record or None."""
+    n = len(objs)
+    for anchor in range(n):
+        others = [j for j in range(n) if j != anchor]
+        if mode == "same":
+            for a in ("shape", "material", "size"):
+                shares = [j for j in others if objs[j][a] == objs[anchor][a]]
+                if len(shares) != 1:
+                    continue
+                T = shares[0]
+                D = [j for j in others if j != T][0]
+                assert check_same(objs, anchor, a, T) and check_same(objs, T, a, anchor)
+                return {"A": anchor, "T": T, "D": D, "attribute": a,
+                        "questions": {"c1": same_question(a, objs[anchor]["color"]),
+                                      "c2": same_question(a, objs[T]["color"])},
+                        "referent_words": {"c1": objs[anchor]["color"], "c2": objs[T]["color"]},
+                        "answers": {"c1": objs[T]["color"], "c2": objs[anchor]["color"]}}
+        else:
+            for rel in SPATIAL_RELATIONS:
+                fwd = [j for j in others if spatial_holds(cent, j, anchor, rel)]
+                opp = [j for j in others if spatial_holds(cent, j, anchor, SPATIAL_OPPOSITE[rel])]
+                if len(fwd) != 1 or len(opp) != 1:
+                    continue
+                T, D = fwd[0], opp[0]
+                assert check_spatial(cent, anchor, rel, T) and check_spatial(cent, anchor, SPATIAL_OPPOSITE[rel], D)
+                axis, _ = spatial_axis_sign(rel)
+                centre = (grid - 1) / 2
+                return {"A": anchor, "T": T, "D": D, "relation": rel, "opposite": SPATIAL_OPPOSITE[rel],
+                        "axis": "column" if axis == 1 else "row",
+                        "same_side": bool((cent[T, axis] - centre) * (cent[D, axis] - centre) > 0),
+                        "questions": {"c1": spatial_question(rel, objs[anchor]["color"]),
+                                      "c2": spatial_question(SPATIAL_OPPOSITE[rel], objs[anchor]["color"])},
+                        "referent_words": {"c1": objs[anchor]["color"], "c2": objs[anchor]["color"]},
+                        "answers": {"c1": objs[T]["color"], "c2": objs[D]["color"]}}
+    return None
+
+
+def prepare_relational(entries, args, out_dir):
+    """Segment the 3-object scenes, assign roles, write relational_records.json,
+    owner.npy and masks_debug.png. Returns (records, images, owners)."""
+    mode = args.relational
+    cand = [i for i, e in enumerate(entries) if seg_ok3(e)]
+    print(f"Scenes with three distinct non-gray colours: {len(cand)} / {len(entries)}")
+    order = cand
+    if args.n_pairs and args.n_pairs < len(cand):
+        order = [int(i) for i in np.random.RandomState(args.seed).permutation(cand)]
+    records, images, owners = [], [], []
+    n_seg_fail = n_role_fail = 0
+    for i in order:
+        if args.n_pairs and len(records) >= args.n_pairs:
+            break
+        e = entries[i]
+        try:
+            im, ow, _ = build_masks(entries, [i], args.three_dir, args)
+        except AssertionError as ex:
+            print(f"  skip scene {i}: {ex}")
+            n_seg_fail += 1
+            continue
+        ow = ow[0]
+        objs = scene_objects(e)
+        cent = mask_centroids(ow, len(objs), args.grid)
+        roles = assign_roles(mode, objs, cent, args.grid)
+        if roles is None:
+            n_role_fail += 1
+            continue
+        bg_ok = np.nonzero(ow == 0)[0]
+        bg_sample = sorted(int(p) for p in np.random.RandomState(args.seed + i)
+                           .choice(bg_ok, min(args.bg_per_image, len(bg_ok)), replace=False))
+        rec = dict(scene_index=i, filename=e["filename"], mode=mode, objects=objs,
+                   centroids_row_col=[[float(v) for v in c] for c in cent],
+                   n_patches=[int((ow == k + 1).sum()) for k in range(len(objs))],
+                   bg_sample=bg_sample, **roles)
+        records.append(rec)
+        images.append(im[0])
+        owners.append(ow)
+    idx = np.argsort([r["scene_index"] for r in records])
+    records = [records[k] for k in idx]
+    images = [images[k] for k in idx]
+    owners = [owners[k] for k in idx]
+    print(f"Accepted scenes ({mode}): {len(records)}  (segmentation failures {n_seg_fail}, "
+          f"no valid role assignment {n_role_fail})")
+    assert records, "no scene accepted"
+    with open(out_dir / "relational_records.json", "w") as f:
+        json.dump(records, f, indent=1)
+    np.save(out_dir / "owner.npy", np.stack(owners))
+    n_dbg = min(40, len(records))
+    save_masks_debug(images[:n_dbg], np.stack(owners[:n_dbg]), entries,
+                     [r["scene_index"] for r in records[:n_dbg]], args.grid, out_dir / "masks_debug.png")
+    return records, images, owners
+
+
+def _role_index(records, role):
+    return np.array([r[role] for r in records], dtype=int)
+
+
+def relational_projection(caches, records, u_color, gca_layers):
+    """Per block and role: projection of the object's mean-token change (c1 − c0,
+    c2 − c0) onto that object's own colour direction u, and the object-vector
+    norm ratio ‖o(c)‖ / ‖o(c0)‖ with o = obj_mean − bg_mean."""
+    N = len(records)
+    off = {c: offsets_from_cache(caches[c]) for c in caches}                  # (N, 3, 12, D)
+    om = {c: caches[c]["obj_mean"].astype(np.float32) for c in caches}
+    ar = np.arange(N)
+    res = {"n_scenes": N, "proj_delta": {}, "proj_abs": {}, "norm_ratio": {}, "n_with_direction": {}}
+    for role in ROLES:
+        idx = _role_index(records, role)
+        cols = [r["objects"][j]["color"] for r, j in zip(records, idx)]
+        U = np.stack([u_color[c] if c in u_color else np.full((NUM_LAYERS, om["c0"].shape[-1]), np.nan, np.float32)
+                      for c in cols])                                            # (N, 12, D)
+        res["n_with_direction"][role] = int(sum(c in u_color for c in cols))
+        for cond in caches:
+            p_abs = (om[cond][ar, idx] * U).sum(-1)                                # (N, 12)
+            res["proj_abs"][f"{cond}_{role}"] = [_boot(p_abs[:, l]) for l in range(NUM_LAYERS)]
+            if cond == "c0":
+                continue
+            d = ((om[cond][ar, idx] - om["c0"][ar, idx]) * U).sum(-1)
+            res["proj_delta"][f"{cond}_{role}"] = [_boot(d[:, l]) for l in range(NUM_LAYERS)]
+            ratio = (np.linalg.norm(off[cond][ar, idx], axis=-1)
+                     / (np.linalg.norm(off["c0"][ar, idx], axis=-1) + 1e-8))
+            res["norm_ratio"][f"{cond}_{role}"] = [_boot(ratio[:, l]) for l in range(NUM_LAYERS)]
+    # decoder accuracy (first-token argmax, recorded by run_relational_transplant)
+    if all("pred_c1" in r for r in records):
+        ok1 = np.array([r["pred_c1"] == r["answers"]["c1"] for r in records])
+        ok2 = np.array([r["pred_c2"] == r["answers"]["c2"] for r in records])
+        res["accuracy"] = {"c1": float(ok1.mean()), "c2": float(ok2.mean()), "n": N}
+        if records[0]["mode"] == "spatial":
+            ss = np.array([r["same_side"] for r in records])
+            res["accuracy"]["same_side"] = {"n": int(ss.sum()), "c1": float(ok1[ss].mean()) if ss.any() else float("nan"),
+                                            "c2": float(ok2[ss].mean()) if ss.any() else float("nan")}
+            res["accuracy"]["opposite_side"] = {"n": int((~ss).sum()), "c1": float(ok1[~ss].mean()) if (~ss).any() else float("nan"),
+                                                "c2": float(ok2[~ss].mean()) if (~ss).any() else float("nan")}
+    return res
+
+
+def plot_relational_projection(res, mode, label, out_path, gca_layers):
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.2))
+    x = range(NUM_LAYERS)
+    for ax, key, ylab, ref in ((axes[0], "proj_delta", "Δ projection onto own colour direction u", 0.0),
+                               (axes[1], "proj_abs", "projection onto own colour direction u", None),
+                               (axes[2], "norm_ratio", "‖o(question)‖ / ‖o(no question)‖", 1.0)):
+        for cond in ("c0", "c1", "c2"):
+            for role in ROLES:
+                k = f"{cond}_{role}"
+                if k not in res[key]:
+                    continue
+                d = res[key][k]
+                m = [q["mean"] for q in d]; lo = [q["lo"] for q in d]; hi = [q["hi"] for q in d]
+                ls = {"c0": ":", "c1": "-", "c2": "--"}[cond]
+                cl = {"c0": "no question", "c1": "clean run", "c2": "corrupted run"}[cond]
+                ax.plot(x, m, ls, color=ROLE_RGB[role], marker="o", markersize=3, label=f"{ROLE_LABEL[role]}, {cl}")
+                ax.fill_between(x, lo, hi, color=ROLE_RGB[role], alpha=0.10, linewidth=0)
+        if ref is not None:
+            ax.axhline(ref, color="k", linewidth=0.6)
+        ax.set_ylabel(ylab, fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6)
+    axes[0].set_title("mean token change (question − no question) per role", fontsize=10)
+    axes[1].set_title("absolute projection per role and condition", fontsize=10)
+    axes[2].set_title("object-vector norm ratio per role", fontsize=10)
+    acc = res.get("accuracy")
+    acc_txt = ""
+    if acc:
+        acc_txt = f"; decoder accuracy clean run {acc['c1']:.2f}, corrupted run {acc['c2']:.2f} (n={acc['n']})"
+        if "same_side" in acc:
+            acc_txt += (f"; T and D on the same side of the image centre: clean {acc['same_side']['c1']:.2f} "
+                        f"(n={acc['same_side']['n']}), opposite sides: clean {acc['opposite_side']['c1']:.2f} "
+                        f"(n={acc['opposite_side']['n']})")
+    fig.suptitle(f"{label} — relational question ({mode}), 3-object scenes: h = b + o; o projected onto the "
+                 f"object's own colour direction u{acc_txt}", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def relational_gca_write(caches, records, gca_layers):
+    """Mean GCA write norm per GCA layer per role (A / T / D / background) under c1 and c2."""
+    res = {"gca_layers": list(gca_layers), "write_norm": {}, "attn_anchor": {}}
+    for cond in ("c1", "c2"):
+        wn = caches[cond]["gca_write_norm"].astype(np.float32)                    # (N, 6, P)
+        ar = caches[cond]["gca_attn_ref"].astype(np.float32)
+        owner = caches[cond]["owner"]
+        for role in ROLES + ("bg",):
+            m = owner == 0 if role == "bg" else owner == (_role_index(records, role) + 1)[:, None]
+            res["write_norm"][f"{cond}_{role}"] = [float(wn[:, k][m].mean()) for k in range(len(gca_layers))]
+            res["attn_anchor"][f"{cond}_{role}"] = [float(ar[:, k][m].mean()) for k in range(len(gca_layers))]
+    return res
+
+
+def plot_relational_gca_write(res, mode, label, out_path):
+    gl = res["gca_layers"]
+    fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.2))
+    for cond, ls, cl in (("c1", "-", "clean run"), ("c2", "--", "corrupted run")):
+        for role in ROLES + ("bg",):
+            ax.plot(gl, res["write_norm"][f"{cond}_{role}"], ls, color=ROLE_RGB[role], marker="o",
+                    markersize=3, label=f"{ROLE_LABEL[role]}, {cl}")
+    ax.set_xticks(gl)
+    ax.set_xlabel("GCA layer")
+    ax.set_ylabel("‖GCA write‖ per patch")
+    ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — relational question ({mode}): what the gated cross-attention writes, by role", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+@torch.no_grad()
+def run_relational_transplant(out_dir, args, state, images, owners, records):
+    """Baseline decoder answers under c0/c1/c2 (stored into the records), then the
+    causal test: at block l, one patch group of the clean run (c1) is replaced by
+    the corrupted run's (c2) tokens; control: replaced by the clean run's own tokens."""
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    prefix = trunk.num_prefix_tokens
+    inv = {v: k for k, v in model.vocab.items()}
+    N, bs = len(records), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images])
+    owner_t = torch.from_numpy(np.stack(owners))
+    role_idx = {role: _role_index(records, role) for role in ROLES}
+    colour_id = {role: np.array([model.vocab[r["objects"][j]["color"]] for r, j in zip(records, role_idx[role])])
+                 for role in ROLES}
+    ans_id = {c: np.array([model.vocab[r["answers"][c]] for r in records]) for c in ("c1", "c2")}
+
+    base = {}
+    for cond in ("c0", "c1", "c2"):
+        preds = []
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            qs = None if cond == "c0" else [records[i]["questions"][cond] for i in range(s, e)]
+            ims = imgs_t[s:e].to(device)
+            feats = steervit.forward(ims, qs)
+            bos = torch.full((e - s, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
+            preds.append(model.decoder(bos, feats[:, prefix:, :])[:, 0, :].argmax(-1).cpu().numpy())
+        base[cond] = np.concatenate(preds)
+    gen = model.generate(imgs_t[:min(8, N)].to(device), [records[i]["questions"]["c1"] for i in range(min(8, N))])
+    print(f"generate() vs first-token argmax on 8 scenes: {gen} | {[inv.get(int(t), '?') for t in base['c1'][:8]]}")
+    for i, r in enumerate(records):
+        for cond in ("c0", "c1", "c2"):
+            r[f"pred_{cond}"] = inv.get(int(base[cond][i]), "?")
+    with open(out_dir / "relational_records.json", "w") as f:
+        json.dump(records, f, indent=1)
+    acc = {c: float((base[c] == ans_id[c]).mean()) for c in ("c1", "c2")}
+    print(f"baseline accuracy: clean run {acc['c1']:.3f}  corrupted run {acc['c2']:.3f}  (n={N}); "
+          f"no question answers T {float((base['c0'] == colour_id['T']).mean()):.2f} "
+          f"A {float((base['c0'] == colour_id['A']).mean()):.2f} D {float((base['c0'] == colour_id['D']).mean()):.2f}")
+
+    ok = (base["c1"] == ans_id["c1"]) & (base["c2"] == ans_id["c2"])
+    print(f"token replacement on {int(ok.sum())} scenes (both runs answered correctly)")
+    groups = ("A", "T", "D", "bg")
+    donors = ("c2", "c1")
+    counts = {(d, g, l): np.zeros(3, int) for d in donors for g in groups for l in range(NUM_LAYERS)}   # [T, A, D]
+    agree = {(d, g, l): 0 for d in donors for g in groups for l in range(NUM_LAYERS)}
+    for s in range(0, N, bs):
+        e = min(s + bs, N)
+        idx = list(range(s, e))
+        ims = imgs_t[s:e].to(device)
+        ow = owner_t[s:e].to(device)
+        cap_out = {}
+        for c in donors:
+            qs = [records[i]["questions"][c] for i in idx]
+            with BlockCapture(trunk) as cap:
+                feats = steervit.forward(ims, qs)
+            cap_out[c] = cap.out
+            if c == "c1":
+                assert torch.allclose(trunk.norm(cap.out[NUM_LAYERS - 1]), feats[:, prefix:, :], atol=1e-4)
+        masks = {"bg": ow == 0}
+        for role in ROLES:
+            masks[role] = ow == torch.from_numpy(role_idx[role][s:e] + 1).to(device)[:, None]
+        qs1 = [records[i]["questions"]["c1"] for i in idx]
+        for d in donors:
+            for g in groups:
+                for l in range(NUM_LAYERS):
+                    with TokenSwapper(trunk, l, cap_out[d][l], masks[g]):
+                        pred = first_token_logits(model, steervit, ims, qs1).argmax(-1).cpu().numpy()
+                    for j, i in enumerate(idx):
+                        agree[(d, g, l)] += int(pred[j] == base["c1"][i])
+                        if ok[i]:
+                            k = (0 if pred[j] == colour_id["T"][i] else 1 if pred[j] == colour_id["A"][i]
+                                 else 2 if pred[j] == colour_id["D"][i] else 3)
+                            if k < 3:
+                                counts[(d, g, l)][k] += 1
+        print(f"  replacements {e}/{N}", flush=True)
+    rows = []
+    for d in donors:
+        for g in groups:
+            for l in range(NUM_LAYERS):
+                cnt = counts[(d, g, l)]
+                n = int(ok.sum())
+                rows.append({"donor": d, "group": g, "layer": l, "n": n,
+                             "p_T": cnt[0] / max(n, 1), "p_A": cnt[1] / max(n, 1), "p_D": cnt[2] / max(n, 1),
+                             "p_other": 1 - cnt.sum() / max(n, 1),
+                             "agree_with_clean": agree[(d, g, l)] / N})
+    ctrl = [r for r in rows if r["donor"] == "c1"]
+    bad = [(r["group"], r["layer"], r["agree_with_clean"]) for r in ctrl if r["agree_with_clean"] != 1.0]
+    print(f"clean-self control: {len(ctrl)} (group, block) cells; agreement with the clean run "
+          f"{'1.00 everywhere' if not bad else f'NOT 1.0 at {bad}'}")
+    assert not bad, "replacing tokens from the clean run itself must reproduce the clean run"
+    for g in groups:
+        rr = [r for r in rows if r["donor"] == "c2" and r["group"] == g]
+        print(f"replace {g:<3} from corrupted run: P(T colour) " + " ".join(f"{r['p_T']:.2f}" for r in rr)
+              + " | P(A colour) " + " ".join(f"{r['p_A']:.2f}" for r in rr)
+              + " | P(D colour) " + " ".join(f"{r['p_D']:.2f}" for r in rr), flush=True)
+    res = {"mode": records[0]["mode"], "n_scenes": N, "n_scenes_ok": int(ok.sum()), "baseline_accuracy": acc,
+           "receiver": "c1 (clean run)", "donors": list(donors), "groups": list(groups), "rows": rows}
+    with open(out_dir / "relational_transplant.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"Saved: {out_dir / 'relational_transplant.json'}")
+    return res
+
+
+def plot_relational_transplant(res, label, out_path):
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.2))
+    styles = {"A": (ROLE_RGB["A"], "^"), "T": (ROLE_RGB["T"], "o"), "D": (ROLE_RGB["D"], "v"), "bg": (ROLE_RGB["bg"], "s")}
+    mode = res["mode"]
+    corrupted_answer = "A" if mode == "same" else "D"
+    for ax, key, role in zip(axes, ("p_T", "p_A", "p_D"), ROLES):
+        for g, (col, mk) in styles.items():
+            rr = [r for r in res["rows"] if r["donor"] == "c2" and r["group"] == g]
+            ax.plot([r["layer"] for r in rr], [r[key] for r in rr], "-", color=col, marker=mk, markersize=3,
+                    label=f"replaced: {ROLE_LABEL[g]} patches" if g != "bg" else "replaced: background patches")
+            if key == "p_T":
+                rc = [r for r in res["rows"] if r["donor"] == "c1" and r["group"] == g]
+                ax.plot([r["layer"] for r in rc], [r[key] for r in rc], ":", color=col, linewidth=0.8,
+                        label="control: replaced from the clean run itself" if g == "bg" else None)
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_ylabel(f"P(answer = {role}'s colour)" + (" (clean-run answer)" if role == "T" else
+                      " (corrupted-run answer)" if role == corrupted_answer else ""), fontsize=10)
+        ax.set_xlabel("ViT block at which the tokens are replaced")
+        ax.set_xticks(range(NUM_LAYERS))
+        mark_gca_layers(ax)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — relational question ({mode}): one block's patch tokens of the clean run replaced by the "
+                 f"corrupted run's tokens (n={res['n_scenes_ok']} scenes with both runs correct; baseline accuracy "
+                 f"clean {res['baseline_accuracy']['c1']:.2f}, corrupted {res['baseline_accuracy']['c2']:.2f})", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def _r2(X, y):
+    X1 = np.column_stack([np.ones(len(y)), X])
+    beta, *_ = np.linalg.lstsq(X1, y, rcond=None)
+    ss_res = float(((y - X1 @ beta) ** 2).sum())
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    return 1 - ss_res / max(ss_tot, 1e-12)
+
+
+def relational_write_position(caches, records, gca_layers, grid):
+    """Spatial only. Background patches pooled across scenes: per GCA layer, R² of
+    (c1 − c2) GCA write norm, and of the c1 write norm alone, regressed on the
+    patch's absolute coordinate along the relation axis, on its coordinate
+    relative to the anchor centroid, and on both. `oriented`: coordinates signed
+    so that + is the direction of the clean-run relation; `raw`: unsigned grid
+    coordinate (row or column)."""
+    wn1 = caches["c1"]["gca_write_norm"].astype(np.float32)
+    wn2 = caches["c2"]["gca_write_norm"].astype(np.float32)
+    owner = caches["c1"]["owner"]
+    P = grid * grid
+    coord = {0: np.arange(P) // grid, 1: np.arange(P) % grid}
+    xs_abs, xs_rel, sgn, y_diff, y_c1 = [], [], [], [], []
+    for i, r in enumerate(records):
+        axis, sign = spatial_axis_sign(r["relation"])
+        bg = owner[i] == 0
+        c = coord[axis][bg].astype(np.float32)
+        xs_abs.append(c)
+        xs_rel.append(c - r["centroids_row_col"][r["A"]][axis])
+        sgn.append(np.full(bg.sum(), sign, np.float32))
+        y_diff.append(wn1[i][:, bg] - wn2[i][:, bg])
+        y_c1.append(wn1[i][:, bg])
+    xa, xr, sg = np.concatenate(xs_abs), np.concatenate(xs_rel), np.concatenate(sgn)
+    Y = {"diff_c1_c2": np.concatenate(y_diff, 1), "c1": np.concatenate(y_c1, 1)}        # (6, T)
+    res = {"gca_layers": list(gca_layers), "n_scenes": len(records), "n_bg_patches": int(len(xa)), "r2": {}}
+    for orient, (a, rl) in (("oriented", (sg * xa, sg * xr)), ("raw", (xa, xr))):
+        for yname, ys in Y.items():
+            for design, X in (("absolute", a[:, None]), ("relative_to_anchor", rl[:, None]),
+                              ("both", np.column_stack([a, rl]))):
+                res["r2"][f"{orient}/{yname}/{design}"] = [_r2(X, ys[k]) for k in range(len(gca_layers))]
+    for k in sorted(res["r2"]):
+        if k.startswith("oriented"):
+            print(f"write-position R² {k:<40} " + " ".join(f"{v:.3f}" for v in res["r2"][k]))
+    return res
+
+
+def plot_relational_write_position(res, label, out_path):
+    gl = res["gca_layers"]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharey=True)
+    styles = {"absolute": ("#1f77b4", "o", "absolute coordinate along the relation axis"),
+              "relative_to_anchor": ("#d62728", "^", "coordinate relative to the anchor centroid"),
+              "both": ("0.3", "s", "both")}
+    for ax, yname, title in ((axes[0], "diff_c1_c2", "GCA write norm, clean run − corrupted run (opposite relation words)"),
+                             (axes[1], "c1", "GCA write norm, clean run")):
+        for design, (col, mk, lab) in styles.items():
+            ax.plot(gl, res["r2"][f"oriented/{yname}/{design}"], "-", color=col, marker=mk, markersize=4, label=lab)
+            ax.plot(gl, res["r2"][f"raw/{yname}/{design}"], ":", color=col, marker=mk, markersize=3, alpha=0.6,
+                    label=f"{lab} (unsigned)")
+        ax.set_xticks(gl)
+        ax.set_xlabel("GCA layer")
+        ax.set_title(title, fontsize=9)
+        ax.set_ylim(-0.02, 1.02)
+    axes[0].set_ylabel("R² over background patches")
+    axes[0].legend(fontsize=6)
+    fig.suptitle(f"{label} — relational question (spatial): does the GCA write to background patches depend on "
+                 f"position? (n={res['n_scenes']} scenes, {res['n_bg_patches']} background patches)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_relational(args, out_dir, label):
+    mode = args.relational
+    entries = load_entries(args.three_dir)
+    n3 = sum(len(e["distractors"]) == 2 for e in entries)
+    print(f"3-object scenes in {args.three_dir}: {n3} / {len(entries)}")
+    state = {}
+    if args.replot:
+        with open(out_dir / "relational_records.json") as f:
+            records = json.load(f)
+        print(f"--replot: {len(records)} recorded scenes")
+    else:
+        records, images, owners = prepare_relational(entries, args, out_dir)
+        for cond in ("c0", "c1", "c2"):
+            extract_condition_sparse(out_dir, cond, images, owners, records, args, state, n_obj=3)
+        ensure_model(state, args)
+        run_relational_transplant(out_dir, args, state, images, owners, records)
+    caches = {c: load_sparse(out_dir, c) for c in ("c0", "c1", "c2")}
+    gca_layers = [int(l) for l in caches["c0"]["gca_layers"]]
+    d_dir = Path(args.directions_dir) / "n1"
+    u_color = attribute_directions(load_sparse(d_dir, "c0"), load_labels(d_dir))["color"]
+    print(f"colour directions u from {d_dir}: {sorted(u_color)}")
+    res = relational_projection(caches, records, u_color, gca_layers)
+    for key in sorted(res["proj_delta"]):
+        print(f"proj Δ {key:<6} " + " ".join(f"{q['mean']:+.2f}" for q in res["proj_delta"][key]))
+    for key in sorted(res["norm_ratio"]):
+        print(f"norm ratio {key:<6} " + " ".join(f"{q['mean']:.2f}" for q in res["norm_ratio"][key]))
+    if "accuracy" in res:
+        print(f"accuracy: {res['accuracy']}")
+    with open(out_dir / "relational_projection.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_relational_projection(res, mode, label, out_dir / "relational_projection.png", gca_layers)
+    res = relational_gca_write(caches, records, gca_layers)
+    for key in sorted(res["write_norm"]):
+        print(f"GCA write norm {key:<6} " + " ".join(f"{v:.2f}" for v in res["write_norm"][key]))
+    with open(out_dir / "relational_gca_write.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_relational_gca_write(res, mode, label, out_dir / "relational_gca_write.png")
+    if (out_dir / "relational_transplant.json").exists():
+        with open(out_dir / "relational_transplant.json") as f:
+            plot_relational_transplant(json.load(f), label, out_dir / "relational_transplant.png")
+    if mode == "spatial":
+        res = relational_write_position(caches, records, gca_layers, args.grid)
+        with open(out_dir / "relational_write_position.json", "w") as f:
+            json.dump(res, f, indent=1)
+        plot_relational_write_position(res, label, out_dir / "relational_write_position.png")
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -2039,11 +2571,21 @@ def main():
     ap.add_argument("--probe-max-bg", type=int, default=12)
     ap.add_argument("--skip-probes", action="store_true")
     ap.add_argument("--model-label", default=None)
+    ap.add_argument("--relational", default=None, choices=["same", "spatial"],
+                    help="only: relational questions on 3-object scenes (new --out-dir); "
+                         "same = 'same {attribute} as the {colour} object', spatial = 'left of / right of / "
+                         "in front of / behind the {colour} object'")
+    ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
+    ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
+                    help="--relational: directory whose n1/ cache gives the colour directions u")
     args = ap.parse_args()
 
     apply_style()
     out_dir = Path(args.out_dir)
     assert out_dir.resolve() != Path(args.x19_dir).resolve(), "refusing to write into the X19 directory"
+    if args.relational and not args.replot:
+        assert not (out_dir.exists() and any(out_dir.iterdir())), \
+            f"--relational needs a new --out-dir (non-empty: {out_dir}); use --replot to regenerate figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     tee_stdout(out_dir)
     if args.model_label is None:
@@ -2053,6 +2595,9 @@ def main():
     global QUERIED
     QUERIED = args.queried
     print(f"args: {vars(args)}")
+    if args.relational:
+        run_relational(args, out_dir, label)
+        return
 
     n1_entries, n2_entries = load_entries(args.n1_dir), load_entries(args.n2_dir)
     x19_pairs = set()
