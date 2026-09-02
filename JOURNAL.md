@@ -22,6 +22,32 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-09-02 — X21 (M): MAE's referent marker is a portable tag, not a
+  position ID; decoder attention is not a norm artifact.**
+  `patch_language_condition/mae/marker_test.{json,png}` (324 pairs, refer-
+  target accuracy 0.997). Marker direction = mean over images of the target's
+  raw patch mean under refer-target minus under refer-distractor; its norm is
+  ≤0.8 through block 6, 3.1 at block 7, 12.5 at block 9, 37.6 at block 11 —
+  written almost entirely by the last GCA layer. Transplanting it at block 11
+  onto the DISTRACTOR's patches (a different image position) under the
+  refer-target question moves decoder attention from the target to the
+  distractor (distractor mass 0.004 → 0.32 at 1×, 0.75 at 2×) and flips the
+  answer to the distractor's colour (0.44 at 1×, 0.62 at 2×); moving it
+  (add to distractor, subtract from target) flips 0.84 at 1×. A norm-matched
+  random vector does nothing (P(target) 1.00, attention unchanged).
+  Subtracting it from the target alone removes attention from both objects
+  (target mass 0.468 → 0.001) yet the answer stays correct 0.79 — the decoder
+  then reads from background tokens, so MAE also carries a usable background
+  copy at block 11. Blocks 7–10: no effect (marker too small there and later
+  GCA layers rewrite it). Verdict: the marker follows content, not position —
+  Saravanan-style identity code, not an Assouel-style position ID.
+  Norm control (`attn_norm_control.json`, MAE and DINOv2): no token exceeds
+  5× the per-image median norm in either backbone (ViT-B, no Darcet
+  outliers); Spearman(attention, norm) 0.31 (MAE) / 0.15 (DINOv2) under
+  refer-target; per-token target/background attention ratio MAE 9.5 (no
+  question) → 47.1 (refer target), DINOv2 5.2 → 9.0, unchanged by excluding
+  high-norm tokens. The sink-token objection to the decoder-attention claim
+  is closed. Flags `--marker-test`, `--attn-norm-control`.
 - **2026-08-31 — X21 (K): MAE replication — selection without removal.**
   `patch_language_condition/mae/` (14×14, 324 pairs, referring accuracy
   0.997). The non-referent keeps its colour (colour RDM 0.51 vs 0.54 at block
