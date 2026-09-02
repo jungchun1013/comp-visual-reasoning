@@ -22,6 +22,44 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
+  never got a write-up; read off here before the 3-object mechanism run.**
+  (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
+  */rsa_conditional_stats.json`): the position RDM's correlation with the model
+  RDM never exceeds 0.03 in any category, peaks at blocks 3–7 and decays to
+  ≤0.01 by block 11, i.e. it is exhausted before attribute binding rises
+  (direct: binding 0.14 @5 → 0.76 @11; same: anchor 0.42 @8 → 0.11 @11,
+  target 0.16 @7 → 0.41 @11; spatial: anchor 0.11 @8 → 0.04 @11, target
+  0.19 @7 → 0.40 @9 → 0.33 @11). Position is not what the late blocks encode.
+  (b) Shortcut renders (`shortcut_renders/*/add_object_eval_*.json`, n=100
+  each): adding a near-copy of the anchor (one described attribute flipped)
+  leaves accuracy at 0.89 (same) / 0.95 (spatial); the reported
+  "hallucination" 0.31 / 0.67 is the rate of giving the anchored-on-distractor
+  answer, and for spatial the placement rule forces the target to stand in the
+  asked direction of the fake anchor too, so that answer coincides with the
+  correct one — the 0.67 is not a hallucination measure and must not be cited
+  as one. Translating the scene changes nothing (0.00). (c) Anchor dissipation
+  (`anchor_dissipation/*/dissipation_stats.json`): 69 queries, 0 errors, flagged
+  underpowered; no correlation with correctness is estimable. Net: the
+  "anchor → target handoff" (RESULTS §9) is still correlational; the causal
+  version is the 3-object transplant run launched today.
+- **2026-09-02 — Flamingo-style LoRA run launched; mirror model implemented.**
+  Why the earlier LoRA attempt "would not run": that was the LLaVA-style script
+  (`clevr_llava_dinov2_lora_s42`, 2026-06-02) — 576 vision tokens inside a 7B
+  4-bit LLM with gradient checkpointing, no DINOv2 feature cache, checkpoint
+  only at epoch end (28 h < 1 epoch, dir empty), and an `evaluate` KeyError on
+  `batch["questions"]` that would have fired before the save. The Flamingo
+  script's LoRA mode (`train_flamingo_clevr.py`, vision only in cross-attention
+  KV, cached features) never had that problem; its 06-15 run only lacked a
+  valid eval (decode bug, fixed 07-06). Launched `clevr_flamingo_dinov2_lora_s42`
+  (TinyLlama-1.1B-Chat, LoRA r=16 on q/v, 6 GCA layers text→vision, 8 ep,
+  batch 64; same recipe as the frozen-LLM run 0.3176 minus `--freeze-llm`).
+  Mirror model (`configs/experiment/clevr_dinov2_mirror_decoder1l_scratch.yaml`):
+  vanilla frozen DINOv2, GCA at RoBERTa-large layers 2,6,10,14,18,22 with text
+  as query and patches as key/value, one-layer decoder reading the text tokens;
+  28.5 M trainable (22.0 M GCA + 1.8 M connector + 4.6 M decoder) vs 27.7 M in
+  the main model; original model path verified bit-identical after the change.
+  Training queued behind the running −CA 4-layer run (single usable GPU).
 - **2026-09-02 — X21 (M): MAE's referent marker is a portable tag, not a
   position ID; decoder attention is not a norm artifact.**
   `patch_language_condition/mae/marker_test.{json,png}` (324 pairs, refer-

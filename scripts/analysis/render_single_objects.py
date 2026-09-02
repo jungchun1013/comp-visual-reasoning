@@ -64,6 +64,9 @@ parser.add_argument('--target-size', default=None, choices=['large', 'small'],
 parser.add_argument('--distractor-size', default=None, choices=['large', 'small'],
                     help='Fix every distractor size (e.g. one-large-one-small '
                          'scenes: --target-size large --distractor-size small)')
+parser.add_argument('--distinct-colors', action='store_true',
+                    help='Skip gray targets; every distractor colour is non-gray '
+                         'and distinct from the target and the other distractors')
 
 # ── Constants ────────────────────────────────────────────────────
 
@@ -80,11 +83,13 @@ SIZES = ["large", "small"]
 POS_MIN, POS_MAX = -3.0, 3.0
 
 
-def sample_distractor(target_attrs, rng, size=None):
+def sample_distractor(target_attrs, rng, size=None, exclude_colors=()):
     """Distractor attrs differing from the target in >=2 of the 4 attributes."""
     while True:
         attrs = (rng.choice(COLORS), rng.choice(SHAPES),
                  rng.choice(MATERIALS), size or rng.choice(SIZES))
+        if attrs[0] in exclude_colors:
+            continue
         if sum(a != b for a, b in zip(attrs, target_attrs)) >= 2:
             return attrs
 
@@ -176,6 +181,8 @@ def main():
     all_types = list(itertools.product(COLORS, SHAPES, MATERIALS, SIZES))
     if args.target_size:
         all_types = [t for t in all_types if t[3] == args.target_size]
+    if args.distinct_colors:
+        all_types = [t for t in all_types if t[0] != 'gray']
     total = len(all_types) * args.n_per_type
     print(f"Rendering {len(all_types)} object types × {args.n_per_type} = {total} images")
 
@@ -195,7 +202,9 @@ def main():
             for _ in range(args.num_distractors):
                 d_color, d_shape, d_material, d_size = sample_distractor(
                     (color, shape, material, size), random,
-                    size=args.distractor_size)
+                    size=args.distractor_size,
+                    exclude_colors=(color, 'gray', *[d['color'] for d in distractors])
+                    if args.distinct_colors else ())
                 dx, dy = sample_position(placed, SIZE_MAP[d_size], random)
                 placed.append((dx, dy, SIZE_MAP[d_size]))
                 distractors.append({
