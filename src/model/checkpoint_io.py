@@ -112,6 +112,8 @@ def _load_main(ckpt, device):
     for key in ("use_gate", "condition_type", "feature_aggregation"):
         if key in cfg.model:
             fc_kwargs[key] = cfg.model[key]
+    if cfg.model.get("text_cross_attn_layers") is not None:
+        fc_kwargs["text_cross_attn_layers"] = list(cfg.model.text_cross_attn_layers)
     steervit = CrossAttnViT.from_config(
         cfg.model.backbone_name, device=device,
         cross_attn_layers=list(cfg.model.cross_attn_layers),

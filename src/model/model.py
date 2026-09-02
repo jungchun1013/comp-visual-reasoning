@@ -57,6 +57,25 @@ class CrossAttnViT(nn.Module):
         else:
             raise NotImplementedError(f"Text encoder {text_encoder} currently not implemented")
 
+        #### Mirror variant: GCA inside the text encoder (text = query, ViT patches = key/value) ####
+        self._mirror_kv = None
+        text_ca_layers = config.get("text_cross_attn_layers")
+        if text_ca_layers:
+            from model.crossattention import GatedCrossAttention
+            self.text_gca = nn.ModuleDict({
+                str(i): GatedCrossAttention(
+                    i, dim=self.text_dim, ff_mult=2, use_ffn=False,
+                    head_dim=64, num_heads=16,
+                    use_gate=config["vision_encoder"].get("use_gate", True),
+                    kv_dim=self.visual_dim,
+                ) for i in text_ca_layers
+            })
+            for i in text_ca_layers:
+                self.text_model.encoder.layer[i].register_forward_pre_hook(
+                    self._make_text_gca_hook(str(i)), with_kwargs=True)
+        else:
+            self.text_gca = None
+
         #### Load Segmentation Head ####
         self.lin_seg_head = nn.Linear(self.visual_dim, 1, bias = True)
         nn.init.constant_(self.lin_seg_head.weight, 0)
@@ -71,8 +90,23 @@ class CrossAttnViT(nn.Module):
             self.connector = self.connector.to(device)
         if self._word_embedding is not None:
             self._word_embedding = self._word_embedding.to(device)
+        if self.text_gca is not None:
+            self.text_gca = self.text_gca.to(device)
         self._device = device
         return self
+
+    def _make_text_gca_hook(self, key):
+        """Forward pre-hook on a RoBERTa layer: apply text_gca[key] to its hidden_states input."""
+        def hook(module, args, kwargs):
+            if self._mirror_kv is None:
+                return None
+            if "hidden_states" in kwargs:
+                kwargs = dict(kwargs)
+                kwargs["hidden_states"] = self.text_gca[key](kwargs["hidden_states"], self._mirror_kv, attn_mask=None)
+            else:
+                args = (self.text_gca[key](args[0], self._mirror_kv, attn_mask=None),) + tuple(args[1:])
+            return args, kwargs
+        return hook
     
     @classmethod
     def from_pretrained(cls, checkpoint_name, device=None):
@@ -106,7 +140,7 @@ class CrossAttnViT(nn.Module):
     def from_config(cls, backbone_name, device=None, cross_attn_layers=None,
                     resolution=336, feature_aggregation=None, pretrained=True,
                     condition_type="gca", use_gate=True,
-                    text_encoder="roberta-large"):
+                    text_encoder="roberta-large", text_cross_attn_layers=None):
         """Initialize from backbone name (no pretrained GCA).
 
         Args:
@@ -144,6 +178,8 @@ class CrossAttnViT(nn.Module):
             },
             "text_encoder": text_encoder,
         }
+        if text_cross_attn_layers is not None:
+            config["text_cross_attn_layers"] = list(text_cross_attn_layers)
         model = cls(config)
         for param in model.parameters():
             param.requires_grad = False
@@ -255,6 +291,27 @@ class CrossAttnViT(nn.Module):
             dim=-1,
         )
         return text_feats, attn_mask, raw_text_feats
+
+    def encode_text_mirror(self, texts: list[str], patch_kv: torch.Tensor):
+        """Mirror variant: run RoBERTa with text_gca hooks attending to ViT patches.
+
+        Args:
+            texts: list of B strings.
+            patch_kv: (B, P, visual_dim) ViT patch tokens used as GCA key/value.
+
+        Returns:
+            mem: (B, T, visual_dim) connector(L2-normalised last hidden state).
+            attn_mask: (B, T) bool, True = real token.
+        """
+        roberta_dict = self.tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors='pt')
+        roberta_dict = {k: v.to(self.text_model.device) for k, v in roberta_dict.items()}
+        self._mirror_kv = patch_kv
+        try:
+            raw_text_feats = self.text_model(**roberta_dict).last_hidden_state
+        finally:
+            self._mirror_kv = None
+        attn_mask = roberta_dict['attention_mask'].bool()
+        return self.connector(F.normalize(raw_text_feats, dim=-1)), attn_mask
 
     def encode_text_from_tokens(self, input_ids: 'torch.Tensor', attention_mask: 'torch.Tensor'):
         """Encode text from pre-tokenized inputs (skip tokenizer).

@@ -1,0 +1,32 @@
+# @package _global_
+# Mirror variant: vanilla frozen ViT; GCA inserted into RoBERTa-large
+# (text = query, ViT patches = key/value); connector(RoBERTa states) = decoder memory.
+defaults:
+  - override /model: steervit_dino
+  - override /data: clevr
+  - override /task: decoder
+  - override /training: default
+
+model:
+  checkpoint: null
+  cross_attn_layers: []
+  text_cross_attn_layers: [2, 6, 10, 14, 18, 22]
+  mirror: true
+  resolution: 336
+  unfreeze_gca: true
+  unfreeze_connector: true
+
+data:
+  val_batch_size: 512
+
+task:
+  decoder:
+    num_layers: 1
+
+training:
+  epochs: 16
+
+text_cache: false
+
+wandb:
+  name: clevr_dinov2_mirror_decoder1l_scratch

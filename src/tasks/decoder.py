@@ -25,8 +25,8 @@ class VQADecoderLayer(nn.Module):
                 head_dim=d_model // nhead, num_heads=nhead,
             )
 
-    def forward(self, tgt, memory, text_feats=None, tgt_mask=None):
-        out = self.base_layer(tgt, memory, tgt_mask=tgt_mask)
+    def forward(self, tgt, memory, text_feats=None, tgt_mask=None, memory_key_padding_mask=None):
+        out = self.base_layer(tgt, memory, tgt_mask=tgt_mask, memory_key_padding_mask=memory_key_padding_mask)
         if self.text_gca is not None and text_feats is not None:
             out = self.text_gca(out, text_feats, attn_mask=None)
         return out
@@ -57,27 +57,29 @@ class VQADecoder(nn.Module):
         self.output_proj = nn.Linear(d_model, vocab_size)
         self.text_proj = nn.Linear(text_dim, d_model) if use_text_gca else None
 
-    def _run_layers(self, tgt, memory, text_feats=None, tgt_mask=None):
+    def _run_layers(self, tgt, memory, text_feats=None, tgt_mask=None, memory_key_padding_mask=None):
         out = tgt
         t_proj = None
         if text_feats is not None and self.text_proj is not None:
             t_proj = self.text_proj(text_feats)
         for layer in self.layers:
-            out = layer(out, memory, text_feats=t_proj, tgt_mask=tgt_mask)
+            out = layer(out, memory, text_feats=t_proj, tgt_mask=tgt_mask,
+                        memory_key_padding_mask=memory_key_padding_mask)
         return out
 
-    def forward(self, tgt_ids, visual_patches, text_feats=None, tgt_mask=None):
+    def forward(self, tgt_ids, visual_patches, text_feats=None, tgt_mask=None, memory_key_padding_mask=None):
         B, T = tgt_ids.shape
         positions = torch.arange(T, device=tgt_ids.device)
         tgt = self.token_embedding(tgt_ids) + self.pos_embedding(positions)
         memory = self.visual_proj(visual_patches)
         if tgt_mask is None:
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(T, device=tgt_ids.device)
-        out = self._run_layers(tgt, memory, text_feats=text_feats, tgt_mask=tgt_mask)
+        out = self._run_layers(tgt, memory, text_feats=text_feats, tgt_mask=tgt_mask,
+                               memory_key_padding_mask=memory_key_padding_mask)
         return self.output_proj(out)
 
     @torch.no_grad()
-    def generate(self, visual_patches, bos_id, eos_id, text_feats=None, max_len=8):
+    def generate(self, visual_patches, bos_id, eos_id, text_feats=None, max_len=8, memory_key_padding_mask=None):
         B = visual_patches.size(0)
         memory = self.visual_proj(visual_patches)
         generated = torch.full((B, 1), bos_id, dtype=torch.long, device=visual_patches.device)
@@ -86,7 +88,8 @@ class VQADecoder(nn.Module):
             positions = torch.arange(T, device=generated.device)
             tgt = self.token_embedding(generated) + self.pos_embedding(positions)
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(T, device=generated.device)
-            out = self._run_layers(tgt, memory, text_feats=text_feats, tgt_mask=tgt_mask)
+            out = self._run_layers(tgt, memory, text_feats=text_feats, tgt_mask=tgt_mask,
+                                   memory_key_padding_mask=memory_key_padding_mask)
             next_logits = self.output_proj(out[:, -1, :])
             next_token = next_logits.argmax(dim=-1, keepdim=True)
             generated = torch.cat([generated, next_token], dim=1)
@@ -270,6 +273,47 @@ class DecoderModel(nn.Module):
         return results
 
 
+class MirrorDecoderModel(DecoderModel):
+    """Mirror variant: vanilla frozen ViT patches are the GCA key/value inside RoBERTa;
+    the connector-projected RoBERTa hidden states are the decoder memory."""
+
+    def set_text_cache(self, text_cache):
+        """No-op: RoBERTa must run live (text_gca sits inside it)."""
+        self.text_cache = None
+
+    def _encode(self, images, questions):
+        prefix = self.steervit.vision_model.trunk.num_prefix_tokens
+        with torch.no_grad():
+            feats = self.steervit.forward(images, None)
+        patches = feats[:, prefix:, :]
+        mem, mask = self.steervit.encode_text_mirror(questions, patches)
+        return mem, None, ~mask
+
+    def forward(self, images, questions, answer_ids):
+        mem, text_feats, pad_mask = self._encode(images, questions)
+        return self.decoder(answer_ids[:, :-1], mem, text_feats=text_feats,
+                            memory_key_padding_mask=pad_mask)
+
+    @torch.no_grad()
+    def generate(self, images, questions, max_len=4):
+        mem, text_feats, pad_mask = self._encode(images, questions)
+        token_ids = self.decoder.generate(
+            mem, bos_id=self.vocab["<bos>"], eos_id=self.vocab["<eos>"],
+            text_feats=text_feats, max_len=max_len, memory_key_padding_mask=pad_mask,
+        )
+        results = []
+        for seq in token_ids:
+            words = []
+            for t in seq:
+                w = self.inv_vocab.get(t.item(), "")
+                if w == "<eos>":
+                    break
+                if w not in ("<bos>", "<pad>"):
+                    words.append(w)
+            results.append(" ".join(words))
+        return results
+
+
 def build_clevr_decoder_vocab():
     from data.clevr import CLEVR_ANSWERS
     vocab = {"<bos>": 0, "<eos>": 1, "<pad>": 2}
@@ -330,8 +374,9 @@ def build_decoder_model(steervit, cfg) -> DecoderModel:
             text_dim=steervit.visual_dim if use_text_gca else 768,
         )
 
-    model = DecoderModel(steervit, decoder, vocab,
-                         use_steering=cfg.model.get("use_steering", True))
+    model_cls = MirrorDecoderModel if cfg.model.get("mirror", False) else DecoderModel
+    model = model_cls(steervit, decoder, vocab,
+                      use_steering=cfg.model.get("use_steering", True))
 
     if cfg.model.get("unfreeze_gca", True):
         for blk in steervit.vision_model.trunk.blocks:
@@ -339,6 +384,9 @@ def build_decoder_model(steervit, cfg) -> DecoderModel:
             if gca is not None:
                 for p in gca.parameters():
                     p.requires_grad = True
+        if getattr(steervit, "text_gca", None) is not None:
+            for p in steervit.text_gca.parameters():
+                p.requires_grad = True
     if cfg.model.get("unfreeze_connector", True):
         for p in steervit.connector.parameters():
             p.requires_grad = True

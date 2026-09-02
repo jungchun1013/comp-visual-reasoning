@@ -21,15 +21,18 @@ class MaskedCrossAttention(nn.Module):
             dim,
             head_dim,
             num_heads,
+            kv_dim=None,
             ):
         super().__init__()
         self.head_dim = head_dim
         self.num_heads = num_heads
         self.inner_dim = head_dim * num_heads
+        if kv_dim is None:
+            kv_dim = dim
 
         self.norm = nn.LayerNorm(dim)
         self.to_q = nn.Linear(dim, self.inner_dim, bias=False)
-        self.to_kv = nn.Linear(dim, self.inner_dim * 2, bias=False)
+        self.to_kv = nn.Linear(kv_dim, self.inner_dim * 2, bias=False)
         self.to_out = nn.Linear(self.inner_dim, dim, bias=False)
 
         # for extraction
@@ -81,6 +84,7 @@ class GatedCrossAttention(nn.Module):
         head_dim=72,
         num_heads=16,
         use_gate=True,
+        kv_dim=None,
     ):
         super().__init__()
         self.layer_idx = layer_idx
@@ -89,6 +93,7 @@ class GatedCrossAttention(nn.Module):
             dim,
             head_dim,
             num_heads,
+            kv_dim=kv_dim,
         )
         self.use_gate = use_gate
         if self.use_gate:

@@ -48,7 +48,10 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
         condition_type = cfg.model.get("condition_type", "gca")
         use_gate = cfg.model.get("use_gate", True)
         text_encoder = cfg.model.get("text_encoder", "roberta-large")
-        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}, pretrained={pretrained}, cond={condition_type}, gate={use_gate}, text={text_encoder}")
+        text_cross_attn_layers = cfg.model.get("text_cross_attn_layers", None)
+        if text_cross_attn_layers is not None:
+            text_cross_attn_layers = list(text_cross_attn_layers)
+        log.info(f"CrossAttnViT from_config: {backbone}, layers={cross_attn_layers}, res={resolution}, pool={feature_pool}, pretrained={pretrained}, cond={condition_type}, gate={use_gate}, text={text_encoder}, text_layers={text_cross_attn_layers}")
         steervit = CrossAttnViT.from_config(backbone, device=device,
                                          cross_attn_layers=cross_attn_layers,
                                          resolution=resolution,
@@ -56,7 +59,8 @@ def load_model(cfg: DictConfig, device: torch.device) -> CrossAttnViT:
                                          pretrained=pretrained,
                                          condition_type=condition_type,
                                          use_gate=use_gate,
-                                         text_encoder=text_encoder)
+                                         text_encoder=text_encoder,
+                                         text_cross_attn_layers=text_cross_attn_layers)
     else:
         checkpoint = cfg.model.checkpoint
         log.info(f"CrossAttnViT from_pretrained: {checkpoint}")
