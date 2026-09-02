@@ -88,16 +88,16 @@ def draw_design(out_path: Path, layer: int = 9):
     ax.text(0.4, 10.1, "same image, two questions", fontsize=8.5, ha="left")
 
     # block rows
-    xsA, xendA = _block_row(ax, x0, yA, "pass A", layer)
-    xsB, xendB = _block_row(ax, x0, yB, "pass B", layer)
-    ax.text(x0 + 1.6, yA + 0.7, "ViT blocks (frozen ViT with cross-attention layers; the two passes differ only in the question)",
+    xsA, xendA = _block_row(ax, x0, yA, "base run", layer)
+    xsB, xendB = _block_row(ax, x0, yB, "source run", layer)
+    ax.text(x0 + 1.6, yA + 0.7, "ViT blocks (frozen ViT with cross-attention layers; the two runs differ only in the question)",
             ha="left", va="bottom", fontsize=7.5, color="0.35")
 
     # replacement arrow B → A at the highlighted block
     ax.add_patch(FancyArrowPatch((xsB[layer], yB + 0.5), (xsA[layer], yA - 0.5), arrowstyle="-|>",
                                  mutation_scale=16, color="#e6550d", linewidth=2.0))
     ax.text(xsA[layer] - 0.6, 6.8, f"at the output of block {layer}, one group of patch tokens\n"
-            "in pass A is replaced by pass B's values", fontsize=8, color="#e6550d", va="center", ha="right")
+            "in the base run is replaced by the source run's values", fontsize=8, color="#e6550d", va="center", ha="right")
     # groups legend under the arrow
     groups = [("background patches", BG), ("both objects' patches", "#9467bd"),
               ("target's patches only", TARGET_RGB), ("distractor's patches only", DISTRACTOR_RGB)]
@@ -122,7 +122,7 @@ def draw_design(out_path: Path, layer: int = 9):
     ax.annotate("", xy=(xendB + 0.6, yB), xytext=(xendB + 0.05, yB), arrowprops=dict(arrowstyle="->", color="0.6"))
     ax.text(xendB + 0.7, yB, "not read", fontsize=7.5, color="0.5", va="center")
 
-    ax.text(x0, 1.2, "controls: replacing from pass A itself reproduces the baseline at every block (1.00); "
+    ax.text(x0, 1.2, "controls: replacing from the base run itself reproduces the baseline at every block (1.00); "
             "the block of replacement is swept 0–11; n = images correct under both questions",
             fontsize=7.5, color="0.35")
     fig.suptitle("Between-question token replacement: which patch tokens change the decoder's answer, and at which block",
