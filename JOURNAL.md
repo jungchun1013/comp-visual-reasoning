@@ -65,8 +65,15 @@
   incorrect trials the referent word's mass is target 0.196 / distractor
   0.088, on the 306 correct 0.203 / 0.080 — errors are not fetch errors of
   attention placement. (5) Fetch test with the mean target−distractor contrast
-  (norm 2.1 vs patch norm 41.9) at scale 1–2: no effect on attention or
-  answer; inconclusive at that scale, rerun at 5/10/20 in `mirror_v2/`.
+  (norm 2.1 vs patch norm 41.9): at scale 1–2 no effect; at scale 20 (added
+  norm ≈ the token norm, `mirror_v2/`) adding it to the distractor's key/value
+  patches raises the referent word's last-layer mass on the distractor from
+  0.08 to 0.18 (≈ the baseline target mass 0.20) and moves 11% of answers to
+  the distractor's colour (P(target) 0.78); a norm-matched random vector at
+  the same scale does nothing (1.00 / 0.00). So the fetch is content-addressed
+  through the object-identity direction, but weakly: the global mean contrast
+  is a crude key, and the same vector on the 547 background patches swamps
+  the keys (P(target) 0.43 at scale 10, 0.02 at 20).
   Reading: the mirror implements tag-then-fetch with content-addressed
   attention in its last two cross-attention layers, and the visual stream
   never changes; the in-stream model instead rewrites the patches over six
