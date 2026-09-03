@@ -43,6 +43,35 @@
   underpowered; no correlation with correctness is estimable. Net: the
   "anchor → target handoff" (RESULTS §9) is still correlational; the causal
   version is the 3-object transplant run launched today.
+- **2026-09-03 — Mirror model mechanism: selection is the referent word's
+  attention over patches, sharpened only in the last two text-GCA layers, and
+  the target's colour enters the text stream there; errors are not attention
+  misplacement.** `patch_language_condition/mirror/` (324 two-object pairs,
+  decoder accuracy clean 0.94 / corrupted 0.96; key/value patch tokens
+  verified identical across conditions). (1) Attention mass of the referent
+  word token on target / distractor patches by text-GCA layer 2/6/10/14/18/22:
+  0.22/0.14/0.06/0.06/0.18/0.20 vs 0.18/0.10/0.04/0.05/0.05/0.08 (background,
+  547 of 576 tokens, takes the rest, peaking 0.91 at layer 10). Layers 2–14
+  are not selective; layers 18 and 22 put 2.5–4× more mass on the referent
+  than on the distractor, and under the corrupted run the two curves swap.
+  The `<s>` and `</s>` tokens are never selective (equal mass on both
+  objects), so the fetch is done by the referent word, not by a summary
+  token. (2) Linear probe of the target's colour from the RoBERTa hidden
+  states: ≤0.30 through layer 18, 0.55 after the layer-18 GCA, 0.97 after the
+  layer-22 GCA (chance 0.16; text-only control flat at 0.14) — the colour
+  reaches the text stream only in the last two GCA layers. (3) The 1-layer
+  decoder reads 97% of its attention from question tokens other than the
+  referent word, `<s>`, "color" or `</s>`. (4) Error split: on the 18
+  incorrect trials the referent word's mass is target 0.196 / distractor
+  0.088, on the 306 correct 0.203 / 0.080 — errors are not fetch errors of
+  attention placement. (5) Fetch test with the mean target−distractor contrast
+  (norm 2.1 vs patch norm 41.9) at scale 1–2: no effect on attention or
+  answer; inconclusive at that scale, rerun at 5/10/20 in `mirror_v2/`.
+  Reading: the mirror implements tag-then-fetch with content-addressed
+  attention in its last two cross-attention layers, and the visual stream
+  never changes; the in-stream model instead rewrites the patches over six
+  layers (removal). Both reach the one-layer readout, but the mirror's answer
+  lives in question tokens, the in-stream model's in the background copy.
 - **2026-09-03 — Mirror model trained: writing the question into the TEXT
   stream (text queries the vanilla ViT patches) reaches 0.8624, most of the
   in-stream model's 0.9095 and far above the −CA readout models (≤0.55).**
