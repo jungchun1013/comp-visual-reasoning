@@ -43,6 +43,25 @@
   underpowered; no correlation with correctness is estimable. Net: the
   "anchor → target handoff" (RESULTS §9) is still correlational; the causal
   version is the 3-object transplant run launched today.
+- **2026-09-03 — Mirror model trained: writing the question into the TEXT
+  stream (text queries the vanilla ViT patches) reaches 0.8624, most of the
+  in-stream model's 0.9095 and far above the −CA readout models (≤0.55).**
+  `clevr_dinov2_mirror_decoder1l_scratch_s42`: vanilla frozen DINOv2, GCA at
+  RoBERTa-large layers 2,6,10,14,18,22 (text = query, patches = key/value),
+  1-layer decoder reading the text tokens, 28.5 M trainable, 16 epochs
+  (resumed from epoch 1 after a validation OOM caused by the co-resident LoRA
+  run; final-only validation at batch 64). Per type, mirror vs main model:
+  query_attribute 0.910 vs 0.987, count 0.736 vs 0.841, exist 0.889 vs 0.949,
+  equal_attribute 0.935 vs 0.897, compare_integer 0.820 vs 0.749. So in-stream
+  conditioning in either stream, with the same six GCA layers and the same
+  one-layer readout, recovers the bulk of the accuracy that the concatenation
+  readout cannot learn; the visual-stream version keeps the edge on referent
+  selection and enumeration (query_attribute, count, exist), the text-stream
+  version wins on two-referent comparisons (equal_attribute, compare_integer),
+  where a text token that fetches both objects is the natural computation.
+  Mechanism analysis (`--mirror` mode: text-GCA attention mass, decoder
+  attention over text tokens, per-layer text readout probe, key/value fetch
+  test, error split) launched on `best.pt` → `patch_language_condition/mirror/`.
 - **2026-09-03 — Aggregation-depth curve, third point: −CA decoder with 4
   layers reaches 0.5349, not above the 2-layer 0.5502.** Run
   `clevr_dinov2_concat_decoder4l_nogca_scratch_s42` (16 epochs, no GCA,
