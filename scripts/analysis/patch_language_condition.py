@@ -27,6 +27,8 @@ Usage (from main/ or the worktree root):
     PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 <py> scripts/analysis/patch_language_condition.py
     PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 <py> scripts/analysis/patch_language_condition.py --intervene
     PYTHONPATH=src CUDA_VISIBLE_DEVICES=  <py> scripts/analysis/patch_language_condition.py --replot
+    PYTHONPATH=src CUDA_VISIBLE_DEVICES=0 <py> scripts/analysis/patch_language_condition.py --mirror \
+        --checkpoint outputs/model/<mirror run>/best.pt --out-dir outputs/analysis/patch_language_condition/mirror
 """
 
 from __future__ import annotations
@@ -183,6 +185,20 @@ def prepare_subsets(n1_entries, n2_entries, args, out_dir, x19_pca_pairs):
         save_masks_debug(images[name][:n_dbg], np.stack(owners[name][:n_dbg]),
                          ents[name], keep[:n_dbg], args.grid, sub / "masks_debug.png")
     return keep, images, owners, labels
+
+
+def load_or_prepare_subsets(out_dir, n1_entries, n2_entries, args, x19_pairs):
+    """Reuse the pair selection recorded in <out_dir>/n2/labels.json, else select anew."""
+    dirs = {"n1": args.n1_dir, "n2": args.n2_dir}
+    if (out_dir / "n2" / "labels.json").exists():
+        labels = {n: load_labels(out_dir / n) for n in ("n1", "n2")}
+        keep = [r["pair_index"] for r in labels["n2"]]
+        owners = {n: list(np.load(out_dir / n / "owner.npy")) for n in ("n1", "n2")}
+        images = {n: [build_masks({"n1": n1_entries, "n2": n2_entries}[n], [i], dirs[n], args)[0][0]
+                      for i in keep] for n in ("n1", "n2")}
+        print(f"Reusing existing selection: {len(keep)} pairs")
+        return keep, images, owners, labels
+    return prepare_subsets(n1_entries, n2_entries, args, out_dir, x19_pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -2523,6 +2539,467 @@ def run_relational(args, out_dir, label):
 
 
 # ---------------------------------------------------------------------------
+# Mirror model (--mirror).  The ViT is vanilla; the gated cross-attention sits
+# inside RoBERTa-large (text tokens = query, ViT patch tokens h = key/value);
+# the 1-layer decoder reads the connector-projected RoBERTa tokens.  Same n2
+# pairs, masks and questions as the ViT-side pipeline: c1 = question refers to
+# the target, c2 = refers to the distractor; c0 = the c1 question with the
+# cross-attention disabled (text only, no image), the no-image control for the
+# probes.  The vanilla patch cache n2/feats_c0.npz (shared SparseExtractor)
+# gives the object-identity contrast for the fetch test.
+# ---------------------------------------------------------------------------
+
+MIRROR_TOKEN_TYPES = ("referent", "bos", "last", "mean_all")
+MIRROR_TOKEN_LABEL = {"referent": "referent word token", "bos": "first token <s>",
+                      "last": "last token </s>", "mean_all": "mean over all question tokens"}
+MIRROR_READOUTS = ("mean", "bos", "last")
+MIRROR_READOUT_LABEL = {"mean": "mean over question tokens", "bos": "first token <s>", "last": "last token </s>"}
+
+
+class MirrorCapture:
+    """Around one encode_text_mirror call: head-mean attention map (B, T, P) of
+    every text-GCA layer, and the RoBERTa hidden state after every layer
+    (index 0 = embeddings, l = output of encoder layer l-1; state l is captured
+    before the text-GCA hook at layer l, if any, modifies it)."""
+
+    def __init__(self, steervit):
+        self.sv = steervit
+        self.keys = list(steervit.text_gca.keys())
+        self.hidden, self.attn, self.hs = {}, {}, []
+
+    def __enter__(self):
+        tm = self.sv.text_model
+        self.hs.append(tm.embeddings.register_forward_hook(
+            lambda m, i, o: self.hidden.__setitem__(0, o.detach())))
+        for li, layer in enumerate(tm.encoder.layer):
+            def mk(li):
+                def fn(m, i, o):
+                    self.hidden[li + 1] = (o[0] if isinstance(o, tuple) else o).detach()
+                return fn
+            self.hs.append(layer.register_forward_hook(mk(li)))
+        for k in self.keys:
+            self.sv.text_gca[k].cross_attn.save_attn = True
+        return self
+
+    def __exit__(self, *a):
+        for h in self.hs:
+            h.remove()
+        for k in self.keys:
+            ca = self.sv.text_gca[k].cross_attn
+            if ca.attn_map is not None:
+                self.attn[int(k)] = ca.attn_map.float().mean(1)              # (B, T, P)
+            ca.attn_map = None
+            ca.save_attn = False
+
+
+@torch.no_grad()
+def mirror_forward(state, images, questions, use_image=True, kv_delta=None, kv_mask=None, alpha=0.0):
+    """Vanilla ViT patches -> (optionally edited) key/value -> RoBERTa with the
+    text-GCA hooks -> decoder first-token logits and decoder attention over the
+    text tokens.  kv_delta (B, D) is added to the patches selected by kv_mask
+    (B, P) scaled by alpha, in the key/value tensor only."""
+    model, sv, device = state["model"], state["steervit"], state["device"]
+    prefix = sv.vision_model.trunk.num_prefix_tokens
+    kv = sv.forward(images, None)[:, prefix:, :]
+    if kv_delta is not None:
+        kv = kv + alpha * kv_delta[:, None, :].to(kv.dtype) * kv_mask[:, :, None].to(kv.dtype)
+    with MirrorCapture(sv) as cap:
+        mem, mask = sv.encode_text_mirror(list(questions), kv if use_image else None)
+    bos = torch.full((images.shape[0], 1), model.vocab["<bos>"], dtype=torch.long, device=device)
+    with DecoderAttention(model.decoder) as da:
+        lg = model.decoder(bos, mem, memory_key_padding_mask=~mask)[:, 0, :]
+    return {"logits": lg, "kv": kv, "mask": mask, "attn": cap.attn, "hidden": cap.hidden,
+            "dec_attn": da.weights[0][:, :, 0, :]}                                     # (B, H, T)
+
+
+def mirror_token_index(ext, questions, words):
+    """(referent, last </s>, queried-attribute word) token positions, RoBERTa BPE."""
+    ridx, lidx = ext.referent_token_index(questions, words)
+    qidx, _ = ext.referent_token_index(questions, [QUERIED] * len(questions))
+    return np.array(ridx), np.array(lidx), np.array(qidx)
+
+
+def _owner_mass(rows, ow):
+    """rows (B, P) attention rows, ow (B, P) owner -> (B, 3) mass on bg / target / distractor."""
+    return torch.stack([(rows * (ow == k)).sum(-1) for k in range(3)], -1)
+
+
+def _referent_mass(out, ridx, ow, gca_layers):
+    """(B, n_gca, 3) mass of the referent token's attention by owner, per text-GCA layer."""
+    b = torch.arange(ow.shape[0], device=ow.device)
+    r = torch.as_tensor(ridx, device=ow.device)
+    return torch.stack([_owner_mass(out["attn"][l][b, r], ow) for l in gca_layers], 1)
+
+
+@torch.no_grad()
+def run_mirror_pass(out_dir, args, state, images_n2, owners_n2, labels_n2):
+    """One pass per condition: caches text hidden states (text_feats_c*.npz),
+    decoder answers, text-GCA attention mass by owner (mirror_attention.json,
+    with the error split) and decoder attention over the text tokens
+    (mirror_decoder_attention.json)."""
+    model, sv, device, tf, ext = state["model"], state["steervit"], state["device"], state["transform"], state["extractor"]
+    inv = {v: k for k, v in model.vocab.items()}
+    gca_layers = sorted(int(k) for k in sv.text_gca.keys())
+    n_hid = len(sv.text_model.encoder.layer) + 1
+    N, bs = len(labels_n2), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner_t = torch.from_numpy(np.stack(owners_n2))
+    A_id = np.array([model.vocab[r["target"][QUERIED]] for r in labels_n2])
+    Ad_id = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels_n2])
+    qs_all = {c: [r["questions"][c] for r in labels_n2] for c in ("c1", "c2")}
+    words_all = {c: [r["referent_words"][c] for r in labels_n2] for c in ("c1", "c2")}
+    Tmax = max(ext.tokenizer(qs_all[c], padding=True, return_tensors="pt")["input_ids"].shape[1] for c in qs_all)
+    D = sv.text_dim
+    H = model.decoder.layers[0].base_layer.multihead_attn.num_heads
+    preds, mass, dec_mass = {}, {}, {}
+    for cond in ("c0", "c1", "c2"):
+        q_cond = "c1" if cond == "c0" else cond            # c0 = c1 question, cross-attention disabled
+        hid = np.zeros((N, n_hid, Tmax, D), np.float16)
+        tok_mask = np.zeros((N, Tmax), bool)
+        ids = np.zeros((N, Tmax), np.int32)
+        pred = np.zeros(N, int)
+        dec = np.zeros((N, H, Tmax), np.float32)
+        m_tok = np.zeros((N, len(gca_layers), len(MIRROR_TOKEN_TYPES), 3), np.float32)
+        ridx_all, lidx_all, qidx_all = mirror_token_index(ext, qs_all[q_cond], words_all[q_cond])
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            qs = qs_all[q_cond][s:e]
+            ims = imgs_t[s:e].to(device)
+            ow = owner_t[s:e].to(device)
+            out = mirror_forward(state, ims, qs, use_image=cond != "c0")
+            if cond == "c1" and s == 0:
+                # sanity: the key/value patch tokens do not depend on the question
+                out2 = mirror_forward(state, ims, qs_all["c2"][s:e])
+                diff = float((out["kv"] - out2["kv"]).abs().max())
+                assert diff == 0.0, f"key/value patches differ between c1 and c2: max abs diff {diff}"
+                print(f"sanity: key/value patch tokens identical under c1 and c2 (max abs diff {diff})")
+            ridx, lidx = ext.referent_token_index(qs, words_all[q_cond][s:e])
+            assert list(ridx) == list(ridx_all[s:e]) and list(lidx) == list(lidx_all[s:e])
+            T = out["mask"].shape[1]
+            mk = out["mask"].cpu().numpy()
+            tok_mask[s:e, :T] = mk
+            ids[s:e, :T] = ext.tokenizer(qs, padding=True, return_tensors="pt")["input_ids"].numpy()
+            for l in range(n_hid):
+                hid[s:e, l, :T] = out["hidden"][l].float().cpu().numpy().astype(np.float16)
+            pred[s:e] = out["logits"].argmax(-1).cpu().numpy()
+            dec[s:e, :, :T] = out["dec_attn"].cpu().numpy()
+            if cond != "c0":
+                b = torch.arange(e - s, device=device)
+                mkt = out["mask"].float()
+                for k, l in enumerate(gca_layers):
+                    am = out["attn"][l]                                          # (B, T, P)
+                    rows = {"referent": am[b, torch.as_tensor(ridx, device=device)],
+                            "bos": am[:, 0],
+                            "last": am[b, torch.as_tensor(lidx, device=device)],
+                            "mean_all": (am * mkt[:, :, None]).sum(1) / mkt.sum(1)[:, None]}
+                    for t, name in enumerate(MIRROR_TOKEN_TYPES):
+                        m_tok[s:e, k, t] = _owner_mass(rows[name], ow).cpu().numpy()
+            print(f"  {cond} {e}/{N}", flush=True)
+        np.savez(out_dir / f"text_feats_{cond}.npz", hid=hid, mask=tok_mask, ids=ids, pred=pred,
+                 ref_idx=ridx_all, last_idx=lidx_all, q_idx=qidx_all, gca_layers=np.array(gca_layers))
+        print(f"Saved: {out_dir / f'text_feats_{cond}.npz'} ({hid.nbytes / 1e9:.2f} GB)")
+        preds[cond], mass[cond], dec_mass[cond] = pred, m_tok, dec
+        if cond == "c1":
+            gen = model.generate(imgs_t[:min(8, N)].to(device), qs_all["c1"][:min(8, N)])
+            print(f"generate() vs first-token argmax on 8 images: {gen} | "
+                  f"{[inv.get(int(t), '?') for t in pred[:min(8, N)]]}")
+    acc = {"c1": float((preds["c1"] == A_id).mean()), "c2": float((preds["c2"] == Ad_id).mean()),
+           "c0_text_only_says_target": float((preds["c0"] == A_id).mean())}
+    print(f"decoder accuracy: c1 {acc['c1']:.3f}  c2 {acc['c2']:.3f}; text only (no image) -> target colour "
+          f"{acc['c0_text_only_says_target']:.3f}")
+
+    # ---- text-GCA attention mass by owner (2) + error split (6) ----
+    attention = {"n_images": N, "text_gca_layers": gca_layers, "token_types": list(MIRROR_TOKEN_TYPES),
+                 "tokens_per_owner_mean": {n: float((owner_t == k).float().sum(1).mean()) for k, n in
+                                           enumerate(("bg", "target", "distractor"))},
+                 "decoder_accuracy": acc, "conditions": {}, "error_split": {}}
+    for cond in ("c1", "c2"):
+        attention["conditions"][cond] = {
+            t: {n: mass[cond][:, :, ti, k].mean(0).tolist() for k, n in enumerate(("bg", "target", "distractor"))}
+            for ti, t in enumerate(MIRROR_TOKEN_TYPES)}
+        for t in MIRROR_TOKEN_TYPES:
+            a = attention["conditions"][cond][t]
+            print(f"{cond} {t:<9} mass on target " + " ".join(f"{v:.3f}" for v in a["target"]) +
+                  " | distractor " + " ".join(f"{v:.3f}" for v in a["distractor"]), flush=True)
+    correct = preds["c1"] == A_id
+    ref_last = mass["c1"][:, -1, 0]                                              # (N, 3) referent token, last GCA layer
+    for name, sel in (("correct", correct), ("incorrect", ~correct)):
+        attention["error_split"][name] = {
+            "n": int(sel.sum()),
+            "referent_mass_last_layer": {k: float(ref_last[sel, i].mean()) if sel.any() else float("nan")
+                                         for i, k in enumerate(("bg", "target", "distractor"))}}
+        r = attention["error_split"][name]["referent_mass_last_layer"]
+        print(f"c1 {name} (n={int(sel.sum())}): referent-token mass at text-GCA layer {gca_layers[-1]}: "
+              f"target {r['target']:.3f} distractor {r['distractor']:.3f} bg {r['bg']:.3f}")
+    attention["per_image"] = {"correct_c1": correct.tolist(),
+                              "referent_mass_last_layer_c1": ref_last.tolist()}
+    with open(out_dir / "mirror_attention.json", "w") as f:
+        json.dump(attention, f, indent=1)
+
+    # ---- decoder attention over the text tokens under c1 (3) ----
+    ids1 = np.load(out_dir / "text_feats_c1.npz")
+    ridx, lidx, qidx = ids1["ref_idx"], ids1["last_idx"], ids1["q_idx"]
+    w = dec_mass["c1"]                                                           # (N, H, T)
+    assert np.allclose(w.sum(-1), 1.0, atol=1e-4), "decoder attention rows must sum to 1"
+    ar = np.arange(N)
+    cats = {"referent": w[ar, :, ridx], "bos": w[:, :, 0], "queried_word": w[ar, :, qidx], "last": w[ar, :, lidx]}
+    cats["rest"] = 1.0 - sum(cats.values())
+    dec_res = {"n_images": N, "condition": "c1", "queried_word": QUERIED, "n_heads": int(H),
+               "mass_mean": {k: float(v.mean()) for k, v in cats.items()},
+               "mass_per_head": {k: v.mean(0).tolist() for k, v in cats.items()}}
+    print("decoder attention over text tokens (c1): " +
+          " ".join(f"{k} {v:.3f}" for k, v in dec_res["mass_mean"].items()))
+    with open(out_dir / "mirror_decoder_attention.json", "w") as f:
+        json.dump(dec_res, f, indent=1)
+    return attention, dec_res
+
+
+def mirror_readout_probe(out_dir, args, labels_n2):
+    """(4) Linear probe of the target colour from the cached RoBERTa hidden
+    states at every layer: mean over question tokens / <s> / </s>, under c1 and
+    under the text-only control c0; decoder accuracy from mirror_attention.json."""
+    N = len(labels_n2)
+    y = np.array([r["target"][QUERIED] for r in labels_n2])
+    groups = np.arange(N)
+    res = {"n_images": N, "queried": QUERIED, "readouts": list(MIRROR_READOUTS),
+           "majority": float(np.bincount(np.unique(y, return_inverse=True)[1]).max() / N), "conditions": {}}
+    for cond in ("c1", "c0"):
+        c = np.load(out_dir / f"text_feats_{cond}.npz")
+        hid, mask, lidx = c["hid"], c["mask"], c["last_idx"]
+        n_hid = hid.shape[1]
+        acc = {k: [] for k in MIRROR_READOUTS}
+        for l in range(n_hid):
+            h = hid[:, l].astype(np.float32)                                     # (N, T, D)
+            feats = {"mean": (h * mask[:, :, None]).sum(1) / mask.sum(1)[:, None],
+                     "bos": h[:, 0], "last": h[np.arange(N), lidx]}
+            for k, X in feats.items():
+                acc[k].append(_fit_eval(X, y, groups, GroupKFold(5)))
+        res["conditions"][cond] = acc
+        for k in MIRROR_READOUTS:
+            print(f"probe {cond} {k:<5} " + " ".join(f"{v:.2f}" for v in acc[k]), flush=True)
+    with open(out_dir / "mirror_attention.json") as f:
+        att = json.load(f)
+    res["decoder_accuracy"] = att["decoder_accuracy"]
+    res["text_gca_layers"] = att["text_gca_layers"]
+    with open(out_dir / "mirror_readout.json", "w") as f:
+        json.dump(res, f, indent=1)
+    return res
+
+
+@torch.no_grad()
+def run_mirror_fetch_test(out_dir, args, state, images_n2, owners_n2, labels_n2):
+    """(5) Content-addressed fetch test.  d = mean over images of (target patch
+    mean − distractor patch mean) of the vanilla ViT output (n2/feats_c0.npz,
+    trunk.norm space = the key/value space).  alpha·d is added to the
+    DISTRACTOR's patches in the key/value tensor only, under the c1 question;
+    controls: norm-matched random vector on the distractor, d on the background."""
+    model, sv, device, tf, ext = state["model"], state["steervit"], state["device"], state["transform"], state["extractor"]
+    gca_layers = sorted(int(k) for k in sv.text_gca.keys())
+    c0 = load_sparse(out_dir / "n2", "c0")
+    om = c0["obj_mean"][:, :, NUM_LAYERS - 1].astype(np.float32)                  # (N, 2, D) last block, normed
+    d = (om[:, 0] - om[:, 1]).mean(0)
+    d_norm = float(np.linalg.norm(d))
+    kv_norm = float(np.linalg.norm(om[:, 0], axis=-1).mean())
+    print(f"object-identity contrast d: norm {d_norm:.2f} (mean target patch-mean norm {kv_norm:.2f})")
+    rng = np.random.default_rng(args.seed)
+    rand = rng.standard_normal(d.shape).astype(np.float32)
+    rand = rand / np.linalg.norm(rand) * d_norm
+    N, bs = len(labels_n2), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner_t = torch.from_numpy(np.stack(owners_n2))
+    A_id = np.array([model.vocab[r["target"][QUERIED]] for r in labels_n2])
+    Ad_id = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels_n2])
+    qs1 = [r["questions"]["c1"] for r in labels_n2]
+    words1 = [r["referent_words"]["c1"] for r in labels_n2]
+
+    def run(delta=None, mask_id=None, alpha=0.0):
+        pred, mass = np.zeros(N, int), []
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            ims, ow = imgs_t[s:e].to(device), owner_t[s:e].to(device)
+            kw = {}
+            if delta is not None:
+                kw = dict(kv_delta=torch.from_numpy(delta).to(device).expand(e - s, -1),
+                          kv_mask=ow == mask_id, alpha=alpha)
+            out = mirror_forward(state, ims, qs1[s:e], **kw)
+            ridx, _ = ext.referent_token_index(qs1[s:e], words1[s:e])
+            pred[s:e] = out["logits"].argmax(-1).cpu().numpy()
+            mass.append(_referent_mass(out, ridx, ow, gca_layers).cpu().numpy())
+        return pred, np.concatenate(mass)                                        # (N,), (N, n_gca, 3)
+
+    base_pred, base_mass = run()
+    ok = (base_pred == A_id) & (A_id != Ad_id)
+    bm = base_mass[ok].mean(0)
+    print(f"baseline c1: accuracy {ok.mean():.3f} on {N} images; referent-token mass on distractor by layer "
+          + " ".join(f"{v:.3f}" for v in bm[:, 2]))
+    alphas = [float(a) for a in args.marker_alphas.split(",")]
+    variants = {"contrast_to_distractor": (d, 2), "random_to_distractor": (rand, 2), "contrast_to_bg": (d, 0)}
+    rows = []
+    for alpha in alphas:
+        for var, (vec, mid) in variants.items():
+            pred, mass = run(vec, mid, alpha)
+            p, m = pred[ok], mass[ok].mean(0)
+            rows.append({"variant": var, "alpha": alpha, "n": int(ok.sum()),
+                         "p_target": float((p == A_id[ok]).mean()), "p_distractor": float((p == Ad_id[ok]).mean()),
+                         "p_other": float(((p != A_id[ok]) & (p != Ad_id[ok])).mean()),
+                         "attn_ref_target": m[:, 1].tolist(), "attn_ref_distractor": m[:, 2].tolist(),
+                         "attn_ref_bg": m[:, 0].tolist()})
+            r = rows[-1]
+            print(f"a={alpha:g} {var:<22} P(target) {r['p_target']:.2f} P(distractor) {r['p_distractor']:.2f} | "
+                  f"referent mass on distractor by layer " + " ".join(f"{v:.3f}" for v in m[:, 2]), flush=True)
+    res = {"n_images_ok": int(ok.sum()), "queried": QUERIED, "text_gca_layers": gca_layers,
+           "contrast_norm": d_norm, "kv_token_norm_mean": kv_norm, "alphas": alphas,
+           "baseline": {"accuracy_c1": float(ok.mean()),
+                        "attn_ref_target": bm[:, 1].tolist(), "attn_ref_distractor": bm[:, 2].tolist(),
+                        "attn_ref_bg": bm[:, 0].tolist()},
+           "rows": rows}
+    with open(out_dir / "mirror_fetch_test.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"Saved: {out_dir / 'mirror_fetch_test.json'}")
+    return res
+
+
+def _text_gca_axis(ax, gca_layers):
+    ax.set_xticks(gca_layers)
+    ax.set_xlabel("text-GCA layer (RoBERTa layer index)", fontsize=10)
+
+
+def plot_mirror_attention(att, label, out_path):
+    gl = att["text_gca_layers"]
+    fig, axes = plt.subplots(1, len(MIRROR_TOKEN_TYPES), figsize=(4.2 * len(MIRROR_TOKEN_TYPES), 4), sharey=True)
+    for ax, t in zip(axes, MIRROR_TOKEN_TYPES):
+        for cond, ls, cl in (("c1", "-", "clean run"), ("c2", "--", "corrupted run")):
+            for name in ("target", "distractor", "bg"):
+                ax.plot(gl, att["conditions"][cond][t][name], ls, color=OWNER_RGB[name], marker="o",
+                        markersize=3, label=f"{name}, {cl}")
+        ax.set_title(MIRROR_TOKEN_LABEL[t], fontsize=10)
+        ax.set_ylim(-0.02, 1.02)
+        _text_gca_axis(ax, gl)
+    axes[0].set_ylabel("attention mass on the patch group", fontsize=10)
+    axes[0].legend(fontsize=6)
+    es = att["error_split"]
+    fig.suptitle(f"{label} — text-token → patch attention inside RoBERTa, by patch group "
+                 f"(clean run = question refers to the target, corrupted run = refers to the distractor; n={att['n_images']})\n"
+                 f"decoder accuracy clean {att['decoder_accuracy']['c1']:.2f}, corrupted {att['decoder_accuracy']['c2']:.2f}; "
+                 f"referent token at the last text-GCA layer, clean run: correct (n={es['correct']['n']}) target "
+                 f"{es['correct']['referent_mass_last_layer']['target']:.2f} / distractor "
+                 f"{es['correct']['referent_mass_last_layer']['distractor']:.2f}, incorrect (n={es['incorrect']['n']}) target "
+                 f"{es['incorrect']['referent_mass_last_layer']['target']:.2f} / distractor "
+                 f"{es['incorrect']['referent_mass_last_layer']['distractor']:.2f}", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_mirror_decoder_attention(res, label, out_path):
+    cats = list(res["mass_mean"])
+    names = {"referent": "referent word", "bos": "<s>", "queried_word": f"'{res['queried_word']}'",
+             "last": "</s>", "rest": "other tokens"}
+    fig, ax = plt.subplots(1, 1, figsize=(6.5, 4))
+    x = np.arange(len(cats))
+    ax.bar(x, [res["mass_mean"][c] for c in cats], color="0.6", label="mean over heads")
+    for c, xi in zip(cats, x):
+        ph = res["mass_per_head"][c]
+        ax.plot(np.full(len(ph), xi) + np.linspace(-0.2, 0.2, len(ph)), ph, "o", color="#1f77b4",
+                markersize=3, label="single head" if xi == 0 else None)
+    ax.set_xticks(x)
+    ax.set_xticklabels([names[c] for c in cats], fontsize=9)
+    ax.set_ylabel("decoder attention mass")
+    ax.set_ylim(0, 1.02)
+    ax.legend(fontsize=7)
+    fig.suptitle(f"{label} — decoder cross-attention over the RoBERTa tokens, question refers to the target "
+                 f"(n={res['n_images']}, {res['n_heads']} heads)", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_mirror_readout(res, label, out_path):
+    colours = {"mean": "#d62728", "bos": "#1f77b4", "last": "#2ca02c"}
+    fig, ax = plt.subplots(1, 1, figsize=(8, 4.2))
+    for cond, ls, cl in (("c1", "-", "with image"), ("c0", ":", "text only (cross-attention disabled)")):
+        for k in MIRROR_READOUTS:
+            ys = res["conditions"][cond][k]
+            ax.plot(range(len(ys)), ys, ls, color=colours[k], marker="o", markersize=3,
+                    label=f"{MIRROR_READOUT_LABEL[k]}, {cl}")
+    ax.axhline(res["decoder_accuracy"]["c1"], color="k", linewidth=1.0, label="decoder accuracy, question refers to the target")
+    ax.axhline(res["majority"], color="0.5", linewidth=0.8, linestyle="--", label="majority class")
+    for l in res["text_gca_layers"]:
+        ax.axvline(l + 0.5, color="gray", linestyle="--", linewidth=0.8, alpha=0.3)
+    n_hid = len(res["conditions"]["c1"]["mean"])
+    ax.set_xticks(range(0, n_hid, 2))
+    ax.set_xlabel("RoBERTa hidden state (0 = embeddings; grey lines = text-GCA applied before that layer)")
+    ax.set_ylabel("5-fold probe accuracy")
+    ax.set_ylim(0, 1.02)
+    ax.legend(fontsize=6, loc="lower right")
+    fig.suptitle(f"{label} — linear probe of the target's {res['queried']} from the RoBERTa tokens (n={res['n_images']})",
+                 fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_mirror_fetch_test(res, label, out_path):
+    gl = res["text_gca_layers"]
+    styles = {"contrast_to_distractor": ("#d62728", "o", "target − distractor contrast added to distractor patches"),
+              "random_to_distractor": ("0.4", "x", "norm-matched random vector added to distractor patches"),
+              "contrast_to_bg": ("#1f77b4", "s", "same contrast added to background patches")}
+    alphas = res["alphas"]
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+    ax = axes[0]
+    xs = np.arange(len(alphas))
+    width = 0.8 / len(styles)
+    for i, (var, (col, mk, lab)) in enumerate(styles.items()):
+        rr = [next(r for r in res["rows"] if r["variant"] == var and r["alpha"] == a) for a in alphas]
+        ax.bar(xs + (i - 1) * width, [r["p_distractor"] for r in rr], width, color=col, label=lab)
+        ax.bar(xs + (i - 1) * width, [r["p_target"] for r in rr], width, bottom=[r["p_distractor"] for r in rr],
+               color=col, alpha=0.3, hatch="//", label="P(answer = target's colour), stacked" if i == 0 else None)
+    ax.set_xticks(xs)
+    ax.set_xticklabels([f"scale {a:g}" for a in alphas])
+    ax.set_ylabel("P(answer = distractor's colour)")
+    ax.set_ylim(0, 1.02)
+    ax.legend(fontsize=6)
+    ax = axes[1]
+    ax.plot(gl, res["baseline"]["attn_ref_distractor"], "-", color="0.7", marker="o", markersize=3, label="baseline (no edit)")
+    for var, (col, mk, lab) in styles.items():
+        for a, ls in zip(alphas, ("-", "--", ":", "-.")):
+            r = next(r for r in res["rows"] if r["variant"] == var and r["alpha"] == a)
+            ax.plot(gl, r["attn_ref_distractor"], ls, color=col, marker=mk, markersize=3, label=f"{lab}, scale {a:g}")
+    ax.set_ylabel("referent token → distractor patches\nattention mass", fontsize=10)
+    ax.set_ylim(-0.02, 1.02)
+    _text_gca_axis(ax, gl)
+    ax.legend(fontsize=5)
+    fig.suptitle(f"{label} — content-addressed fetch test: vector added to the key/value patch tokens only, "
+                 f"question refers to the target (n={res['n_images_ok']}; contrast norm {res['contrast_norm']:.1f}, "
+                 f"mean patch norm {res['kv_token_norm_mean']:.1f})", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_mirror(args, out_dir, label, state, n1_entries, n2_entries, x19_pairs):
+    if not args.replot:
+        keep, images, owners, labels = load_or_prepare_subsets(out_dir, n1_entries, n2_entries, args, x19_pairs)
+        extract_condition_sparse(out_dir / "n2", "c0", images["n2"], owners["n2"], labels["n2"], args, state)
+        ensure_model(state, args)
+        assert getattr(state["steervit"], "text_gca", None) is not None, "--mirror needs a mirror checkpoint (text_gca)"
+        run_mirror_pass(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])
+        mirror_readout_probe(out_dir, args, labels["n2"])
+        run_mirror_fetch_test(out_dir, args, state, images["n2"], owners["n2"], labels["n2"])
+    for name, plot in (("mirror_attention", plot_mirror_attention),
+                       ("mirror_decoder_attention", plot_mirror_decoder_attention),
+                       ("mirror_readout", plot_mirror_readout),
+                       ("mirror_fetch_test", plot_mirror_fetch_test)):
+        if (out_dir / f"{name}.json").exists():
+            with open(out_dir / f"{name}.json") as f:
+                plot(json.load(f), label, out_dir / f"{name}.png")
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -2578,14 +3055,17 @@ def main():
     ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
     ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
                     help="--relational: directory whose n1/ cache gives the colour directions u")
+    ap.add_argument("--mirror", action="store_true",
+                    help="only: mirror checkpoint (cross-attention inside RoBERTa, decoder reads text tokens); "
+                         "attention mass / decoder attention / probe ladder / fetch test (new --out-dir)")
     args = ap.parse_args()
 
     apply_style()
     out_dir = Path(args.out_dir)
     assert out_dir.resolve() != Path(args.x19_dir).resolve(), "refusing to write into the X19 directory"
-    if args.relational and not args.replot:
+    if (args.relational or args.mirror) and not args.replot:
         assert not (out_dir.exists() and any(out_dir.iterdir())), \
-            f"--relational needs a new --out-dir (non-empty: {out_dir}); use --replot to regenerate figures"
+            f"--relational/--mirror need a new --out-dir (non-empty: {out_dir}); use --replot to regenerate figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     tee_stdout(out_dir)
     if args.model_label is None:
@@ -2606,18 +3086,13 @@ def main():
         with open(x19_labels) as f:
             x19_pairs = {r["pair_index"] for r in json.load(f) if r.get("in_pca_set")}
     state = {}
-    dirs = {"n1": args.n1_dir, "n2": args.n2_dir}
+
+    if args.mirror:
+        run_mirror(args, out_dir, label, state, n1_entries, n2_entries, x19_pairs)
+        return
 
     if not args.replot:
-        if (out_dir / "n2" / "labels.json").exists():
-            labels = {n: load_labels(out_dir / n) for n in ("n1", "n2")}
-            keep = [r["pair_index"] for r in labels["n2"]]
-            owners = {n: list(np.load(out_dir / n / "owner.npy")) for n in ("n1", "n2")}
-            images = {n: [build_masks({"n1": n1_entries, "n2": n2_entries}[n], [i], dirs[n], args)[0][0]
-                          for i in keep] for n in ("n1", "n2")}
-            print(f"Reusing existing selection: {len(keep)} pairs")
-        else:
-            keep, images, owners, labels = prepare_subsets(n1_entries, n2_entries, args, out_dir, x19_pairs)
+        keep, images, owners, labels = load_or_prepare_subsets(out_dir, n1_entries, n2_entries, args, x19_pairs)
         if args.masks_only:
             print("\n--masks-only: inspect n1/n2 masks_debug.png, then rerun.")
             return
