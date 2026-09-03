@@ -43,6 +43,19 @@
   underpowered; no correlation with correctness is estimable. Net: the
   "anchor → target handoff" (RESULTS §9) is still correlational; the causal
   version is the 3-object transplant run launched today.
+- **2026-09-03 — Aggregation-depth curve, third point: −CA decoder with 4
+  layers reaches 0.5349, not above the 2-layer 0.5502.** Run
+  `clevr_dinov2_concat_decoder4l_nogca_scratch_s42` (16 epochs, no GCA,
+  question and patches concatenated in the decoder). Its in-run final
+  validation died with CUDA OOM because a second training shared the GPU;
+  re-evaluated `last.pt` (epoch 15) with `scripts/evaluate.py` at val batch 64
+  (`eval_last_epoch15_v2.log` in the run dir): overall 0.5349 on 149,991 val
+  questions (query_attribute 0.483, count 0.486, equal_attribute 0.570,
+  compare_integer 0.584, exist 0.680). With the 1-layer 0.4945 and 2-layer
+  0.5502 (both epoch-15 final validation) the curve is flat from 2 layers on:
+  putting the selection into the readout does not recover the 0.9095 of the
+  in-stream model by adding readout depth, at least up to 4 layers at this
+  width and training budget.
 - **2026-09-02 — Relational questions on 3-object scenes (DINOv2, local patches
   + 1-layer decoder): the anchor → answer handoff is causal and in-stream; the
   spatial relation is written first as an absolute-position field, then as an
