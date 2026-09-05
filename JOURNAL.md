@@ -43,6 +43,41 @@
   underpowered; no correlation with correctness is estimable. Net: the
   "anchor → target handoff" (RESULTS §9) is still correlational; the causal
   version is the 3-object transplant run launched today.
+- **2026-09-04 — Flamingo-style LoRA run done; the training script's
+  validation was under-reporting because of right padding. Corrected full-val
+  accuracies: frozen LLM 0.4932, LoRA 0.5290. Unfreezing the LLM does not
+  reduce add-object hallucination.** `clevr_flamingo_dinov2_lora_s42`
+  (TinyLlama-1.1B-Chat, LoRA r=16 on q/v, 6 GCA layers text→vision, 8 epochs,
+  batch 64; same recipe as `clevr_flamingo_dinov2_frozenllm_s42` minus
+  `--freeze-llm`). In-run val acc 0.3795 (frozen run: 0.3176), but the
+  script's `evaluate()` tokenised prompts with RIGHT padding and batched
+  `generate` on a decoder-only LLM, which corrupts the shorter prompts of a
+  batch: on the same 1,920 questions right padding gives 0.3734 and left
+  padding 0.5161. Fixed in `train_flamingo_clevr.py::evaluate` (left padding
+  for the duration of evaluation only; training collate unchanged) and
+  re-evaluated both checkpoints on all 149,991 val questions with left
+  padding (`eval_left_padding_full.{log,json}` in each run dir): frozen LLM
+  **0.4932**, LoRA **0.5290**. Both earlier numbers (0.3176 / 0.3795) are
+  superseded; RESULTS §15's 0.3176 needs this correction. Add-object
+  hallucination (`add_object_eval_flamingo.py`, which already used left
+  padding; n=100 per attribute), LoRA vs frozen: colour 0.21 vs 0.08,
+  material 0.53 vs 0.59, shape 0.45 vs 0.52, size 0.63 vs 0.54, bait share
+  of errors 0.78–1.00 on the non-colour attributes for both. So with the LLM
+  unfrozen the model gains 3.6 points overall but fixates on the added lure
+  exactly as before — consistent with the §15 reading that lure fixation is
+  a property of LLM-side fusion, not of training budget or trainability.
+  Comparison across the three fusion designs at matched vision backbone
+  (frozen DINOv2 ViT-B/14 @336): in-stream (question written into the ViT)
+  0.9095; mirror (question stream = RoBERTa-large, patches as key/value)
+  0.8624; Flamingo-style (question stream = TinyLlama-1.1B, patches as
+  key/value, generative readout) 0.4932 frozen / 0.5290 LoRA; concatenation
+  readout without any cross-attention 0.49–0.55. The mirror and the
+  Flamingo-style model have the same fusion direction, so the 0.86 vs 0.53
+  gap is not the direction: it is the readout (classification decoder over
+  the whole token sequence vs autoregressive generation from the last
+  position of a 1.1B causal LM) and the training regime — the causal LM's
+  last-position readout is the same aggregation problem the −CA models fail
+  at, now with a stronger language prior competing.
 - **2026-09-03 — Mirror model mechanism: selection is the referent word's
   attention over patches, sharpened only in the last two text-GCA layers, and
   the target's colour enters the text stream there; errors are not attention
