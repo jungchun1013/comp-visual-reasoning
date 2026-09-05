@@ -333,6 +333,11 @@ def collate_fn(batch, tokenizer, max_length=64):
 def evaluate(model, dataloader, dinov2_cache, tokenizer, device, max_batches=None):
     model.eval()
     correct, total = 0, 0
+    # Decoder-only generation needs LEFT padding; training collate uses right
+    # padding, so switch only for the duration of evaluation (right padding
+    # under-reported val acc: 0.37 vs 0.52 on the same 1,920 questions, 2026-09-04).
+    prev_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
 
     for i, batch in enumerate(dataloader):
         if max_batches and i >= max_batches:
@@ -359,6 +364,7 @@ def evaluate(model, dataloader, dinov2_cache, tokenizer, device, max_batches=Non
                 correct += 1
             total += 1
 
+    tokenizer.padding_side = prev_padding_side
     return correct / total if total > 0 else 0
 
 
