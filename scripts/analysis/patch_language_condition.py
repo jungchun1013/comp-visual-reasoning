@@ -34,6 +34,7 @@ Usage (from main/ or the worktree root):
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from pathlib import Path
@@ -57,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analysis.plot_style import apply_style, S, GCA_LAYERS, mark_gca_layers, line_kwargs
 from analysis.run_log import tee_stdout
+from analysis.patching_utils import SAAttnCapture
 from tsne_patch_level import load_entries, build_masks, save_masks_debug
 from tsne_single_object import minimal_referring_question
 from patch_pca_cluster import (combo_key, offset_statistics_from_offsets,
@@ -795,7 +797,7 @@ class ResidualAdder:
 @torch.no_grad()
 def first_token_logits(model, steervit, images, questions):
     prefix = steervit.vision_model.trunk.num_prefix_tokens
-    feats = steervit.forward(images, list(questions))
+    feats = steervit.forward(images, None if questions is None else list(questions))
     patches = feats[:, prefix:, :]
     bos = torch.full((images.shape[0], 1), model.vocab["<bos>"], dtype=torch.long, device=images.device)
     return model.decoder(bos, patches)[:, 0, :]
@@ -2022,7 +2024,11 @@ ROLE_LABEL = {"A": "anchor A (named in the question)", "T": "answer object T (cl
               "D": "other object D (corrupted-run answer)", "bg": "background"}
 SPATIAL_RELATIONS = ["left of", "right of", "in front of", "behind"]
 SPATIAL_OPPOSITE = {"left of": "right of", "right of": "left of", "in front of": "behind", "behind": "in front of"}
-SPATIAL_MARGIN = 2          # patches along the relation axis
+SPATIAL_MARGIN_FRAC = 2 / 24  # margin along the relation axis as a grid fraction (2 patches at grid 24)
+
+
+def spatial_margin(grid):
+    return SPATIAL_MARGIN_FRAC * grid
 
 
 def scene_objects(e):
@@ -2045,8 +2051,9 @@ def mask_centroids(owner, n_obj, grid):
     return c
 
 
-def same_question(attr, anchor_color):
-    return f"There is another thing that is the same {attr} as the {anchor_color} object; what is its color?"
+def same_question(attr, anchor_color, queried="color"):
+    # CLEVR same_relate wording; "what is its {shape|material|size}?" occurs in the CLEVR templates.
+    return f"There is another thing that is the same {attr} as the {anchor_color} object; what is its {queried}?"
 
 
 def spatial_question(rel, anchor_color):
@@ -2067,54 +2074,76 @@ def spatial_axis_sign(rel):
     return axis, sign
 
 
-def spatial_holds(cent, j, anchor, rel, margin=SPATIAL_MARGIN):
+def spatial_holds(cent, j, anchor, rel, grid):
     axis, sign = spatial_axis_sign(rel)
-    return sign * (cent[j, axis] - cent[anchor, axis]) >= margin
+    return sign * (cent[j, axis] - cent[anchor, axis]) >= spatial_margin(grid)
 
 
-def check_spatial(cent, anchor, rel, answer):
+def check_spatial(cent, anchor, rel, answer, grid):
     """Ground-truth rule: exactly one non-anchor object satisfies `rel` w.r.t. the anchor
-    (margin SPATIAL_MARGIN patches), and it is `answer`."""
-    return [j for j in range(len(cent)) if j != anchor and spatial_holds(cent, j, anchor, rel)] == [answer]
+    (margin spatial_margin(grid) patches), and it is `answer`."""
+    return [j for j in range(len(cent)) if j != anchor and spatial_holds(cent, j, anchor, rel, grid)] == [answer]
 
 
-def assign_roles(mode, objs, cent, grid):
+def assign_roles(mode, objs, cent, grid, queried="color", relation_order="fixed", rot_rng=None, spatial_c3=False):
     """First (anchor, attribute | relation) in fixed order that leaves exactly one
     answer object (and, for spatial, exactly one object on the opposite side);
-    returns the role record or None."""
+    returns the role record or None.
+    `queried`: attribute asked by the same-as question (shared attribute s != queried).
+    `relation_order` = "rotate": the relation scan starts at rot_rng.integers(4).
+    `spatial_c3`: add c3 = same relation word with D as the anchor. Along the relation
+    axis T, A, D are ordered, so the strict rule (exactly one object satisfies the
+    relation from D) is never met (both A and T do); c3 uses the nearest object
+    (with the margin rule) and the scene is kept only if that answer differs from
+    c1's; `c3_strict_unique` records the strict rule per scene."""
     n = len(objs)
+    k0 = int(rot_rng.integers(4)) if relation_order == "rotate" else 0
     for anchor in range(n):
         others = [j for j in range(n) if j != anchor]
         if mode == "same":
-            for a in ("shape", "material", "size"):
+            for a in [x for x in ("shape", "material", "size") if x != queried]:
                 shares = [j for j in others if objs[j][a] == objs[anchor][a]]
                 if len(shares) != 1:
                     continue
                 T = shares[0]
                 D = [j for j in others if j != T][0]
                 assert check_same(objs, anchor, a, T) and check_same(objs, T, a, anchor)
-                return {"A": anchor, "T": T, "D": D, "attribute": a,
-                        "questions": {"c1": same_question(a, objs[anchor]["color"]),
-                                      "c2": same_question(a, objs[T]["color"])},
+                return {"A": anchor, "T": T, "D": D, "attribute": a, "queried": queried,
+                        "A_q_eq_T_q": bool(objs[anchor][queried] == objs[T][queried]),
+                        "questions": {"c1": same_question(a, objs[anchor]["color"], queried),
+                                      "c2": same_question(a, objs[T]["color"], queried)},
                         "referent_words": {"c1": objs[anchor]["color"], "c2": objs[T]["color"]},
-                        "answers": {"c1": objs[T]["color"], "c2": objs[anchor]["color"]}}
+                        "answers": {"c1": objs[T][queried], "c2": objs[anchor][queried]}}
         else:
-            for rel in SPATIAL_RELATIONS:
-                fwd = [j for j in others if spatial_holds(cent, j, anchor, rel)]
-                opp = [j for j in others if spatial_holds(cent, j, anchor, SPATIAL_OPPOSITE[rel])]
+            for rel in SPATIAL_RELATIONS[k0:] + SPATIAL_RELATIONS[:k0]:
+                fwd = [j for j in others if spatial_holds(cent, j, anchor, rel, grid)]
+                opp = [j for j in others if spatial_holds(cent, j, anchor, SPATIAL_OPPOSITE[rel], grid)]
                 if len(fwd) != 1 or len(opp) != 1:
                     continue
                 T, D = fwd[0], opp[0]
-                assert check_spatial(cent, anchor, rel, T) and check_spatial(cent, anchor, SPATIAL_OPPOSITE[rel], D)
-                axis, _ = spatial_axis_sign(rel)
+                assert check_spatial(cent, anchor, rel, T, grid) and check_spatial(cent, anchor, SPATIAL_OPPOSITE[rel], D, grid)
+                axis, sign = spatial_axis_sign(rel)
                 centre = (grid - 1) / 2
-                return {"A": anchor, "T": T, "D": D, "relation": rel, "opposite": SPATIAL_OPPOSITE[rel],
-                        "axis": "column" if axis == 1 else "row",
-                        "same_side": bool((cent[T, axis] - centre) * (cent[D, axis] - centre) > 0),
-                        "questions": {"c1": spatial_question(rel, objs[anchor]["color"]),
-                                      "c2": spatial_question(SPATIAL_OPPOSITE[rel], objs[anchor]["color"])},
-                        "referent_words": {"c1": objs[anchor]["color"], "c2": objs[anchor]["color"]},
-                        "answers": {"c1": objs[T]["color"], "c2": objs[D]["color"]}}
+                rec = {"A": anchor, "T": T, "D": D, "relation": rel, "opposite": SPATIAL_OPPOSITE[rel],
+                       "axis": "column" if axis == 1 else "row", "queried": "color",
+                       "same_side": bool((cent[T, axis] - centre) * (cent[D, axis] - centre) > 0),
+                       "questions": {"c1": spatial_question(rel, objs[anchor]["color"]),
+                                     "c2": spatial_question(SPATIAL_OPPOSITE[rel], objs[anchor]["color"])},
+                       "referent_words": {"c1": objs[anchor]["color"], "c2": objs[anchor]["color"]},
+                       "answers": {"c1": objs[T]["color"], "c2": objs[D]["color"]}}
+                if spatial_c3:
+                    from_D = [j for j in (anchor, T) if spatial_holds(cent, j, D, rel, grid)]
+                    if not from_D:
+                        continue
+                    nearest = min(from_D, key=lambda j: sign * (cent[j, axis] - cent[D, axis]))
+                    if objs[nearest]["color"] == objs[T]["color"]:
+                        continue
+                    rec.update(c3_candidates=["A" if j == anchor else "T" for j in from_D],
+                               c3_strict_unique=len(from_D) == 1, c3_object="A" if nearest == anchor else "T")
+                    rec["questions"]["c3"] = spatial_question(rel, objs[D]["color"])
+                    rec["referent_words"]["c3"] = objs[D]["color"]
+                    rec["answers"]["c3"] = objs[nearest]["color"]
+                return rec
     return None
 
 
@@ -2129,6 +2158,7 @@ def prepare_relational(entries, args, out_dir):
         order = [int(i) for i in np.random.RandomState(args.seed).permutation(cand)]
     records, images, owners = [], [], []
     n_seg_fail = n_role_fail = 0
+    rot_rng = np.random.default_rng(args.seed)
     for i in order:
         if args.n_pairs and len(records) >= args.n_pairs:
             break
@@ -2142,7 +2172,9 @@ def prepare_relational(entries, args, out_dir):
         ow = ow[0]
         objs = scene_objects(e)
         cent = mask_centroids(ow, len(objs), args.grid)
-        roles = assign_roles(mode, objs, cent, args.grid)
+        roles = assign_roles(mode, objs, cent, args.grid, queried=getattr(args, "same_queried", "color"),
+                             relation_order=getattr(args, "relation_order", "fixed"), rot_rng=rot_rng,
+                             spatial_c3=getattr(args, "spatial_c3", False))
         if roles is None:
             n_role_fail += 1
             continue
@@ -2163,6 +2195,15 @@ def prepare_relational(entries, args, out_dir):
     print(f"Accepted scenes ({mode}): {len(records)}  (segmentation failures {n_seg_fail}, "
           f"no valid role assignment {n_role_fail})")
     assert records, "no scene accepted"
+    if mode == "spatial":
+        print("relation words: " + ", ".join(f"{k}: {v}" for k, v in
+                                             sorted(collections.Counter(r["relation"] for r in records).items())))
+        if getattr(args, "spatial_c3", False):
+            print(f"c3 (same word, anchor D): {len(records)} scenes kept under the nearest-object reading; "
+                  f"strict exactly-one rule met by {sum(r['c3_strict_unique'] for r in records)}; "
+                  f"c3 answer object: {dict(collections.Counter(r['c3_object'] for r in records))}")
+    if mode == "same":
+        print(f"queried {records[0]['queried']}; A_q_eq_T_q true {sum(r['A_q_eq_T_q'] for r in records)} / {len(records)}")
     with open(out_dir / "relational_records.json", "w") as f:
         json.dump(records, f, indent=1)
     np.save(out_dir / "owner.npy", np.stack(owners))
@@ -2288,50 +2329,100 @@ def plot_relational_gca_write(res, mode, label, out_path):
     print(f"Saved: {out_path}")
 
 
+def sa_role_slots(rec, cond):
+    """Object index per SA-capture slot (0 = anchor of `cond`, 1 = its answer object,
+    2 = the remaining object); c0 uses the c1 slots."""
+    if cond == "c3":
+        return (rec["D"], rec["A"], rec["T"])
+    if cond == "c2":
+        return (rec["T"], rec["A"], rec["D"]) if rec["mode"] == "same" else (rec["A"], rec["D"], rec["T"])
+    return (rec["A"], rec["T"], rec["D"])
+
+
 @torch.no_grad()
-def run_relational_transplant(out_dir, args, state, images, owners, records):
+def run_relational_transplant(out_dir, args, state, images, owners, records, conds=("c0", "c1", "c2"), v2=False):
     """Baseline decoder answers under c0/c1/c2 (stored into the records), then the
     causal test: at block l, one patch group of the clean run (c1) is replaced by
-    the corrupted run's (c2) tokens; control: replaced by the clean run's own tokens."""
+    the corrupted run's (c2) tokens; control: replaced by the clean run's own tokens.
+    `v2`: the baseline pass also stores the top-3 first-token logits and the margin
+    logit(correct) − max other per condition into the records, and the self-attention
+    mass by role (SAAttnCapture) into sa_attn_{cond}.npz. A further condition c3
+    (spatial, same word, anchor D) is a third donor when present."""
     model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
     trunk = steervit.vision_model.trunk
     prefix = trunk.num_prefix_tokens
     inv = {v: k for k, v in model.vocab.items()}
     N, bs = len(records), args.batch_size
+    q = records[0].get("queried", "color")
     imgs_t = torch.stack([tf(im) for im in images])
     owner_t = torch.from_numpy(np.stack(owners))
     role_idx = {role: _role_index(records, role) for role in ROLES}
-    colour_id = {role: np.array([model.vocab[r["objects"][j]["color"]] for r, j in zip(records, role_idx[role])])
+    colour_id = {role: np.array([model.vocab[r["objects"][j][q]] for r, j in zip(records, role_idx[role])])
                  for role in ROLES}
-    ans_id = {c: np.array([model.vocab[r["answers"][c]] for r in records]) for c in ("c1", "c2")}
+    qconds = [c for c in conds if c != "c0"]
+    ans_id = {c: np.array([model.vocab[r["answers"][c]] for r in records]) for c in qconds}
 
     base = {}
-    for cond in ("c0", "c1", "c2"):
-        preds = []
+    for cond in conds:
+        preds, logits_all, mass_all, bg_all = [], [], [], []
         for s in range(0, N, bs):
             e = min(s + bs, N)
             qs = None if cond == "c0" else [records[i]["questions"][cond] for i in range(s, e)]
             ims = imgs_t[s:e].to(device)
-            feats = steervit.forward(ims, qs)
-            bos = torch.full((e - s, 1), model.vocab["<bos>"], dtype=torch.long, device=device)
-            preds.append(model.decoder(bos, feats[:, prefix:, :])[:, 0, :].argmax(-1).cpu().numpy())
+            if v2:
+                with SAAttnCapture(trunk) as cap:
+                    logits = first_token_logits(model, steervit, ims, qs)
+                    if s == 0:
+                        plain = first_token_logits(model, steervit, ims, qs)
+                        assert torch.equal(plain.argmax(-1), logits.argmax(-1)), \
+                            f"{cond}: argmax with SA capture differs from the plain forward on the first batch"
+                    roles = torch.full(owner_t[s:e].shape, -1, dtype=torch.long)
+                    for bi, i in enumerate(range(s, e)):
+                        for k, obj in enumerate(sa_role_slots(records[i], cond)):
+                            roles[bi][owner_t[i] == obj + 1] = k
+                    mass, bg = cap.reduce(roles.to(device), anchor_role=0)      # roles bg,0,1,2 -> reorder
+                perm = [1, 2, 3, 0]
+                mass_all.append(mass[:, :, :, perm][:, :, :, :, perm].cpu().numpy().astype(np.float16))
+                bg_all.append(bg.cpu().numpy().astype(np.float16))
+                logits_all.append(logits.float().cpu().numpy())
+            else:
+                logits = first_token_logits(model, steervit, ims, qs)
+            preds.append(logits.argmax(-1).cpu().numpy())
         base[cond] = np.concatenate(preds)
+        if v2:
+            L = np.concatenate(logits_all)
+            for i, r in enumerate(records):
+                top = np.argsort(-L[i])[:3]
+                r[f"logits_top3_{cond}"] = [[inv.get(int(j), "?"), float(L[i, j])] for j in top]
+                if cond != "c0":
+                    other = np.delete(L[i], ans_id[cond][i])
+                    r[f"margin_{cond}"] = float(L[i, ans_id[cond][i]] - other.max())
+            np.savez(out_dir / f"sa_attn_{cond}.npz", sa_mass=np.concatenate(mass_all),
+                     sa_bg_from_anchor=np.concatenate(bg_all),
+                     role_slots=np.array([sa_role_slots(r, cond) for r in records], dtype=np.int8),
+                     slots=np.array("0 = anchor of this condition, 1 = its answer object, 2 = remaining object, 3 = background"))
+            print(f"Saved: {out_dir / f'sa_attn_{cond}.npz'}")
     gen = model.generate(imgs_t[:min(8, N)].to(device), [records[i]["questions"]["c1"] for i in range(min(8, N))])
     print(f"generate() vs first-token argmax on 8 scenes: {gen} | {[inv.get(int(t), '?') for t in base['c1'][:8]]}")
     for i, r in enumerate(records):
-        for cond in ("c0", "c1", "c2"):
+        for cond in conds:
             r[f"pred_{cond}"] = inv.get(int(base[cond][i]), "?")
     with open(out_dir / "relational_records.json", "w") as f:
         json.dump(records, f, indent=1)
-    acc = {c: float((base[c] == ans_id[c]).mean()) for c in ("c1", "c2")}
-    print(f"baseline accuracy: clean run {acc['c1']:.3f}  corrupted run {acc['c2']:.3f}  (n={N}); "
+    acc = {c: float((base[c] == ans_id[c]).mean()) for c in qconds}
+    print("baseline accuracy: " + "  ".join(f"{c} {acc[c]:.3f}" for c in qconds) + f"  (n={N}); "
           f"no question answers T {float((base['c0'] == colour_id['T']).mean()):.2f} "
           f"A {float((base['c0'] == colour_id['A']).mean()):.2f} D {float((base['c0'] == colour_id['D']).mean()):.2f}")
+    if v2:
+        for c in qconds:
+            m = np.array([r[f"margin_{c}"] for r in records])
+            print(f"margin {c}: mean {m.mean():.2f} median {np.median(m):.2f} min {m.min():.2f}")
 
     ok = (base["c1"] == ans_id["c1"]) & (base["c2"] == ans_id["c2"])
     print(f"token replacement on {int(ok.sum())} scenes (both runs answered correctly)")
     groups = ("A", "T", "D", "bg")
-    donors = ("c2", "c1")
+    donors = tuple(c for c in qconds if c != "c1") + ("c1",)
+    ok_d = {d: (base["c1"] == ans_id["c1"]) & (base[d] == ans_id[d]) for d in donors}
     counts = {(d, g, l): np.zeros(3, int) for d in donors for g in groups for l in range(NUM_LAYERS)}   # [T, A, D]
     agree = {(d, g, l): 0 for d in donors for g in groups for l in range(NUM_LAYERS)}
     for s in range(0, N, bs):
@@ -2358,7 +2449,7 @@ def run_relational_transplant(out_dir, args, state, images, owners, records):
                         pred = first_token_logits(model, steervit, ims, qs1).argmax(-1).cpu().numpy()
                     for j, i in enumerate(idx):
                         agree[(d, g, l)] += int(pred[j] == base["c1"][i])
-                        if ok[i]:
+                        if ok_d[d][i]:
                             k = (0 if pred[j] == colour_id["T"][i] else 1 if pred[j] == colour_id["A"][i]
                                  else 2 if pred[j] == colour_id["D"][i] else 3)
                             if k < 3:
@@ -2369,7 +2460,7 @@ def run_relational_transplant(out_dir, args, state, images, owners, records):
         for g in groups:
             for l in range(NUM_LAYERS):
                 cnt = counts[(d, g, l)]
-                n = int(ok.sum())
+                n = int(ok_d[d].sum())
                 rows.append({"donor": d, "group": g, "layer": l, "n": n,
                              "p_T": cnt[0] / max(n, 1), "p_A": cnt[1] / max(n, 1), "p_D": cnt[2] / max(n, 1),
                              "p_other": 1 - cnt.sum() / max(n, 1),
@@ -2379,12 +2470,14 @@ def run_relational_transplant(out_dir, args, state, images, owners, records):
     print(f"clean-self control: {len(ctrl)} (group, block) cells; agreement with the clean run "
           f"{'1.00 everywhere' if not bad else f'NOT 1.0 at {bad}'}")
     assert not bad, "replacing tokens from the clean run itself must reproduce the clean run"
-    for g in groups:
-        rr = [r for r in rows if r["donor"] == "c2" and r["group"] == g]
-        print(f"replace {g:<3} from corrupted run: P(T colour) " + " ".join(f"{r['p_T']:.2f}" for r in rr)
-              + " | P(A colour) " + " ".join(f"{r['p_A']:.2f}" for r in rr)
-              + " | P(D colour) " + " ".join(f"{r['p_D']:.2f}" for r in rr), flush=True)
-    res = {"mode": records[0]["mode"], "n_scenes": N, "n_scenes_ok": int(ok.sum()), "baseline_accuracy": acc,
+    for d in donors[:-1]:
+        for g in groups:
+            rr = [r for r in rows if r["donor"] == d and r["group"] == g]
+            print(f"replace {g:<3} from {d} (n={rr[0]['n']}): P(T {q}) " + " ".join(f"{r['p_T']:.2f}" for r in rr)
+                  + f" | P(A {q}) " + " ".join(f"{r['p_A']:.2f}" for r in rr)
+                  + f" | P(D {q}) " + " ".join(f"{r['p_D']:.2f}" for r in rr), flush=True)
+    res = {"mode": records[0]["mode"], "queried": q, "n_scenes": N, "n_scenes_ok": int(ok.sum()),
+           "n_scenes_ok_by_donor": {d: int(ok_d[d].sum()) for d in donors}, "baseline_accuracy": acc,
            "receiver": "c1 (clean run)", "donors": list(donors), "groups": list(groups), "rows": rows}
     with open(out_dir / "relational_transplant.json", "w") as f:
         json.dump(res, f, indent=1)
@@ -2396,18 +2489,23 @@ def plot_relational_transplant(res, label, out_path):
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.2))
     styles = {"A": (ROLE_RGB["A"], "^"), "T": (ROLE_RGB["T"], "o"), "D": (ROLE_RGB["D"], "v"), "bg": (ROLE_RGB["bg"], "s")}
     mode = res["mode"]
+    q = res.get("queried", "colour")
     corrupted_answer = "A" if mode == "same" else "D"
     for ax, key, role in zip(axes, ("p_T", "p_A", "p_D"), ROLES):
         for g, (col, mk) in styles.items():
             rr = [r for r in res["rows"] if r["donor"] == "c2" and r["group"] == g]
             ax.plot([r["layer"] for r in rr], [r[key] for r in rr], "-", color=col, marker=mk, markersize=3,
                     label=f"replaced: {ROLE_LABEL[g]} patches" if g != "bg" else "replaced: background patches")
+            if "c3" in res["donors"]:
+                r3 = [r for r in res["rows"] if r["donor"] == "c3" and r["group"] == g]
+                ax.plot([r["layer"] for r in r3], [r[key] for r in r3], "--", color=col, marker=mk, markersize=3,
+                        alpha=0.7, label=f"replaced from c3 (same word, anchor D): {g}")
             if key == "p_T":
                 rc = [r for r in res["rows"] if r["donor"] == "c1" and r["group"] == g]
                 ax.plot([r["layer"] for r in rc], [r[key] for r in rc], ":", color=col, linewidth=0.8,
                         label="control: replaced from the clean run itself" if g == "bg" else None)
         ax.set_ylim(-0.02, 1.02)
-        ax.set_ylabel(f"P(answer = {role}'s colour)" + (" (clean-run answer)" if role == "T" else
+        ax.set_ylabel(f"P(answer = {role}'s {q})" + (" (clean-run answer)" if role == "T" else
                       " (corrupted-run answer)" if role == corrupted_answer else ""), fontsize=10)
         ax.set_xlabel("ViT block at which the tokens are replaced")
         ax.set_xticks(range(NUM_LAYERS))
@@ -2504,10 +2602,13 @@ def run_relational(args, out_dir, label):
         print(f"--replot: {len(records)} recorded scenes")
     else:
         records, images, owners = prepare_relational(entries, args, out_dir)
-        for cond in ("c0", "c1", "c2"):
+        conds = ["c0", "c1", "c2"] + (["c3"] if "c3" in records[0]["questions"] else [])
+        for cond in conds:
             extract_condition_sparse(out_dir, cond, images, owners, records, args, state, n_obj=3)
         ensure_model(state, args)
-        run_relational_transplant(out_dir, args, state, images, owners, records)
+        run_relational_transplant(out_dir, args, state, images, owners, records, conds=conds, v2=args.relational_v2)
+        if args.check_preds_dir:
+            check_relational_predictions(records, Path(args.check_preds_dir))
     caches = {c: load_sparse(out_dir, c) for c in ("c0", "c1", "c2")}
     gca_layers = [int(l) for l in caches["c0"]["gca_layers"]]
     d_dir = Path(args.directions_dir) / "n1"
@@ -2537,6 +2638,241 @@ def run_relational(args, out_dir, label):
         with open(out_dir / "relational_write_position.json", "w") as f:
             json.dump(res, f, indent=1)
         plot_relational_write_position(res, label, out_dir / "relational_write_position.png")
+    if (out_dir / "sa_attn_c1.npz").exists():
+        run_relational_v2_analyses(out_dir, args, records, caches, mode, label, gca_layers)
+
+
+def check_relational_predictions(records, old_dir):
+    """pred_c1 / pred_c2 of this run must equal the recorded predictions of an earlier
+    run on every scene with the same scene_index and identical c1/c2 questions."""
+    with open(old_dir / "relational_records.json") as f:
+        old = {r["scene_index"]: r for r in json.load(f)}
+    n_cmp, bad = 0, []
+    for r in records:
+        o = old.get(r["scene_index"])
+        if o is None or any(o["questions"].get(c) != r["questions"].get(c) for c in ("c1", "c2")):
+            continue
+        n_cmp += 1
+        for c in ("c1", "c2"):
+            if o[f"pred_{c}"] != r[f"pred_{c}"]:
+                bad.append((r["scene_index"], c, o[f"pred_{c}"], r[f"pred_{c}"]))
+    print(f"prediction check vs {old_dir}: {n_cmp} / {len(records)} scenes comparable (same scene and questions), "
+          f"{len(bad)} mismatches {bad[:20]}")
+    assert not bad, "v2 predictions differ from the earlier run"
+
+
+# ---------------------------------------------------------------------------
+# --relational-v2 analyses (CPU, from sa_attn_*.npz, the records' margins and the
+# token cache): self-attention mass to the anchor keys (H2/H8), logit margins by
+# strata (H6), and the clean transport probe of the anchor's shared attribute
+# value for same-as (H2).
+# ---------------------------------------------------------------------------
+
+SA_PAIRS = {"T_to_A": (1, 0), "D_to_A": (2, 0), "bg_to_A": (3, 0), "A_to_A": (0, 0)}
+SA_PAIR_RGB = {"T_to_A": ROLE_RGB["T"], "D_to_A": ROLE_RGB["D"], "bg_to_A": ROLE_RGB["bg"], "A_to_A": ROLE_RGB["A"]}
+SA_PAIR_LABEL = {"T_to_A": "answer object T queries → anchor keys", "D_to_A": "other object D queries → anchor keys",
+                 "bg_to_A": "background queries → anchor keys", "A_to_A": "anchor queries → anchor keys"}
+
+
+def relational_sa_analysis(out_dir):
+    """Per block and head: mean SA mass from T / D / background / A queries to the anchor
+    keys under c0 (no question) and c1 (clean run), and the change c1 − c0. Slots of
+    sa_attn_c0 follow c1 (0 = A, 1 = T, 2 = D, 3 = background)."""
+    m = {c: np.load(out_dir / f"sa_attn_{c}.npz")["sa_mass"].astype(np.float32) for c in ("c0", "c1")}   # (N,12,12,4,4)
+    N = len(m["c1"])
+    res = {"n_scenes": N, "slots": "0 = A, 1 = T, 2 = D, 3 = background (query role, key role)",
+           "per_block_head": {}, "per_block": {}, "top10": {}}
+    delta = {}
+    for name, (r, s) in SA_PAIRS.items():
+        for c in ("c0", "c1"):
+            v = m[c][..., r, s]                                                   # (N, 12, 12)
+            res["per_block_head"][f"{c}_{name}"] = v.mean(0).tolist()
+            res["per_block"][f"{c}_{name}"] = [_boot(v[:, l].mean(1)) for l in range(NUM_LAYERS)]
+        delta[name] = m["c1"][..., r, s] - m["c0"][..., r, s]
+        res["per_block_head"][f"delta_{name}"] = delta[name].mean(0).tolist()
+        res["per_block"][f"delta_{name}"] = [_boot(delta[name][:, l].mean(1)) for l in range(NUM_LAYERS)]
+    delta["candidate_to_A"] = 0.5 * (delta["T_to_A"] + delta["D_to_A"])
+    res["per_block_head"]["delta_candidate_to_A"] = delta["candidate_to_A"].mean(0).tolist()
+    for name in ("candidate_to_A", "bg_to_A"):
+        D = delta[name].mean(0)                                                   # (12, 12)
+        med = float(np.median(np.abs(D)))
+        order = np.argsort(-np.abs(D).ravel())[:10]
+        res["top10"][name] = {"median_abs_delta": med,
+                              "n_cells_ge_10x_median": int((np.abs(D) >= 10 * med).sum()),
+                              "cells": [{"block": int(k // 12), "head": int(k % 12), "delta": float(D.ravel()[k]),
+                                         "delta_T_to_A": float(delta["T_to_A"].mean(0).ravel()[k]),
+                                         "delta_D_to_A": float(delta["D_to_A"].mean(0).ravel()[k]),
+                                         "c0": float(m["c0"][..., SA_PAIRS["bg_to_A" if name == "bg_to_A" else "T_to_A"][0], 0].mean(0).ravel()[k]),
+                                         "abs_over_median": float(abs(D.ravel()[k]) / max(med, 1e-9))}
+                                        for k in order]}
+        print(f"SA {name} c1 − c0: median |Δ| {med:.5f}; top-10 (block, head, Δ, Δ/median): " +
+              " ".join(f"({c['block']},{c['head']},{c['delta']:+.4f},{c['abs_over_median']:.0f}x)"
+                       for c in res["top10"][name]["cells"]))
+    for name in SA_PAIRS:
+        print(f"SA {name:<8} c0 " + " ".join(f"{q['mean']:.3f}" for q in res["per_block"][f"c0_{name}"]) +
+              " | c1 " + " ".join(f"{q['mean']:.3f}" for q in res["per_block"][f"c1_{name}"]) +
+              " | Δ " + " ".join(f"{q['mean']:+.3f}" for q in res["per_block"][f"delta_{name}"]))
+    return res
+
+
+def plot_relational_sa(res, mode, label, out_path, gca_layers):
+    fig, axes = plt.subplots(1, 3, figsize=(17, 4.6))
+    for ax, name, title in ((axes[0], "delta_candidate_to_A", "candidate (T, D mean) queries → anchor keys, clean − no question"),
+                            (axes[1], "delta_bg_to_A", "background queries → anchor keys, clean − no question")):
+        D = np.array(res["per_block_head"][name])
+        v = float(np.abs(D).max())
+        im = ax.imshow(D.T, cmap="RdBu_r", vmin=-v, vmax=v, aspect="auto", origin="lower")
+        ax.set_xlabel("ViT block")
+        ax.set_ylabel("SA head")
+        ax.set_xticks(range(NUM_LAYERS))
+        ax.set_yticks(range(D.shape[1]))
+        ax.set_title(title, fontsize=9)
+        fig.colorbar(im, ax=ax, shrink=0.8, label="Δ mean attention mass")
+    ax = axes[2]
+    x = list(range(NUM_LAYERS))
+    for name in SA_PAIRS:
+        _line_ci(ax, x, res["per_block"][f"c1_{name}"], SA_PAIR_RGB[name], "-", f"{SA_PAIR_LABEL[name]}, clean run")
+        _line_ci(ax, x, res["per_block"][f"c0_{name}"], SA_PAIR_RGB[name], ":", f"{SA_PAIR_LABEL[name]}, no question")
+    ax.set_ylabel("mean SA mass on anchor keys")
+    _layers_axis(ax, gca_layers)
+    ax.legend(fontsize=6)
+    ax.set_title("per block, mean over heads and scenes", fontsize=9)
+    fig.suptitle(f"{label} — relational question ({mode}): self-attention mass onto the anchor's patches "
+                 f"(n={res['n_scenes']} scenes; row sums exclude the CLS key)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def relational_strata_margin(records):
+    """H6 on logit margins: margin_c1 (and c2) by the number of non-queried attributes D
+    shares with A / with T; same-as: also by A_q_eq_T_q."""
+    q = records[0].get("queried", "color")
+    conds = [c for c in ("c1", "c2", "c3") if f"margin_{c}" in records[0]]
+    margin = {c: np.array([r[f"margin_{c}"] for r in records]) for c in conds}
+    correct = {c: np.array([r[f"pred_{c}"] == r["answers"][c] for r in records]) for c in conds}
+    def nonq(r):
+        return [a for a in ATTRS if a not in (q, r.get("attribute"))]
+    def shares(r, x, y):
+        return sum(r["objects"][r[x]][a] == r["objects"][r[y]][a] for a in nonq(r))
+    def cell(m):
+        out = {"n": int(m.sum())}
+        for c in conds:
+            out[f"margin_{c}"] = _boot(margin[c][m])
+            out[f"acc_{c}"] = float(correct[c][m].mean()) if m.any() else float("nan")
+        return out
+    res = {"n_scenes": len(records), "queried": q, "overall": cell(np.ones(len(records), bool))}
+    for name, (x, y) in (("D_shares_with_A", ("D", "A")), ("D_shares_with_T", ("D", "T"))):
+        s = np.array([shares(r, x, y) for r in records])
+        res[name] = {str(k): cell(s == k) for k in sorted(set(s.tolist()))}
+        res[name]["spearman_margin_c1"] = float(spearmanr(s, margin["c1"])[0])
+    if "A_q_eq_T_q" in records[0]:
+        s = np.array([r["A_q_eq_T_q"] for r in records])
+        res["A_q_eq_T_q"] = {str(k): cell(s == k) for k in (False, True) if (s == k).any()}
+    for k, v in res.items():
+        if isinstance(v, dict) and "n" not in v:
+            print(f"margin strata {k}: " + "  ".join(
+                f"{s}: n={c['n']} c1 {c['margin_c1']['mean']:.2f} [{c['margin_c1']['lo']:.2f},{c['margin_c1']['hi']:.2f}] "
+                f"acc {c['acc_c1']:.3f}" for s, c in v.items() if isinstance(c, dict)))
+    return res
+
+
+def relational_transport_probe(caches, records, args):
+    """Clean transport probe (same-as): decode the ANCHOR's shared-attribute value (not
+    stated in the question) from background tokens and from D tokens, per block,
+    under c1 and c0 and from the c1 − c0 token difference; scenes grouped by the
+    shared attribute (shape 3-way; material, size binary); GroupKFold(5) by scene.
+    D's own value differs from the anchor's by construction, so for a binary
+    attribute D's own value fixes the label: the c0 control carries that, the
+    c1 − c0 token removes it."""
+    c0 = caches["c0"]
+    img, own = c0["tok_img"].astype(int), c0["tok_owner"].astype(int)
+    role = _role_per_token(records, img, own)
+    keep = _subsample_tokens(c0, records, PROBE_MAX_OBJ, PROBE_MAX_BG, args.seed, n_obj=3)
+    sets = {"bg": keep[own[keep] == 0], "D": keep[role[keep] == 2]}
+    attr = np.array([r["attribute"] for r in records])
+    X = lambda cond, idx, l: caches[cond]["tok"][idx, l, :].astype(np.float32)
+    res = {"n_scenes": len(records), "probe_max_tokens_per_object": PROBE_MAX_OBJ, "probe_max_bg_per_scene": PROBE_MAX_BG,
+           "by_attribute": {}}
+    for s in ("shape", "material", "size"):
+        scenes = attr == s
+        vals = sorted({r["objects"][r["A"]][s] for r in records})
+        y_scene = np.array([vals.index(r["objects"][r["A"]][s]) if r["attribute"] == s else -1 for r in records])
+        entry = {"n_scenes": int(scenes.sum()), "values": vals, "sets": {}}
+        for name, idx_all in sets.items():
+            idx = idx_all[scenes[img[idx_all]]]
+            y, g = y_scene[img[idx]], img[idx]
+            t = {"n_tokens": int(len(idx)), "majority": float(np.bincount(y).max() / len(y)) if len(y) else float("nan"),
+                 "c1": [], "c0": [], "c1_minus_c0_token": []}
+            for l in range(NUM_LAYERS):
+                if len(idx) < MIN_PROBE_TOKENS:
+                    for k in ("c1", "c0", "c1_minus_c0_token"):
+                        t[k].append(_boot([]))
+                    continue
+                x1, x0 = X("c1", idx, l), X("c0", idx, l)
+                t["c1"].append(_probe(x1, y, g))
+                t["c0"].append(_probe(x0, y, g))
+                t["c1_minus_c0_token"].append(_probe(x1 - x0, y, g))
+            entry["sets"][name] = t
+            print(f"transport {s:<8} {name:<2} (n_tok={t['n_tokens']}, majority {t['majority']:.2f}) c1 "
+                  + " ".join(f"{q['mean']:.2f}" for q in t["c1"]) + " | c0 "
+                  + " ".join(f"{q['mean']:.2f}" for q in t["c0"]) + " | c1−c0 tok "
+                  + " ".join(f"{q['mean']:.2f}" for q in t["c1_minus_c0_token"]), flush=True)
+        res["by_attribute"][s] = entry
+    return res
+
+
+def plot_relational_transport_probe(res, label, out_path, gca_layers):
+    attrs = list(res["by_attribute"])
+    fig, axes = plt.subplots(1, len(attrs), figsize=(5.4 * len(attrs), 4.6), squeeze=False)
+    x = list(range(NUM_LAYERS))
+    styles = {"bg": (ROLE_RGB["bg"], "background tokens"), "D": (ROLE_RGB["D"], "other object D tokens")}
+    for ax, s in zip(axes[0], attrs):
+        e = res["by_attribute"][s]
+        for name, (col, lab) in styles.items():
+            t = e["sets"][name]
+            _line_ci(ax, x, t["c1"], col, "-", f"{lab}, clean run")
+            _line_ci(ax, x, t["c0"], col, ":", f"{lab}, no question")
+            _line_ci(ax, x, t["c1_minus_c0_token"], col, "--", f"{lab}, clean − no-question token", marker="s")
+            ax.axhline(t["majority"], color=col, linewidth=0.6, alpha=0.6)
+        ax.axhline(1 / len(e["values"]), color="k", linewidth=0.6)
+        ax.set_ylim(0, 1.02)
+        ax.set_ylabel(f"accuracy: anchor's {s} ({len(e['values'])}-way)")
+        ax.set_title(f"shared attribute = {s} (n={e['n_scenes']} scenes); thin lines = majority class", fontsize=9)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — relational question (same): is the anchor's shared-attribute value (not stated in the "
+                 f"question) decodable from background / D tokens? (GroupKFold(5) by scene)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_relational_v2_analyses(out_dir, args, records, caches, mode, label, gca_layers):
+    print("\nSA mass to anchor keys ...")
+    res = relational_sa_analysis(out_dir)
+    with open(out_dir / "sa_analysis.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_relational_sa(res, mode, label, out_dir / "sa_candidate_to_anchor.png", gca_layers)
+    if "margin_c1" in records[0]:
+        print("\nH6 margin strata ...")
+        res = relational_strata_margin(records)
+        with open(out_dir / "strata_margin.json", "w") as f:
+            json.dump(res, f, indent=1)
+    if mode == "same":
+        tp = out_dir / "transport_probe.json"
+        if tp.exists():
+            with open(tp) as f:
+                res = json.load(f)
+            print(f"transport probe: loaded {tp}")
+        else:
+            print("\nclean transport probe (anchor's shared-attribute value) ...")
+            res = relational_transport_probe(caches, records, args)
+            with open(tp, "w") as f:
+                json.dump(res, f, indent=1)
+        plot_relational_transport_probe(res, label, out_dir / "transport_probe.png", gca_layers)
 
 
 # ---------------------------------------------------------------------------
@@ -3558,6 +3894,17 @@ def main():
                     help="only (CPU): H1/H2/H4/H5/H6/H7 probes on an existing --relational cache "
                          "(--cache-dir, read-only) into a new --out-dir")
     ap.add_argument("--cache-dir", default=None, help="--relational-probes: the --relational output dir to read")
+    ap.add_argument("--relational-v2", action="store_true",
+                    help="--relational: also store top-3 logits / margins per condition, SA mass by role "
+                         "(sa_attn_{cond}.npz), and run the SA / margin-strata / transport-probe analyses")
+    ap.add_argument("--relation-order", default="fixed", choices=["fixed", "rotate"],
+                    help="--relational spatial: relation scan order per scene (rotate = random start)")
+    ap.add_argument("--same-queried", default="color", choices=["color", "shape", "material", "size"],
+                    help="--relational same: attribute asked by the question (shared attribute != queried)")
+    ap.add_argument("--spatial-c3", action="store_true",
+                    help="--relational spatial: add c3 = same relation word, anchor D (third transplant donor)")
+    ap.add_argument("--check-preds-dir", default=None,
+                    help="--relational: assert pred_c1/pred_c2 equal this earlier run's records on shared scenes")
     ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
     ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
                     help="--relational: directory whose n1/ cache gives the colour directions u")
@@ -3570,7 +3917,7 @@ def main():
     out_dir = Path(args.out_dir)
     assert out_dir.resolve() != Path(args.x19_dir).resolve(), "refusing to write into the X19 directory"
     if (args.relational or args.mirror or args.relational_probes) and not args.replot:
-        assert not (out_dir.exists() and any(out_dir.iterdir())), \
+        assert not (out_dir.exists() and any(p.name != "log_stdout.txt" for p in out_dir.iterdir())), \
             f"--relational/--mirror need a new --out-dir (non-empty: {out_dir}); use --replot to regenerate figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     tee_stdout(out_dir)
