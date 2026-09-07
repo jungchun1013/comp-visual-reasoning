@@ -242,6 +242,17 @@
   candidates causal → answer in background) holds on SigLIP with every stage
   two blocks earlier, and SigLIP keeps the anchor and a distributed
   background readout to the last block rather than a single block-11 step.
+  (DINOv2 seed 43 — first attempt invalid) `relational_{same,spatial}_v2_dinov2s43`
+  used `best.pt`, which in that run directory is a stale epoch-7 file (val
+  0.829; `last.pt` likewise, both dated 05-22, `train_log.jsonl` stops at
+  epoch 7) — the continued run left only `epoch_14.pt` (val 0.918, 05-23).
+  On the epoch-7 model same-as accuracy is 0.643 and none of the stages
+  appear (referent probe onset block 11, no self-attention peak, anchor not
+  causal before 11), which is a competence failure rather than a mechanism
+  result; spatial is 0.998 with the T / D / background causal order intact
+  (T 0.77, D 0.68 at block 9; background 0.51 at 11) but no readable
+  anchor-coordinate probe. Kept on disk; rerun on `epoch_14.pt` into
+  `relational_{same,spatial}_v2_dinov2s43_ep14` (+ `_probes`).
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
