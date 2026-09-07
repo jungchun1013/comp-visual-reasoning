@@ -73,6 +73,22 @@
   data/clevr_three_object_edge --n-per-type 8 --distinct-colors
   --num-distractors 2 --anchor-edge 0.85 --seed 42` (the 09-02 v2 set used the
   same command without `--anchor-edge`).
+  (H7(iii) behavioural, natural distribution — pass; user 2026-09-07: "use
+  existing resources") From the main model's stride-4 CLEVR val predictions
+  (`failure_modes/…/records.jsonl`, 37,498 questions) joined with val scenes:
+  single-hop spatial attribute queries (families 74–77, n = 1,683); a
+  question is *dissociated* when the answer object lies on the opposite image
+  half from the direction word (pixel centre 240 × 160; front = larger pixel
+  y, checked against the scene relationships on 200 scenes, 97% agreement).
+  Dissociated 222 (left 44, right 36, front 125, behind 17): accuracy 0.987
+  [0.968, 1.0] vs 0.997 [0.995, 0.999] for the rest; per direction 0.977 /
+  0.972 / 0.992 / 1.000 vs 1.000 / 0.995 / 1.000 / 0.995. Logistic regression
+  of correctness on absolute-half consistency gives +1.64 (p = 0.03) but rests
+  on 11 errors in 1,683; two-hop (families 80–81, n = 859) 0.984 vs 0.993, no
+  significant term. The model answers relative to the anchor; the absolute
+  image half has at most a marginal effect. Code `failure_modes.py
+  --dissociation MODEL` (2a6eadc); outputs
+  `outputs/analysis/relational_dissociation/clevr_dinov2_decoder1l_scratch_s42/`.
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
