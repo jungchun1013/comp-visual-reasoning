@@ -140,6 +140,56 @@
   gate ≥ 0.9 passed); scenes where anchor and answer share the queried shape
   n = 155, accuracy 1.00, margin 8.56 vs 0.924 and 7.70 when they differ.
   Material and size runs pending in the chain.
+- **2026-09-07 — X22 stages G2–G5 (causal): the comparison is
+  attribute-specific but distributed; there is no suppression of the anchor
+  after use; the geometric relation is computed from the positional
+  embedding late, while the early direction field comes from image content;
+  the self-attention heads that read the anchor are necessary for same-as
+  and carry the absolute-position component for spatial.** Modes
+  `--h3-projection`, `--h5-gca-mask`, `--h7-posembed`, `--h8-head-ablation`
+  (subdirectories of the v2 dirs; every self-control reproduces the clean
+  predictions at 1.000).
+  (H3 — specificity confirmed, effect small) projecting the anchor's patches
+  onto the complement of the shared attribute's subspace (rank 2 for shape, 1
+  for material/size, class-mean directions from the single-object cache) at
+  one block moves P(answer) by at most a few points; with the projector active
+  at all blocks 2–10, P(answer) falls to 0.90 / 0.61 / 0.82 for shape /
+  material / size, versus 1.00 / 0.95 / 0.99 when a non-shared attribute is
+  removed and 1.00 for a random subspace of equal rank (n = 652). The
+  comparison uses the shared attribute's subspace and nothing else we tested,
+  but the low-rank class-mean subspace holds only part of it and no single
+  block is the comparison layer.
+  (H5(ii) — disconfirmed; H5 closed) masking the block-11 GCA write on the
+  anchor's patches leaves P(answer) 1.00 and the anchor-vs-answer logit gap
+  unchanged (−12.38 vs −12.36; shape query −10.49 vs −10.17; material query
+  −10.82 vs −10.75). Masking the answer object's block-11 write drops
+  P(answer) to 0.75 (colour), 0.61 (shape; 0.31 to the anchor's shape) and
+  0.67 (material; 0.33 to the anchor's material). Block 9: masking the
+  anchor's write gives 0.97 (colour) / 0.81 (shape, 0.15 to the anchor).
+  Together with H5(i), the anchor is not suppressed at the last GCA layer; it
+  simply stops being needed once the answer has moved. The 09-02 sentence
+  "anchor suppressed at block 11" is withdrawn.
+  (H7 — mixed, decisive on the late stage) flipping the positional
+  contribution along the relation axis (content untouched) moves 94% of
+  answers to the third object, the orthogonal flip none (0.99); mirroring only
+  the anchor's rows sends 21% to the anchor (n = 295), mirroring the third
+  object's rows makes it the answer in 55%, random background rows 0.95
+  unchanged. The GCA write field under the flip correlates with the
+  *unmirrored* clean field at layers 1 / 3 (0.91 / 0.96) and with the
+  *mirrored* one at layers 9 / 11 (0.47 vs 0.10; 0.59 vs −0.19). So the early
+  absolute field is read off image content (the scene's shading and floor
+  perspective carry absolute position), not the positional embedding, and
+  only the late anchor-centred computation uses the positional embedding.
+  (H8 — disconfirmed for spatial, supported for same-as) rule-selected heads
+  (|c1 − c0| ≥ 10× median over 144 cells, capped at 8): spatial 8:5, 7:7,
+  8:6, 9:7, 7:2, 7:3, 10:0, 7:10 — zeroing them leaves accuracy 0.998
+  (random 0.998 / 0.964), lowers the anchor-relative R² mildly (L9 0.61 →
+  0.53, L11 0.46 → 0.37) and collapses the L11 absolute R² 0.36 → 0.03
+  (random 0.50 / 0.46). Same-as 8:5, 10:0, 9:7, 7:2, 10:8, 8:6, 7:10, 9:2 —
+  zeroing drops accuracy 0.972 → 0.744 (P(answer) 0.76, third object 0.19)
+  versus random sets 0.954 / 0.914. The candidate → anchor heads of blocks
+  7–10 are causally necessary for the attribute match; for the geometric
+  relation they carry redundant, absolute-position information.
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/

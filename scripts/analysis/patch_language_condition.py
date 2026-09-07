@@ -58,7 +58,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from analysis.plot_style import apply_style, S, GCA_LAYERS, mark_gca_layers, line_kwargs
 from analysis.run_log import tee_stdout
-from analysis.patching_utils import SAAttnCapture
+from analysis.patching_utils import (SAAttnCapture, SubspaceProjector, GCAWriteMasker, PosEmbedEditor,
+                                     HeadAblator, flip_perm, swap_rows_perm)
 from tsne_patch_level import load_entries, build_masks, save_masks_debug
 from tsne_single_object import minimal_referring_question
 from patch_pca_cluster import (combo_key, offset_statistics_from_offsets,
@@ -633,10 +634,11 @@ ATTR_VALUES = {"color": COLORS, "shape": ["cube", "sphere", "cylinder"],
                "size": ["small", "large"], "material": ["rubber", "metal"]}
 
 
-def attribute_directions(cache_n1, labels_n1):
+def attribute_directions(cache_n1, labels_n1, space="normed"):
     """V[attr][value] (12, D) = unit(mean obj_mean of 1-object targets with that
-    value − mean over all 1-object targets), in trunk.norm feature space."""
-    om = cache_n1["obj_mean"][:, 0].astype(np.float32)               # (N, 12, D)
+    value − mean over all 1-object targets), in trunk.norm feature space
+    (`space="raw"`: raw_obj_mean, the pre-norm residual the block hooks act on)."""
+    om = cache_n1["raw_obj_mean" if space == "raw" else "obj_mean"][:, 0].astype(np.float32)   # (N, 12, D)
     mu = om.mean(0)
     V = {}
     for attr, values in ATTR_VALUES.items():
@@ -2535,9 +2537,15 @@ def relational_write_position(caches, records, gca_layers, grid):
     relative to the anchor centroid, and on both. `oriented`: coordinates signed
     so that + is the direction of the clean-run relation; `raw`: unsigned grid
     coordinate (row or column)."""
-    wn1 = caches["c1"]["gca_write_norm"].astype(np.float32)
-    wn2 = caches["c2"]["gca_write_norm"].astype(np.float32)
-    owner = caches["c1"]["owner"]
+    return write_position_r2(caches["c1"]["gca_write_norm"], caches["c2"]["gca_write_norm"],
+                             caches["c1"]["owner"], records, gca_layers, grid)
+
+
+def write_position_r2(wn1, wn2, owner, records, gca_layers, grid, verbose=True):
+    """The regression of relational_write_position on arrays: wn1 / wn2 (N, n_gca, P)
+    GCA write norms under c1 / c2, owner (N, P)."""
+    wn1 = np.asarray(wn1, dtype=np.float32)
+    wn2 = np.asarray(wn2, dtype=np.float32)
     P = grid * grid
     coord = {0: np.arange(P) // grid, 1: np.arange(P) % grid}
     xs_abs, xs_rel, sgn, y_diff, y_c1 = [], [], [], [], []
@@ -2559,7 +2567,7 @@ def relational_write_position(caches, records, gca_layers, grid):
                               ("both", np.column_stack([a, rl]))):
                 res["r2"][f"{orient}/{yname}/{design}"] = [_r2(X, ys[k]) for k in range(len(gca_layers))]
     for k in sorted(res["r2"]):
-        if k.startswith("oriented"):
+        if verbose and k.startswith("oriented"):
             print(f"write-position R² {k:<40} " + " ".join(f"{v:.3f}" for v in res["r2"][k]))
     return res
 
@@ -2874,6 +2882,547 @@ def run_relational_v2_analyses(out_dir, args, records, caches, mode, label, gca_
                 json.dump(res, f, indent=1)
         plot_relational_transport_probe(res, label, out_dir / "transport_probe.png", gca_layers)
 
+
+# ---------------------------------------------------------------------------
+# X22 H3 / H5 / H7 / H8 interventions (--h3-projection, --h5-gca-mask,
+# --h7-posembed, --h8-head-ablation) on an existing --relational-v2 run
+# (--cache-dir, read-only: records with roles and questions, owner.npy,
+# sa_attn_*.npz) written to a new --out-dir (a sub-directory of that run).
+# The model is re-run on the recorded scenes with the clean question c1 (fp32,
+# no autocast, as run_relational_transplant); outcomes are P(answer = the
+# queried-attribute value of T / A / D) over the scenes the clean run answers
+# correctly. Every mode asserts its self-control (empty intervention) first.
+# ---------------------------------------------------------------------------
+
+H3_BLOCKS = list(range(2, 11))        # blocks whose output is projected (anchor causal window)
+H5_LAYERS = (11, 9)                   # GCA layers whose write is masked
+H8_BLOCK_RANGE = (5, 10)              # SA blocks eligible for ablation (inclusive)
+H8_RATIO = 10.0                       # |Δ| ≥ H8_RATIO × median |Δ| over the 144 cells
+H8_MAX_HEADS = 8
+
+
+class GCAWriteCapture:
+    """Forward hooks on every gated_cross_attn: patch-wise norm of the write
+    (out − in) per GCA layer; norms() -> (B, n_gca, P) after the forward."""
+
+    def __init__(self, trunk):
+        self.trunk, self.prefix, self.hs, self.out = trunk, trunk.num_prefix_tokens, [], {}
+        self.layers = [i for i, b in enumerate(trunk.blocks) if getattr(b, "gated_cross_attn", None) is not None]
+
+    def __enter__(self):
+        for li in self.layers:
+            def mk(li):
+                def fn(mod, inp, out):
+                    self.out[li] = (out - inp[0])[:, self.prefix:, :].norm(dim=-1).detach().float()
+                return fn
+            self.hs.append(self.trunk.blocks[li].gated_cross_attn.register_forward_hook(mk(li)))
+        return self
+
+    def __exit__(self, *a):
+        for h in self.hs:
+            h.remove()
+
+    def norms(self):
+        return torch.stack([self.out[li] for li in self.layers], 1).cpu().numpy()
+
+
+def load_relational_cache(args, state):
+    """Records, owners, PIL images and GCA layers of an existing --relational run."""
+    from PIL import Image
+    cache_dir = Path(args.cache_dir)
+    with open(cache_dir / "relational_records.json") as f:
+        records = json.load(f)
+    owners = list(np.load(cache_dir / "owner.npy"))
+    if args.n_pairs:
+        records, owners = records[:args.n_pairs], owners[:args.n_pairs]
+    images = [Image.open(Path(args.three_dir) / "images" / r["filename"]).convert("RGB") for r in records]
+    gca_layers = [int(l) for l in np.load(cache_dir / "feats_c0.npz")["gca_layers"]]
+    ensure_model(state, args)
+    print(f"cache {cache_dir}: {len(records)} scenes ({records[0]['mode']}, queried {records[0].get('queried', 'color')})")
+    return cache_dir, records, images, owners, gca_layers
+
+
+class RelationalRun:
+    """Shared state of the H modes: image / owner tensors, role indices, the vocab id
+    of each role's queried-attribute value, the clean-run (c1) predictions (which every
+    self-control must reproduce), and per-cell prediction stores."""
+
+    def __init__(self, state, records, images, owners, bs):
+        model, steervit, tf = state["model"], state["steervit"], state["transform"]
+        self.model, self.steervit, self.device, self.bs = model, steervit, state["device"], bs
+        self.trunk = steervit.vision_model.trunk
+        self.records, self.N = records, len(records)
+        self.q = records[0].get("queried", "color")
+        self.imgs = torch.stack([tf(im) for im in images])
+        self.owner = torch.from_numpy(np.stack(owners))
+        self.role_idx = {role: _role_index(records, role) for role in ROLES}
+        self.val_id = {role: np.array([model.vocab[r["objects"][j][self.q]] for r, j in zip(records, self.role_idx[role])])
+                       for role in ROLES}
+        self.ans_id = np.array([model.vocab[r["answers"]["c1"]] for r in records])
+        self.q1 = [r["questions"]["c1"] for r in records]
+        self.pred, self.ldiff = {}, {}
+        for b in self.batches():
+            self.record("clean", b, self.logits(b))
+        self.base = self.pred["clean"]
+        self.ok = self.base == self.ans_id
+        rec_pred = np.array([model.vocab.get(r["pred_c1"], -1) for r in records])
+        print(f"clean run (c1): accuracy {self.ok.mean():.3f} (n={self.N}); agreement with the recorded "
+              f"pred_c1 {(rec_pred == self.base).mean():.3f}; queried {self.q}")
+
+    def batches(self, idx=None):
+        idx = np.arange(self.N) if idx is None else np.asarray(idx)
+        for s in range(0, len(idx), self.bs):
+            yield idx[s:s + self.bs]
+
+    @torch.no_grad()
+    def logits(self, idx):
+        ims = self.imgs[torch.as_tensor(np.asarray(idx))].to(self.device)
+        return first_token_logits(self.model, self.steervit, ims, [self.q1[i] for i in idx]).float()
+
+    def masks(self, idx):
+        ow = self.owner[torch.as_tensor(np.asarray(idx))].to(self.device)
+        m = {"bg": ow == 0}
+        for role in ROLES:
+            m[role] = ow == torch.from_numpy(self.role_idx[role][idx] + 1).to(self.device)[:, None]
+        return m
+
+    def record(self, cell, idx, logits):
+        idx = np.asarray(idx)
+        L = logits.cpu().numpy()
+        ar = np.arange(len(idx))
+        self.pred.setdefault(cell, np.full(self.N, -1))[idx] = L.argmax(-1)
+        self.ldiff.setdefault(cell, np.full(self.N, np.nan))[idx] = L[ar, self.val_id["A"][idx]] - L[ar, self.val_id["T"][idx]]
+
+    def summary(self, cell, sel=None):
+        """P(T / A / D value), mean logit(A value) − logit(T value), n over clean-correct
+        scenes of `sel` on which the cell ran; agreement with the clean run over all ran."""
+        pred = self.pred[cell]
+        ran = pred >= 0
+        keep = ran & self.ok & (np.ones(self.N, bool) if sel is None else sel)
+        n = int(keep.sum())
+        out = {"n": n, "n_ran": int(ran.sum()), "agree_with_clean": float((pred[ran] == self.base[ran]).mean()) if ran.any() else float("nan"),
+               "accuracy": float((pred[ran & (np.ones(self.N, bool) if sel is None else sel)] ==
+                                  self.ans_id[ran & (np.ones(self.N, bool) if sel is None else sel)]).mean()) if ran.any() else float("nan")}
+        for role in ROLES:
+            out[f"p_{role}"] = float((pred[keep] == self.val_id[role][keep]).mean()) if n else float("nan")
+        out["logit_A_minus_T"] = float(np.nanmean(self.ldiff[cell][keep])) if n else float("nan")
+        return out
+
+    def assert_self_control(self, cell, what):
+        s = self.summary(cell)
+        print(f"self-control ({what}): agreement with the clean run {s['agree_with_clean']:.3f} over {s['n_ran']} scenes")
+        assert s["agree_with_clean"] == 1.0, f"{what} must reproduce the clean run"
+
+
+def _fmt(s):
+    return f"n={s['n']:<4d} P(T) {s['p_T']:.2f} P(A) {s['p_A']:.2f} P(D) {s['p_D']:.2f} logit A−T {s['logit_A_minus_T']:+.2f}"
+
+
+# ---- H3: attribute-subspace projection of the anchor tokens ----------------------
+
+def attribute_subspace(V, attr, layer):
+    """(k, D) orthonormal basis of the span of the centred class-mean directions of
+    `attr` at block `layer`; the centred means are linearly dependent, so
+    k = n_values − 1 (colour 6, shape 2, material / size 1): QR of the first k."""
+    vals = list(V[attr])
+    Q, _ = np.linalg.qr(np.stack([V[attr][v][layer] for v in vals[:-1]], 1))
+    return Q.T.astype(np.float32)
+
+
+def run_h3_projection(out_dir, args, run, n1_dir, label):
+    from contextlib import ExitStack
+    V = attribute_directions(load_sparse(n1_dir, "c0"), load_labels(n1_dir), space="raw")
+    records, trunk, dev = run.records, run.trunk, run.device
+    attrs = [a for a in ("shape", "material", "size")]
+    shared = np.array([r["attribute"] for r in records])
+    nonshared = {s: next(a for a in attrs if a not in (s, run.q)) for s in attrs}
+    plan = [("shared", "A"), ("nonshared", "A"), ("random", "A"), ("zero", "A"), ("shared", "T"), ("shared", "D")]
+    print(f"H3: raw-space directions from {n1_dir}; ranks " + ", ".join(f"{a} {len(V[a]) - 1}" for a in V)
+          + f"; non-shared basis per shared attribute {nonshared}; blocks {H3_BLOCKS} and all of them at once")
+    for s in attrs:
+        idx_s = np.nonzero(shared == s)[0]
+        if not len(idx_s):
+            continue
+        k = len(V[s]) - 1
+        for bidx in run.batches(idx_s):
+            masks = run.masks(bidx)
+            gen = torch.Generator().manual_seed(args.seed + int(records[bidx[0]]["scene_index"]))
+            bl = {}
+            for l in H3_BLOCKS:
+                Bsh = torch.from_numpy(attribute_subspace(V, s, l)).to(dev)
+                R, _ = torch.linalg.qr(torch.randn(Bsh.shape[1], k, generator=gen))
+                bl[l] = {"shared": Bsh, "nonshared": torch.from_numpy(attribute_subspace(V, nonshared[s], l)).to(dev),
+                         "random": R.T.contiguous().to(dev), "zero": Bsh[:0]}
+                for bname, g in plan:
+                    with SubspaceProjector(trunk, l, bl[l][bname], masks[g]):
+                        run.record((bname, g, l), bidx, run.logits(bidx))
+            for bname, g in plan:
+                with ExitStack() as st:
+                    for l in H3_BLOCKS:
+                        st.enter_context(SubspaceProjector(trunk, l, bl[l][bname], masks[g]))
+                    run.record((bname, g, "all"), bidx, run.logits(bidx))
+        print(f"  shared {s}: {len(idx_s)} scenes done", flush=True)
+    for l in H3_BLOCKS + ["all"]:
+        run.assert_self_control(("zero", "A", l), f"rank-0 basis, block {l}")
+    rows = []
+    for bname, g in plan:
+        for l in H3_BLOCKS + ["all"]:
+            for s in attrs + ["all"]:
+                sel = None if s == "all" else shared == s
+                rows.append({"basis": bname, "group": g, "block": l, "shared": s, **run.summary((bname, g, l), sel)})
+    for s in attrs:
+        for bname, g in plan:
+            rr = [r for r in rows if r["shared"] == s and r["basis"] == bname and r["group"] == g]
+            print(f"H3 shared {s:<8} basis {bname:<9} on {g} (n={rr[0]['n']}): P(T) "
+                  + " ".join(f"{r['p_T']:.2f}" for r in rr) + " | P(A) " + " ".join(f"{r['p_A']:.2f}" for r in rr)
+                  + " | P(D) " + " ".join(f"{r['p_D']:.2f}" for r in rr) + "   (blocks 2..10, all)")
+    res = {"mode": "h3_projection", "queried": run.q, "n_scenes": run.N, "n_scenes_ok": int(run.ok.sum()),
+           "blocks": H3_BLOCKS, "direction_space": "raw residual, n1 class means centred, QR",
+           "ranks": {a: len(V[a]) - 1 for a in V}, "nonshared_basis": nonshared,
+           "random_basis": "orthonormal (QR of Gaussian), rank of the shared attribute, seed = --seed + scene_index of the batch's first scene",
+           "rows": rows}
+    with open(out_dir / "results.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_h3_projection(res, label, out_dir / "results.png")
+
+
+def plot_h3_projection(res, label, out_path):
+    attrs = [s for s in ("shape", "material", "size") if any(r["shared"] == s and r["n"] for r in res["rows"])]
+    fig, axes = plt.subplots(1, max(len(attrs), 1), figsize=(5.4 * max(len(attrs), 1), 4.4), squeeze=False)
+    styles = {("shared", "A"): (ROLE_RGB["A"], "-", "o", "anchor: shared-attribute subspace removed"),
+              ("nonshared", "A"): (ROLE_RGB["A"], "--", "^", "anchor: non-shared attribute subspace removed"),
+              ("random", "A"): (ROLE_RGB["A"], ":", "s", "anchor: random subspace of the same rank removed"),
+              ("shared", "T"): (ROLE_RGB["T"], "-", "o", "answer object T: shared subspace removed"),
+              ("shared", "D"): (ROLE_RGB["D"], "-", "o", "other object D: shared subspace removed")}
+    for ax, s in zip(axes[0], attrs):
+        for (bname, g), (col, ls, mk, lab) in styles.items():
+            rr = [r for r in res["rows"] if r["shared"] == s and r["basis"] == bname and r["group"] == g]
+            blocks = [r for r in rr if r["block"] != "all"]
+            ax.plot([r["block"] for r in blocks], [r["p_T"] for r in blocks], ls, color=col, marker=mk, markersize=3, label=lab)
+            cum = [r for r in rr if r["block"] == "all"]
+            ax.plot([11.5], [cum[0]["p_T"]], ls, color=col, marker=mk, markersize=5, markerfacecolor="none")
+        n = next(r["n"] for r in res["rows"] if r["shared"] == s)
+        ax.set_title(f"shared attribute = {s} (rank {res['ranks'][s]}, n={n} scenes)", fontsize=9)
+        ax.set_xticks(list(range(2, 11)) + [11.5])
+        ax.set_xticklabels([str(b) for b in range(2, 11)] + ["2–10\nall"])
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_xlabel("ViT block whose output is projected")
+        ax.set_ylabel(f"P(answer = T's {res['queried']}) (clean-run answer)")
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — H3: block output of one patch group projected out of an attribute subspace "
+                 f"(clean question; hollow marker = projector at every block 2–10)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---- H5: GCA write removed on one patch group ------------------------------------
+
+def run_h5_gca_mask(out_dir, args, run, label):
+    records, trunk = run.records, run.trunk
+    groups = ("A", "T", "D", "bg", "random", "none")
+    for bidx in run.batches():
+        m = run.masks(bidx)
+        rnd = torch.zeros_like(m["A"])
+        for j, i in enumerate(bidx):
+            ow = run.owner[i].numpy()
+            bg = np.nonzero(ow == 0)[0]
+            sel = np.random.RandomState(args.seed + records[i]["scene_index"]).choice(bg, int((ow == records[i]["A"] + 1).sum()), replace=False)
+            rnd[j, torch.from_numpy(sel).to(rnd.device)] = True
+        m["random"], m["none"] = rnd, torch.zeros_like(m["A"])
+        for l in H5_LAYERS:
+            for g in groups:
+                with GCAWriteMasker(trunk, l, m[g]):
+                    run.record((g, l), bidx, run.logits(bidx))
+        print(f"  {bidx[-1] + 1}/{run.N}", flush=True)
+    for l in H5_LAYERS:
+        run.assert_self_control(("none", l), f"all-False mask, GCA layer {l}")
+    strata = {"all": None}
+    if "A_q_eq_T_q" in records[0]:
+        eq = np.array([r["A_q_eq_T_q"] for r in records])
+        strata.update({"A_q_eq_T_q=False": ~eq, "A_q_eq_T_q=True": eq})
+    rows = []
+    for l in H5_LAYERS:
+        for g in groups:
+            for sname, sel in strata.items():
+                rows.append({"layer": l, "group": g, "stratum": sname, **run.summary((g, l), sel)})
+    for r in rows:
+        print(f"H5 GCA layer {r['layer']:>2} mask {r['group']:<6} {r['stratum']:<18} {_fmt(r)}")
+    res = {"mode": "h5_gca_mask", "queried": run.q, "n_scenes": run.N, "n_scenes_ok": int(run.ok.sum()),
+           "layers": list(H5_LAYERS), "groups": list(groups),
+           "random": "background patches, as many as the anchor has, seed = --seed + scene_index", "rows": rows}
+    with open(out_dir / "results.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_h5_gca_mask(res, label, out_dir / "results.png")
+
+
+def plot_h5_gca_mask(res, label, out_path):
+    strata = list(dict.fromkeys(r["stratum"] for r in res["rows"]))
+    fig, axes = plt.subplots(len(strata), 2, figsize=(11, 3.8 * len(strata)), squeeze=False)
+    groups = res["groups"]
+    x = np.arange(len(groups))
+    for si, sname in enumerate(strata):
+        for ax, l in zip(axes[si], res["layers"]):
+            rr = [next(r for r in res["rows"] if r["layer"] == l and r["group"] == g and r["stratum"] == sname) for g in groups]
+            for k, (role, off) in enumerate((("T", -0.27), ("A", 0.0), ("D", 0.27))):
+                ax.bar(x + off, [r[f"p_{role}"] for r in rr], 0.25, color=ROLE_RGB[role], label=f"P(answer = {role}'s {res['queried']})")
+            ax2 = ax.twinx()
+            ax2.plot(x, [r["logit_A_minus_T"] for r in rr], "k.-", markersize=4, label="mean logit(A value) − logit(T value)")
+            ax2.set_ylabel("logit A − T", fontsize=8)
+            ax.set_xticks(x)
+            ax.set_xticklabels(["anchor A", "answer T", "other D", "background", "random (|A|)", "none"], fontsize=7)
+            ax.set_ylim(0, 1.02)
+            ax.set_title(f"GCA layer {l} write removed on …; {sname} (n={rr[0]['n']})", fontsize=9)
+            if si == 0 and l == res["layers"][0]:
+                ax.legend(fontsize=6, loc="upper left")
+                ax2.legend(fontsize=6, loc="upper right")
+    fig.suptitle(f"{label} — H5: gated cross-attention write masked on one patch group (clean question)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---- H7: positional-embedding edits (spatial) ------------------------------------
+
+def _pearson(a, b):
+    if a.std() < 1e-8 or b.std() < 1e-8:
+        return float("nan")
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def run_h7_posembed(out_dir, args, run, gca_layers, label):
+    records, trunk, dev, grid = run.records, run.trunk, run.device, args.grid
+    assert records[0]["mode"] == "spatial", "--h7-posembed needs a spatial cache"
+    P = grid * grid
+    axis_of = np.array([1 if r["axis"] == "column" else 0 for r in records])       # flip axis of the relation
+    perms = {ax: flip_perm(grid, ax) for ax in (0, 1)}
+    corr = {k: {l: [] for l in gca_layers} for k in ("mirror_of_clean", "clean_unmirrored")}
+    for ax in (0, 1):
+        idx_a = np.nonzero(axis_of == ax)[0]
+        for bidx in run.batches(idx_a):
+            with GCAWriteCapture(trunk) as cap:
+                run.record("clean_captured", bidx, run.logits(bidx))
+            wn0 = cap.norms()
+            with PosEmbedEditor(trunk, perm=torch.arange(P).to(dev)):
+                run.record("identity", bidx, run.logits(bidx))
+            with PosEmbedEditor(trunk, perm=perms[ax].to(dev)), GCAWriteCapture(trunk) as cap:
+                run.record("flip_relation_axis", bidx, run.logits(bidx))
+            wn1 = cap.norms()
+            with PosEmbedEditor(trunk, perm=perms[1 - ax].to(dev)):
+                run.record("flip_orthogonal_axis", bidx, run.logits(bidx))
+            pm = perms[ax].numpy()
+            for j, i in enumerate(bidx):
+                bg = run.owner[i].numpy() == 0
+                for k, l in enumerate(gca_layers):
+                    corr["mirror_of_clean"][l].append(_pearson(wn1[j, k][bg], wn0[j, k][pm][bg]))
+                    corr["clean_unmirrored"][l].append(_pearson(wn1[j, k][bg], wn0[j, k][bg]))
+    run.assert_self_control("identity", "identity pos-embed permutation")
+    run.assert_self_control("clean_captured", "GCA write capture")
+    # (b) anchor rows exchanged with their mirror rows along the relation axis
+    skipped, hits = collections.Counter(), collections.defaultdict(list)
+    for i in range(run.N):
+        r, ow, fp = records[i], run.owner[i].numpy(), perms[axis_of[i]].numpy()
+        bg = np.nonzero(ow == 0)[0]
+        sets = {"A": np.nonzero(ow == r["A"] + 1)[0], "D": np.nonzero(ow == r["D"] + 1)[0]}
+        sets["random_bg"] = np.sort(np.random.RandomState(args.seed + r["scene_index"]).choice(bg, len(sets["A"]), replace=False))
+        for name, rows in sets.items():
+            mirror = fp[rows]
+            if np.intersect1d(rows, mirror).size:
+                skipped[name] += 1
+                continue
+            hits[name].append(float((ow[mirror] == 0).mean()))
+            with PosEmbedEditor(trunk, perm=swap_rows_perm(P, rows, mirror).to(dev)):
+                run.record(f"swap_{name}", np.array([i]), run.logits(np.array([i])))
+        if (i + 1) % 100 == 0:
+            print(f"  swaps {i + 1}/{run.N}", flush=True)
+    cells = ["identity", "flip_relation_axis", "flip_orthogonal_axis", "swap_A", "swap_D", "swap_random_bg"]
+    strata = {"all": None, "axis=column (left/right)": axis_of == 1, "axis=row (front/behind)": axis_of == 0}
+    rows = [{"cell": c, "stratum": s, **run.summary(c, sel)} for c in cells for s, sel in strata.items()]
+    for r in rows:
+        print(f"H7 {r['cell']:<22} {r['stratum']:<26} {_fmt(r)}  acc {r['accuracy']:.3f}")
+    field = {k: {str(l): _boot(np.array([v for v in corr[k][l] if not np.isnan(v)])) for l in gca_layers} for k in corr}
+    for k in field:
+        print(f"H7 field correlation, flipped run vs {k:<16}: " + " ".join(f"L{l} {field[k][str(l)]['mean']:+.3f}" for l in gca_layers))
+    print(f"H7 swaps skipped (rows overlap their mirror): {dict(skipped)}; mean fraction of mirror rows on background: "
+          + ", ".join(f"{k} {np.mean(v):.2f}" for k, v in hits.items()))
+    res = {"mode": "h7_posembed", "n_scenes": run.N, "n_scenes_ok": int(run.ok.sum()), "gca_layers": gca_layers,
+           "rows": rows, "field_correlation": field, "swap_skipped": dict(skipped),
+           "swap_mirror_rows_on_background": {k: float(np.mean(v)) for k, v in hits.items()},
+           "random_bg": "background rows, as many as the anchor has, seed = --seed + scene_index"}
+    with open(out_dir / "results.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_h7_posembed(res, label, out_dir / "results.png")
+
+
+def plot_h7_posembed(res, label, out_path):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+    ax = axes[0]
+    rr = [r for r in res["rows"] if r["stratum"] == "all"]
+    x = np.arange(len(rr))
+    for role, off in (("T", -0.27), ("A", 0.0), ("D", 0.27)):
+        ax.bar(x + off, [r[f"p_{role}"] for r in rr], 0.25, color=ROLE_RGB[role], label=f"P(answer = {role}'s colour)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(["identity", "flip along\nrelation axis", "flip along\northogonal axis", "anchor rows\nmirrored",
+                        "D rows\nmirrored", "random bg rows\nmirrored"], fontsize=7)
+    ax.set_ylim(0, 1.02)
+    ax.set_title(f"positional embedding edited (n={rr[0]['n']} clean-correct scenes)", fontsize=9)
+    ax.legend(fontsize=7)
+    ax = axes[1]
+    gl = res["gca_layers"]
+    for k, col, lab in (("mirror_of_clean", "#d62728", "vs mirror image of the clean-run field"),
+                        ("clean_unmirrored", "#1f77b4", "vs clean-run field, not mirrored")):
+        _line_ci(ax, gl, [res["field_correlation"][k][str(l)] for l in gl], col, "-", lab)
+    ax.set_xticks(gl)
+    ax.set_xlabel("GCA layer")
+    ax.set_ylabel("Pearson r over background patches (per scene, CI over scenes)")
+    ax.axhline(0, color="k", linewidth=0.6)
+    ax.set_title("GCA write-norm field under the relation-axis flip", fontsize=9)
+    ax.legend(fontsize=7)
+    fig.suptitle(f"{label} — H7: positional contribution flipped / rows exchanged, content untouched (spatial, clean question)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---- H8: SA head ablation ----------------------------------------------------------
+
+def select_h8_heads(cache_dir, owners, n_scenes):
+    """Per (block, head) c1 − c0 change of (i) background-query mass on the anchor keys
+    (sa_bg_from_anchor averaged over background patches) and (ii) candidate→anchor mass
+    (mean of T→A and D→A from sa_mass). Rule: blocks H8_BLOCK_RANGE, |Δ| ≥ H8_RATIO ×
+    median |Δ| over the 144 cells, either measure; ranked by |Δ|/median, cap H8_MAX_HEADS."""
+    sa = {c: np.load(cache_dir / f"sa_attn_{c}.npz") for c in ("c0", "c1")}
+    bgm = (owners == 0).astype(np.float32)[:n_scenes]
+    def bg_to_A(c):
+        x = sa[c]["sa_bg_from_anchor"][:n_scenes].astype(np.float32)
+        return (x * bgm[:, None, None, :]).sum(-1) / bgm.sum(-1)[:, None, None]
+    def cand_to_A(c):
+        m = sa[c]["sa_mass"][:n_scenes].astype(np.float32)
+        return 0.5 * (m[..., 1, 0] + m[..., 2, 0])
+    delta = {"bg_to_A": (bg_to_A("c1") - bg_to_A("c0")).mean(0), "candidate_to_A": (cand_to_A("c1") - cand_to_A("c0")).mean(0)}
+    ratio, cells = {}, {}
+    for name, D in delta.items():
+        med = float(np.median(np.abs(D)))
+        ratio[name] = np.abs(D) / max(med, 1e-9)
+        for l in range(H8_BLOCK_RANGE[0], H8_BLOCK_RANGE[1] + 1):
+            for h in range(D.shape[1]):
+                if ratio[name][l, h] >= H8_RATIO:
+                    cells[(l, h)] = max(cells.get((l, h), 0.0), float(ratio[name][l, h]))
+        print(f"H8 {name}: median |Δ| {med:.5f}; cells ≥ {H8_RATIO:.0f}× in blocks {H8_BLOCK_RANGE}: "
+              f"{int((ratio[name][H8_BLOCK_RANGE[0]:H8_BLOCK_RANGE[1] + 1] >= H8_RATIO).sum())}")
+    ranked = sorted(cells, key=lambda c: -cells[c])
+    selected = ranked[:H8_MAX_HEADS]
+    info = {"n_meeting_rule": len(cells), "selected": [{"block": l, "head": h, "ratio": cells[(l, h)],
+                                                       "delta_bg_to_A": float(delta["bg_to_A"][l, h]),
+                                                       "delta_candidate_to_A": float(delta["candidate_to_A"][l, h])}
+                                                      for l, h in selected],
+            "median_abs_delta": {k: float(np.median(np.abs(v))) for k, v in delta.items()}}
+    print(f"H8 selected {len(selected)} of {len(cells)} cells meeting the rule: "
+          + " ".join(f"({l},{h},{cells[(l, h)]:.0f}x)" for l, h in selected))
+    return selected, info
+
+
+def run_h8_head_ablation(out_dir, args, run, cache_dir, gca_layers, label):
+    records, trunk, steervit = run.records, run.trunk, run.steervit
+    selected, info = select_h8_heads(cache_dir, run.owner.numpy(), run.N)
+    all_cells = [(l, h) for l in range(NUM_LAYERS) for h in range(trunk.blocks[0].attn.num_heads)]
+    pool = [c for c in all_cells if c not in selected]
+    rnd0 = [pool[k] for k in np.random.RandomState(0).choice(len(pool), len(selected), replace=False)]
+    pool1 = [c for c in pool if c not in rnd0]
+    rnd1 = [pool1[k] for k in np.random.RandomState(1).choice(len(pool1), len(selected), replace=False)]
+    sets = {"none": [], "selected": selected, "random_seed0": rnd0, "random_seed1": rnd1}
+    spatial = records[0]["mode"] == "spatial"
+    q2 = [r["questions"]["c2"] for r in records]
+    wn = {name: {"c1": [], "c2": []} for name in sets}
+    for name, heads in sets.items():
+        for bidx in run.batches():
+            with HeadAblator(steervit, [("sa", l, h) for l, h in heads], mode="zero"):
+                with GCAWriteCapture(trunk) as cap:
+                    run.record(name, bidx, run.logits(bidx))
+                wn[name]["c1"].append(cap.norms())
+                if spatial:
+                    with GCAWriteCapture(trunk) as cap, torch.no_grad():
+                        first_token_logits(run.model, steervit, run.imgs[torch.as_tensor(bidx)].to(run.device), [q2[i] for i in bidx])
+                    wn[name]["c2"].append(cap.norms())
+        print(f"  ablation set {name} ({len(heads)} heads) done", flush=True)
+    run.assert_self_control("none", "empty head set")
+    rows = [{"set": name, "heads": [list(c) for c in heads], **run.summary(name)} for name, heads in sets.items()]
+    for r in rows:
+        print(f"H8 ablate {r['set']:<13} ({len(r['heads'])} heads): acc {r['accuracy']:.3f}  {_fmt(r)}")
+    r2 = {}
+    if spatial:
+        owner = run.owner.numpy()
+        for name in sets:
+            r2[name] = write_position_r2(np.concatenate(wn[name]["c1"]), np.concatenate(wn[name]["c2"]), owner,
+                                         records, gca_layers, args.grid, verbose=False)["r2"]
+            for yname in ("diff_c1_c2", "c1"):
+                print(f"H8 R² {name:<13} {yname:<11} " + "  ".join(
+                    f"L{l} abs {r2[name][f'oriented/{yname}/absolute'][k]:.3f} rel {r2[name][f'oriented/{yname}/relative_to_anchor'][k]:.3f}"
+                    for k, l in enumerate(gca_layers) if l in (9, 11)))
+    else:
+        print("H8: write-position R² needs a relation axis; skipped for the same-as cache")
+    res = {"mode": "h8_head_ablation", "n_scenes": run.N, "n_scenes_ok": int(run.ok.sum()), "selection": info,
+           "rule": f"blocks {H8_BLOCK_RANGE}, |Δ| ≥ {H8_RATIO}× median over 144 cells, cap {H8_MAX_HEADS}",
+           "sets": {k: [list(c) for c in v] for k, v in sets.items()}, "rows": rows, "gca_layers": gca_layers,
+           "write_position_r2": r2}
+    with open(out_dir / "results.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_h8_head_ablation(res, label, out_dir / "results.png")
+
+
+def plot_h8_head_ablation(res, label, out_path):
+    fig, axes = plt.subplots(1, 2 if res["write_position_r2"] else 1, figsize=(12 if res["write_position_r2"] else 6, 4.2), squeeze=False)
+    ax = axes[0][0]
+    rr = res["rows"]
+    x = np.arange(len(rr))
+    for role, off in (("T", -0.27), ("A", 0.0), ("D", 0.27)):
+        ax.bar(x + off, [r[f"p_{role}"] for r in rr], 0.25, color=ROLE_RGB[role], label=f"P(answer = {role}'s value)")
+    ax.plot(x, [r["accuracy"] for r in rr], "k_", markersize=14, label="accuracy (all scenes)")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{r['set']}\n({len(r['heads'])} heads)" for r in rr], fontsize=7)
+    ax.set_ylim(0, 1.02)
+    ax.set_title(f"SA heads zeroed (n={rr[0]['n']} clean-correct scenes)", fontsize=9)
+    ax.legend(fontsize=7)
+    if res["write_position_r2"]:
+        ax = axes[0][1]
+        gl = res["gca_layers"]
+        cols = {"none": "0.3", "selected": "#d62728", "random_seed0": "#1f77b4", "random_seed1": "#17becf"}
+        for name, r2 in res["write_position_r2"].items():
+            ax.plot(gl, r2["oriented/diff_c1_c2/absolute"], "--", color=cols[name], marker="o", markersize=3, label=f"{name}: absolute")
+            ax.plot(gl, r2["oriented/diff_c1_c2/relative_to_anchor"], "-", color=cols[name], marker="^", markersize=3, label=f"{name}: relative to anchor")
+        ax.set_xticks(gl)
+        ax.set_ylim(-0.02, 1.02)
+        ax.set_xlabel("GCA layer")
+        ax.set_ylabel("R² of the c1 − c2 write norm over background patches")
+        ax.set_title("write-position regression under ablation", fontsize=9)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — H8: self-attention heads selected by the SA-mass rule ({res['rule']}) zeroed", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_relational_h(args, out_dir, label):
+    modes = [m for m in ("h3_projection", "h5_gca_mask", "h7_posembed", "h8_head_ablation") if getattr(args, m)]
+    assert len(modes) == 1, "give exactly one of --h3-projection / --h5-gca-mask / --h7-posembed / --h8-head-ablation"
+    assert args.cache_dir, f"--{modes[0].replace('_', '-')} needs --cache-dir (an existing --relational-v2 run)"
+    assert not any(p.name not in ("log_stdout.txt", "log.txt") for p in out_dir.iterdir()), f"need a new --out-dir: {out_dir}"
+    state = {}
+    cache_dir, records, images, owners, gca_layers = load_relational_cache(args, state)
+    run = RelationalRun(state, records, images, owners, args.batch_size)
+    if modes[0] == "h3_projection":
+        run_h3_projection(out_dir, args, run, Path(args.directions_dir) / "n1", label)
+    elif modes[0] == "h5_gca_mask":
+        run_h5_gca_mask(out_dir, args, run, label)
+    elif modes[0] == "h7_posembed":
+        run_h7_posembed(out_dir, args, run, gca_layers, label)
+    else:
+        run_h8_head_ablation(out_dir, args, run, cache_dir, gca_layers, label)
+    print(f"Saved: {out_dir / 'results.json'}")
 
 # ---------------------------------------------------------------------------
 # --relational-probes {same,spatial}: CPU-only probes on an existing relational
@@ -3905,6 +4454,15 @@ def main():
                     help="--relational spatial: add c3 = same relation word, anchor D (third transplant donor)")
     ap.add_argument("--check-preds-dir", default=None,
                     help="--relational: assert pred_c1/pred_c2 equal this earlier run's records on shared scenes")
+    ap.add_argument("--h3-projection", action="store_true",
+                    help="only (X22 H3): on an existing --relational-v2 same-as run (--cache-dir), project one patch "
+                         "group's block output out of an attribute subspace at blocks 2..10 (new --out-dir)")
+    ap.add_argument("--h5-gca-mask", action="store_true",
+                    help="only (X22 H5): --cache-dir run; GCA write at layers 11 / 9 removed on one patch group")
+    ap.add_argument("--h7-posembed", action="store_true",
+                    help="only (X22 H7): --cache-dir spatial run; positional embedding flipped / rows exchanged")
+    ap.add_argument("--h8-head-ablation", action="store_true",
+                    help="only (X22 H8): --cache-dir run; SA heads selected by the SA-mass rule zeroed")
     ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
     ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
                     help="--relational: directory whose n1/ cache gives the colour directions u")
@@ -3931,6 +4489,9 @@ def main():
     if args.relational_probes:
         assert args.cache_dir or args.replot, "--relational-probes needs --cache-dir"
         run_relational_probes(args, out_dir, label)
+        return
+    if args.h3_projection or args.h5_gca_mask or args.h7_posembed or args.h8_head_ablation:
+        run_relational_h(args, out_dir, label)
         return
     if args.relational:
         run_relational(args, out_dir, label)
