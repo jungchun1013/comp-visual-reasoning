@@ -189,7 +189,56 @@
   zeroing drops accuracy 0.972 → 0.744 (P(answer) 0.76, third object 0.19)
   versus random sets 0.954 / 0.914. The candidate → anchor heads of blocks
   7–10 are causally necessary for the attribute match; for the geometric
-  relation they carry redundant, absolute-position information.
+  relation, zeroing them leaves accuracy unchanged, so the answer does not
+  depend on them alone, and what they carry is the absolute-position part.
+- **2026-09-07 — X22 stages G6 (edge render) and G7 part 1 (SigLIP): the
+  spatial results replicate on the edge render; the same-as stage order
+  replicates on SigLIP but compressed toward block 5, with the anchor
+  staying necessary to the end.** Dirs `relational_spatial_edge/` (+
+  `h7_posembed/`, `h8_head_ablation/`), `relational_{same,spatial}_v2_siglip/`
+  (+ `_probes/`).
+  (edge render, DINOv2 s42, n = 495, accuracy 1.000 / 0.998) anchor
+  necessity via the anchor-swap condition (33 valid scenes): P(clean answer)
+  0.64 / 0.39 / 0.27 / 0.36 at blocks 7–10, 0.94 at 11 (reference 0.48 /
+  0.29 / 0.23 / 0.29, 0.97). Write-position R² absolute 0.62 / 0.37 / 0.25 /
+  0.37 / 0.03 / 0.35, anchor-relative 0.00 / 0.01 / 0.30 / 0.01 / 0.60 / 0.45
+  (layers 1–11). Positional-embedding flip along the relation axis 0.95 to
+  the third object, orthogonal flip 0.99 unchanged, anchor rows mirrored 21%
+  to the anchor (n = 290), third object's rows mirrored 52% to it, random
+  background rows 0.95; field correlation unmirrored 0.91 / 0.96 at layers 1 /
+  3, mirrored 0.46 / 0.58 at 9 / 11. Head ablation (same rule, heads 8:5, 7:7,
+  8:6, 9:7, 7:3, 7:2, 10:0, 7:10): accuracy 1.000, relative R² 0.60 → 0.54 and
+  0.45 → 0.37, absolute R² at layers 9 / 11 0.03 / 0.34 → 0.01 / 0.03.
+  Design flaw in the render, recorded: both distractors were placed on the
+  centre side of the anchor, so "left of anchor" is never unique along the
+  edge axis and the role assignment falls back to the other axis; only 16
+  scenes have the answer object on the image half opposite to the direction
+  word (accuracy 1.00 on them). The behavioural dissociation test therefore
+  rests on the CLEVR val version (222 questions, above), not on this render.
+  A fixed layout would need the far distractor beyond the anchor (anchor at
+  ~0.7 of the range, answer object at 0.3–0.5 on the same side, third object
+  past the anchor); not rendered.
+  (SigLIP, `clevr_siglip_decoder1l_scratch_s42`, 16 × 16 grid) same-as n =
+  650, accuracy 0.977 / 0.980. Referent probe onset block 3 (as DINOv2).
+  Anchor's shared shape from background tokens: c1 0.75 / 0.99 at blocks 4 /
+  5 vs c0 0.65 / 0.67 — onset block 5, one block earlier than DINOv2's rise
+  (0.85 at 5, 0.98 at 7). Self-attention onto the anchor peaks at block 5
+  (answer object +0.11, third +0.08, background +0.12 / +0.11 at 5 / 6)
+  instead of 7–8. Transplant: anchor necessary from block 3 (min 0.60 at 5)
+  and **still at block 11 (0.65)**; answer object 3–10 (min 0.82); background
+  gradually from block 5 (0.89) to 11 (0.79) with no single readout block.
+  GCA write cosine with the anchor's own colour direction at layers 9 / 11
+  +0.002 / 0.000 (H5(i) not supported here either). Margin by attributes the
+  third object shares with the anchor 10.03 / 9.90 / 10.49 (flat; H6 not
+  supported). Spatial n = 478, accuracy 1.000 / 1.000; anchor-swap condition
+  valid in 12 scenes: anchor necessary at blocks 5–7 (0.17 / 0.25 / 0.25);
+  background tokens necessary at 7–9 (0.54 / 0.39 / 0.41); anchor-coordinate
+  probe from background peaks at block 5 (R² 0.42); the self-attention
+  c1 − c0 signal is small (≤ 0.04). Reading: the stage order (anchor
+  identified → shared attribute in background → candidates read the anchor →
+  candidates causal → answer in background) holds on SigLIP with every stage
+  two blocks earlier, and SigLIP keeps the anchor and a distributed
+  background readout to the last block rather than a single block-11 step.
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
