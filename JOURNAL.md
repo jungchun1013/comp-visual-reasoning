@@ -22,6 +22,57 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-09-07 — Relational X22 (pre-registered; naming: "relational" =
+  same-as + spatial). Stage C0 (CPU, existing caches) read against the
+  registered predictions; dissociation render done; GPU stage G1 running.**
+  Registry X22 committed (7c3d6e1) before any GPU job. Code: `--relational-probes
+  {same,spatial}` in `patch_language_condition.py`, hooks `SubspaceProjector` /
+  `GCAWriteMasker` / `PosEmbedEditor` / `SAAttnCapture` in
+  `src/analysis/patching_utils.py` (CPU-verified: capture reproduces fused
+  logits to 7e-6; masker equals gate-off once the CLS row is also reverted),
+  `--anchor-edge` in `render_single_objects.py` (de9df34). Outputs
+  `patch_language_condition/relational_{same,spatial}_probes/`.
+  (H1 ordering — pass) same-as anchor-vs-answer probe on c1 ∪ c2: 0.50 /
+  0.76 / 0.77 / 0.99 at blocks 0–3, c0 control 0.50 everywhere; onset block 3 =
+  transplant onset. Spatial is-anchor probe onset block 3; anchor centroid from
+  background tokens (ridge, c1 − c0 token) R² 0.14 / 0.23 / 0.57 / 0.57 / 0.49
+  at blocks 5–9, onset block 7 < candidate causal onset 9 (H7(ii) pass).
+  (H2 transport — design flaw found) the anchor's colour is decodable from
+  every token from block 1 (c1 − c0 ≈ 0.6–0.78 for T, D, low-norm background;
+  absolute 0.95–0.98 at block 9). The anchor's colour is the referent word of
+  the question, so this measures the question being written into all patches,
+  not a visual property being moved. Clean version (anchor's shared attribute,
+  which the question never states, decoded from background / third-object
+  tokens) scheduled in G1. High-norm background tokens exist only at blocks
+  8–10 among the 64 sampled (n ≈ 200) and decode worse (0.79 vs 0.98).
+  (H4 marker — partial) c1 − c0 projected on the single-hop marker (X21):
+  block 9 anchor +3.7, answer +0.9, third +0.3; block 11 answer +7.9, anchor
+  +8.4, third +4.2, background −0.5. The marker reaches the answer object by
+  block 11 but the anchor is not de-marked along this direction. Spatial: at
+  block 9 anchor and answer equal (+2.5), block 11 answer +8.9 > anchor +4.2 >
+  third +1.3.
+  (H5(i) — disconfirmed as stated) GCA write cosine with the patch's own
+  colour direction at blocks 9 / 11 is within ±0.006 for all roles (largest
+  |cos| 0.05 at block 3 on the named object). Whatever suppresses the anchor at
+  block 11 (projection −1.4 in the 09-02 run) is not the direction of the GCA
+  write; the masking test H5(ii) remains.
+  (H6 — accuracy level flat) same-as accuracy by attributes the third object
+  shares with the anchor 0 / 1 / 2: 0.961 / 0.971 / 1.000 (n 204 / 339 / 109);
+  by shared attribute shape 0.991, material 0.986, size 0.885 (n 326 / 222 /
+  104). Margins pending (G1).
+  (H7(i)) cross-scene Pearson r of the c1 write-norm map, same relation word,
+  GCA layers 1–11: unaligned 0.17 / 0.46 / 0.56 / 0.43 / 0.42 / 0.64; rolled to
+  the anchor 0.07 / 0.15 / 0.19 / 0.24 / 0.18 / 0.39 (all differences CI ⊄ 0).
+  The field is tied to absolute image position at every layer; the pos-embed
+  flip (G4) is the decisive test.
+  Dissociation render `data/clevr_three_object_edge` (672, seed 42; anchor
+  |proj| ≥ 0.85·POS_MAX on a random axis, one distractor between anchor and
+  centre, one on the far side): `BLENDER_TOOLS_ROOT=…/SteerViT-legacy/tools/
+  clevr-dataset-gen …/tools/blender/blender --background --python
+  scripts/analysis/render_single_objects.py -- --output-dir
+  data/clevr_three_object_edge --n-per-type 8 --distinct-colors
+  --num-distractors 2 --anchor-edge 0.85 --seed 42` (the 09-02 v2 set used the
+  same command without `--anchor-edge`).
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
