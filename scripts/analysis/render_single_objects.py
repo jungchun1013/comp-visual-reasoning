@@ -67,6 +67,13 @@ parser.add_argument('--distractor-size', default=None, choices=['large', 'small'
 parser.add_argument('--distinct-colors', action='store_true',
                     help='Skip gray targets; every distractor colour is non-gray '
                          'and distinct from the target and the other distractors')
+parser.add_argument('--anchor-edge', default=None, type=float, metavar='FRAC',
+                    help='Spatial dissociation layout: the target sits at '
+                         '|proj| >= FRAC*POS_MAX on a random axis (x or y, '
+                         'random sign); distractor 1 lies between the target '
+                         'and the centre on that axis (|proj| <= |target| - '
+                         '0.9), distractor 2 on the opposite sign. Default: '
+                         'unconstrained positions.')
 
 # ── Constants ────────────────────────────────────────────────────
 
@@ -94,11 +101,16 @@ def sample_distractor(target_attrs, rng, size=None, exclude_colors=()):
             return attrs
 
 
-def sample_position(existing, r, rng, min_margin=0.4, max_tries=100):
-    """Position with no overlap against existing [(x, y, r), ...]."""
+def sample_position(existing, r, rng, min_margin=0.4, max_tries=100,
+                    bounds=None):
+    """Position with no overlap against existing [(x, y, r), ...].
+
+    bounds: optional ((x_lo, x_hi), (y_lo, y_hi)) restricting the sample box.
+    """
+    (x_lo, x_hi), (y_lo, y_hi) = bounds or ((POS_MIN, POS_MAX),) * 2
     for _ in range(max_tries):
-        x = rng.uniform(POS_MIN, POS_MAX)
-        y = rng.uniform(POS_MIN, POS_MAX)
+        x = rng.uniform(x_lo, x_hi)
+        y = rng.uniform(y_lo, y_hi)
         if all(math.hypot(x - ex, y - ey) >= r + er + min_margin
                for ex, ey, er in existing):
             return x, y
@@ -193,19 +205,40 @@ def main():
         for rep in range(args.n_per_type):
             # Target: random position and rotation
             placed = []
-            x, y = sample_position(placed, SIZE_MAP[size], random)
+            edge_axis = edge_sign = None
+            if args.anchor_edge is not None:
+                edge_axis = random.choice(['x', 'y'])
+                edge_sign = random.choice([-1, 1])
+            def axis_bounds(lo, hi):
+                # Box restricting the edge axis to [lo, hi]; other axis free.
+                free = (POS_MIN, POS_MAX)
+                return ((lo, hi), free) if edge_axis == 'x' else (free, (lo, hi))
+            def signed(lo, hi):
+                # [lo, hi] in |proj| units on the edge_sign side, as (lo, hi).
+                return tuple(sorted((edge_sign * lo, edge_sign * hi)))
+            x, y = sample_position(
+                placed, SIZE_MAP[size], random,
+                bounds=axis_bounds(*signed(args.anchor_edge * POS_MAX, POS_MAX))
+                if edge_axis else None)
+            anchor_proj = abs(x if edge_axis == 'x' else y)
             placed.append((x, y, SIZE_MAP[size]))
             rotation = random.uniform(0, 2 * math.pi)
 
             # Distractors: attrs >=2 away from target, non-overlapping
             distractors = []
-            for _ in range(args.num_distractors):
+            for d_i in range(args.num_distractors):
+                d_bounds = None
+                if edge_axis and d_i == 0:      # same side, nearer the centre
+                    d_bounds = axis_bounds(*signed(0.0, anchor_proj - 0.9))
+                elif edge_axis and d_i == 1:    # opposite side
+                    d_bounds = axis_bounds(*signed(-POS_MAX, 0.0))
                 d_color, d_shape, d_material, d_size = sample_distractor(
                     (color, shape, material, size), random,
                     size=args.distractor_size,
                     exclude_colors=(color, 'gray', *[d['color'] for d in distractors])
                     if args.distinct_colors else ())
-                dx, dy = sample_position(placed, SIZE_MAP[d_size], random)
+                dx, dy = sample_position(placed, SIZE_MAP[d_size], random,
+                                         bounds=d_bounds)
                 placed.append((dx, dy, SIZE_MAP[d_size]))
                 distractors.append({
                     'color': d_color, 'shape': d_shape,
@@ -239,6 +272,9 @@ def main():
             }
             if distractors:
                 entry['distractors'] = distractors
+            if edge_axis:
+                entry['edge_axis'] = edge_axis
+                entry['edge_sign'] = edge_sign
             metadata.append(entry)
 
             idx += 1

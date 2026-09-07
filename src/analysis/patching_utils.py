@@ -343,6 +343,152 @@ class HeadAblator:
         return False
 
 
+class SubspaceProjector:
+    """Context manager: forward hook on ``trunk.blocks[layer]`` that projects the
+    masked patch tokens of the block output out of a subspace.
+
+    ``basis`` is a (k, D) orthonormal tensor; ``mask`` a bool (B, P) over patch
+    positions (prefix tokens excluded, prefix = ``trunk.num_prefix_tokens``).
+    For masked patches x <- x - (x @ basis.T) @ basis.
+    """
+
+    def __init__(self, trunk, layer, basis, mask):
+        self.blk, self.prefix, self.basis, self.mask, self.h = (
+            trunk.blocks[layer], trunk.num_prefix_tokens, basis, mask, None)
+
+    def __enter__(self):
+        def fn(mod, inp, out):
+            x = out[0].clone()
+            p = x[:, self.prefix:, :]
+            basis = self.basis.to(p.dtype)
+            proj = p - (p @ basis.T) @ basis
+            x[:, self.prefix:, :] = torch.where(self.mask[:, :, None], proj, p)
+            return (x, out[1], out[2])
+        self.h = self.blk.register_forward_hook(fn)
+        return self
+
+    def __exit__(self, *a):
+        self.h.remove()
+
+
+class GCAWriteMasker:
+    """Context manager: forward hook on ``blocks[layer].gated_cross_attn``
+    (returns a single (B, N, D) tensor); for masked patches the module output
+    is replaced by its input, i.e. the GCA write is removed there.
+    ``mask`` is a bool (B, P) over patch positions (prefix excluded).
+    """
+
+    def __init__(self, trunk, layer, mask):
+        self.gca, self.prefix, self.mask, self.h = (
+            trunk.blocks[layer].gated_cross_attn, trunk.num_prefix_tokens, mask, None)
+
+    def __enter__(self):
+        def fn(mod, inp, out):
+            x = out.clone()
+            x[:, self.prefix:, :] = torch.where(
+                self.mask[:, :, None], inp[0][:, self.prefix:, :], out[:, self.prefix:, :])
+            return x
+        self.h = self.gca.register_forward_hook(fn)
+        return self
+
+    def __exit__(self, *a):
+        self.h.remove()
+
+
+def flip_perm(grid, axis):
+    """Patch-index permutation (P,) mirroring a ``grid`` x ``grid`` layout along
+    rows (axis=0) or cols (axis=1)."""
+    idx = torch.arange(grid * grid).view(grid, grid)
+    return idx.flip(axis).reshape(-1)
+
+
+def swap_rows_perm(P, rows_a, rows_b):
+    """Patch-index permutation (P,) that exchanges the token sets ``rows_a`` and
+    ``rows_b`` (index lists of equal length); all other positions fixed."""
+    perm = torch.arange(P)
+    rows_a, rows_b = torch.as_tensor(rows_a), torch.as_tensor(rows_b)
+    perm[rows_a], perm[rows_b] = rows_b, rows_a
+    return perm
+
+
+class PosEmbedEditor:
+    """Context manager: forward pre-hook on ``trunk.pos_drop`` (its input is x
+    right after ``_pos_embed``). Either adds ``delta`` (1, P, D) to the patch
+    rows, or permutes the positional contribution with ``perm`` (P,):
+    x[:, prefix:] <- x[:, prefix:] - pos + pos[:, perm], where
+    pos = pos_embed[:, offset:offset+P] (offset 0 if ``no_embed_class``).
+    """
+
+    def __init__(self, trunk, delta=None, perm=None):
+        self.trunk, self.prefix, self.delta, self.perm, self.h = (
+            trunk, trunk.num_prefix_tokens, delta, perm, None)
+
+    def __enter__(self):
+        def fn(mod, inp):
+            x = inp[0].clone()
+            P = x.shape[1] - self.prefix
+            if self.delta is not None:
+                x[:, self.prefix:] = x[:, self.prefix:] + self.delta.to(x.dtype)
+            if self.perm is not None:
+                offset = 0 if self.trunk.no_embed_class else self.prefix
+                assert self.trunk.pos_embed.shape[1] == P + offset, \
+                    f"pos_embed {tuple(self.trunk.pos_embed.shape)} vs P={P}, offset={offset}"
+                pos = self.trunk.pos_embed[:, offset:offset + P].to(x.dtype)
+                x[:, self.prefix:] = x[:, self.prefix:] - pos + pos[:, self.perm]
+            return (x,)
+        self.h = self.trunk.pos_drop.register_forward_pre_hook(fn)
+        return self
+
+    def __exit__(self, *a):
+        self.h.remove()
+
+
+class SAAttnCapture:
+    """Context manager: sets ``blk.attn.fused_attn = False`` on every trunk
+    block (previous per-block values restored on exit) so that after each
+    forward ``blk.attn.attn_map`` holds that block's (B, H, N, N) attention.
+    Raw maps live on the modules only (overwritten by the next forward).
+    """
+
+    def __init__(self, trunk, roles_fn=None):
+        self.trunk, self.prefix, self.roles_fn, self._prev = trunk, trunk.num_prefix_tokens, roles_fn, None
+
+    def __enter__(self):
+        self._prev = [blk.attn.fused_attn for blk in self.trunk.blocks]
+        for blk in self.trunk.blocks:
+            blk.attn.fused_attn = False
+        return self
+
+    def __exit__(self, *a):
+        for blk, v in zip(self.trunk.blocks, self._prev):
+            blk.attn.fused_attn = v
+
+    def maps(self):
+        """List over blocks of the current-batch (B, H, N, N) attention maps."""
+        return [blk.attn.attn_map for blk in self.trunk.blocks]
+
+    @torch.no_grad()
+    def reduce(self, owner, anchor_role=0):
+        """``owner``: (B, P) int roles (-1 background, 0..k objects).
+        Returns mass (B, L, H, R, R): mean attention (patch tokens only) from a
+        query of role r to a key of role s, R = number of roles incl. background;
+        bg_from_anchor (B, L, H, P): per query patch, total mass on keys of
+        ``anchor_role``."""
+        roles = owner + 1                                   # background -> 0
+        R = int(roles.max().item()) + 1
+        onehot = torch.nn.functional.one_hot(roles, R).float()   # (B, P, R)
+        cnt = onehot.sum(1)                                 # (B, R)
+        pre = self.prefix
+        mass, bg = [], []
+        for blk in self.trunk.blocks:
+            a = blk.attn.attn_map[:, :, pre:, pre:].float()  # (B, H, P, P)
+            key_mass = a @ onehot[:, None]                  # (B, H, P, R)
+            m = onehot.transpose(1, 2)[:, None] @ key_mass  # (B, H, R, R) summed over queries
+            mass.append(m / cnt.clamp(min=1)[:, None, :, None])
+            bg.append(key_mass[..., anchor_role + 1])
+        return torch.stack(mass, 1), torch.stack(bg, 1)
+
+
 class ComponentPatcher:
     """Decomposed patching: SA contribution vs GCA contribution."""
 

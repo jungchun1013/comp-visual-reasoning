@@ -41,7 +41,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from scipy.stats import spearmanr
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.metrics import r2_score
 from sklearn.model_selection import GroupKFold, LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -1612,12 +1613,12 @@ def run_interventions(out_dir, args, state, cache_n1, labels_n1, images_n2, owne
 # Part C — held-out-position probes on single patch tokens
 # ---------------------------------------------------------------------------
 
-def _subsample_tokens(c, labels, max_obj, max_bg, seed):
+def _subsample_tokens(c, labels, max_obj, max_bg, seed, n_obj=2):
     rng = np.random.RandomState(seed)
     keep = []
     img, own = c["tok_img"], c["tok_owner"]
     for i in range(len(labels)):
-        for oid, cap in ((1, max_obj), (2, max_obj), (0, max_bg)):
+        for oid, cap in [(o, max_obj) for o in range(1, n_obj + 1)] + [(0, max_bg)]:
             idx = np.nonzero((img == i) & (own == oid))[0]
             if len(idx) > cap:
                 idx = rng.choice(idx, cap, replace=False)
@@ -2539,6 +2540,507 @@ def run_relational(args, out_dir, label):
 
 
 # ---------------------------------------------------------------------------
+# --relational-probes {same,spatial}: CPU-only probes on an existing relational
+# cache (--cache-dir, read-only) written to a new --out-dir.
+#   H1/H2  linear probes per block (GroupKFold(5) by scene, CI = bootstrap over
+#          scenes of the out-of-fold per-scene accuracy):
+#          (a) referent probe A vs T on c1 ∪ c2 (same-as: roles flip in c2), c0 control;
+#          (b) anchor-colour transport: 7-way anchor colour decoded from T / D /
+#              low-norm bg / high-norm bg tokens, c1 and c0, signal = c1 − c0;
+#          (c) spatial: Ridge of the anchor centroid from single bg tokens (c1, c0,
+#              c1 − c0 token difference); per-patch "is anchor" probe on c1 tokens.
+#   H4     raw-space (c1 − c0) mean token change per role projected onto the
+#          single-hop referent marker (X21 n2: mean c1 − c2 of the target).
+#   H5(i)  cosine of the GCA write vector on A / T / D patches with the object's
+#          own raw-space colour direction (class means of the n1 cache, centred).
+#   H6     decoder accuracy by strata of shared non-queried attributes.
+#   H7     spatial: Pearson correlation of c1 GCA-write-norm maps between scenes
+#          with the same relation word, unaligned vs rolled so that anchor
+#          centroids coincide; onset of the anchor-coordinate probe vs the GCA
+#          layer where anchor-relative R² first exceeds absolute R².
+# ---------------------------------------------------------------------------
+
+HIGH_NORM_FACTOR = 5          # high-norm patch: raw_norm > 5 × per-block median (token_norm_stats)
+MIN_PROBE_TOKENS = 50
+PROBE_MAX_OBJ, PROBE_MAX_BG = 8, 16
+TOKEN_SET_LABEL = {"T": "answer object T tokens", "D": "other object D tokens",
+                   "bg_low": "background tokens (low norm)", "bg_high": "background tokens (high norm)"}
+TOKEN_SET_RGB = {"T": ROLE_RGB["T"], "D": ROLE_RGB["D"], "bg_low": ROLE_RGB["bg"], "bg_high": (0.1, 0.1, 0.1)}
+
+
+def _oof_correct(X, y, groups):
+    """Out-of-fold correctness per token (GroupKFold(5), StandardScaler + LogisticRegression)."""
+    ok = np.full(len(y), np.nan)
+    for tr, te in GroupKFold(5).split(X, y, groups):
+        if len(np.unique(y[tr])) < 2:
+            continue
+        clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))
+        clf.fit(X[tr], y[tr])
+        ok[te] = clf.predict(X[te]) == y[te]
+    return ok
+
+
+def _scene_acc(ok, groups):
+    """Per-scene accuracy (mean over that scene's tokens) with bootstrap CI over scenes."""
+    m = np.isfinite(ok)
+    if not m.any():
+        return {"mean": float("nan"), "lo": float("nan"), "hi": float("nan"), "n": 0, "n_tokens": 0}
+    g = groups[m]
+    per = np.bincount(g, ok[m]) / np.maximum(np.bincount(g), 1)
+    out = _boot(per[np.bincount(g) > 0])
+    out["n_tokens"] = int(m.sum())
+    return out
+
+
+def _probe(X, y, groups):
+    return _scene_acc(_oof_correct(X, y, groups), groups)
+
+
+def _ridge_r2(X, Y, groups):
+    """Mean over GroupKFold(5) folds of R² per target column (StandardScaler + Ridge(alpha=1))."""
+    r2 = []
+    for tr, te in GroupKFold(5).split(X, Y, groups):
+        reg = make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(X[tr], Y[tr])
+        r2.append(r2_score(Y[te], reg.predict(X[te]), multioutput="raw_values"))
+    return np.mean(r2, 0)
+
+
+def _onset(vals, thresh):
+    return next((l for l, v in enumerate(vals) if np.isfinite(v) and v >= thresh), None)
+
+
+def _role_per_token(records, img, own):
+    """Per token: 0 = A, 1 = T, 2 = D, -1 = background."""
+    N = len(records)
+    role_map = np.full((N, 4), -1, dtype=int)
+    for k, role in enumerate(ROLES):
+        role_map[np.arange(N), _role_index(records, role) + 1] = k
+    return role_map[img, own]
+
+
+def relational_probes_h1h2(caches, records, mode, args):
+    c0 = caches["c0"]
+    for cond in ("c1", "c2"):
+        assert np.array_equal(caches[cond]["tok_pos"], c0["tok_pos"]) and \
+            np.array_equal(caches[cond]["tok_img"], c0["tok_img"]), "token order differs across conditions"
+    img, own, pos = c0["tok_img"].astype(int), c0["tok_owner"].astype(int), c0["tok_pos"].astype(int)
+    N = len(records)
+    role = _role_per_token(records, img, own)
+    keep = _subsample_tokens(c0, records, PROBE_MAX_OBJ, PROBE_MAX_BG, args.seed, n_obj=3)
+    obj_keep = keep[own[keep] > 0]
+    bg_all = np.nonzero(own == 0)[0]
+    col_idx = {c: i for i, c in enumerate(COLORS)}
+    y_anchor = np.array([col_idx[r["objects"][r["A"]]["color"]] for r in records])[img]
+    anchor_cent = np.array([r["centroids_row_col"][r["A"]] for r in records], np.float32)   # (N, 2)
+    rn = c0["raw_norm"].astype(np.float32)                                                 # (N, 12, P)
+    med = [float(np.median(rn[:, l])) for l in range(NUM_LAYERS)]
+    X = lambda cond, idx, l: caches[cond]["tok"][idx, l, :].astype(np.float32)
+    out = {"n_scenes": N, "high_norm_factor": HIGH_NORM_FACTOR, "raw_norm_median_by_block": med,
+           "chance_colour": 1 / len(COLORS), "probe_max_tokens_per_object": PROBE_MAX_OBJ,
+           "probe_max_bg_per_scene": PROBE_MAX_BG,
+           "note_transport": "For T and D tokens the token's own colour differs from the anchor's by "
+                             "construction (three distinct colours per scene), so a probe cannot "
+                             "succeed by reading the token's own colour; the c0 control and c1 − c0 "
+                             "remove the residual own-colour exclusion effect. Background tokens have "
+                             "no own colour.",
+           "referent": {"c1c2": [], "c0_control": []}, "is_anchor": {"c1": [], "c0_control": []},
+           "transport": {s: {"c1": [], "c0": [], "majority": [], "n_tokens": []} for s in TOKEN_SET_LABEL},
+           "anchor_coord_r2": {"c1": [], "c0": [], "c1_minus_c0": []}}
+    at = obj_keep[np.isin(role[obj_keep], (0, 1))]
+    for l in range(NUM_LAYERS):
+        if mode == "same":
+            y1, y2 = (role[at] == 0).astype(int), (role[at] == 1).astype(int)
+            yy, gg = np.concatenate([y1, y2]), np.concatenate([img[at], img[at]])
+            out["referent"]["c1c2"].append(_probe(np.concatenate([X("c1", at, l), X("c2", at, l)]), yy, gg))
+            X0 = X("c0", at, l)
+            out["referent"]["c0_control"].append(_probe(np.concatenate([X0, X0]), yy, gg))
+        ya = (role[obj_keep] == 0).astype(int)
+        out["is_anchor"]["c1"].append(_probe(X("c1", obj_keep, l), ya, img[obj_keep]))
+        out["is_anchor"]["c0_control"].append(_probe(X("c0", obj_keep, l), ya, img[obj_keep]))
+        high = rn[img[bg_all], l, pos[bg_all]] > HIGH_NORM_FACTOR * med[l]
+        rng = np.random.RandomState(args.seed + l)
+        low = bg_all[~high]
+        bg_low = np.concatenate([rng.choice(ix, min(PROBE_MAX_BG, len(ix)), replace=False)
+                                 for i in range(N) if len(ix := low[img[low] == i])])
+        sets = {"T": obj_keep[role[obj_keep] == 1], "D": obj_keep[role[obj_keep] == 2],
+                "bg_low": np.sort(bg_low), "bg_high": bg_all[high]}
+        for name, idx in sets.items():
+            t = out["transport"][name]
+            t["n_tokens"].append(int(len(idx)))
+            if len(idx) < MIN_PROBE_TOKENS or len(np.unique(img[idx])) < 5:
+                t["c1"].append(_boot([])); t["c0"].append(_boot([])); t["majority"].append(float("nan"))
+                continue
+            t["majority"].append(float(np.bincount(y_anchor[idx]).max() / len(idx)))
+            for cond in ("c1", "c0"):
+                t[cond].append(_probe(X(cond, idx, l), y_anchor[idx], img[idx]))
+        if mode == "spatial":
+            Y, g = anchor_cent[img[sets["bg_low"]]], img[sets["bg_low"]]
+            x1, x0 = X("c1", sets["bg_low"], l), X("c0", sets["bg_low"], l)
+            for key, xx in (("c1", x1), ("c0", x0), ("c1_minus_c0", x1 - x0)):
+                r2 = _ridge_r2(xx, Y, g)
+                out["anchor_coord_r2"][key].append({"row": float(r2[0]), "col": float(r2[1]), "mean": float(r2.mean())})
+        msg = f"L{l:2d}"
+        if mode == "same":
+            msg += (f" referent {out['referent']['c1c2'][-1]['mean']:.3f} "
+                    f"(c0 {out['referent']['c0_control'][-1]['mean']:.3f})")
+        msg += f" is_anchor {out['is_anchor']['c1'][-1]['mean']:.3f} (c0 {out['is_anchor']['c0_control'][-1]['mean']:.3f})"
+        msg += " | transport " + " ".join(
+            f"{s}:{out['transport'][s]['c1'][-1]['mean']:.2f}/{out['transport'][s]['c0'][-1]['mean']:.2f}"
+            f"(n={out['transport'][s]['n_tokens'][-1]})" for s in TOKEN_SET_LABEL)
+        if mode == "spatial":
+            msg += " | coord R² " + " ".join(f"{k}:{out['anchor_coord_r2'][k][-1]['mean']:.2f}"
+                                             for k in out["anchor_coord_r2"])
+        print(msg, flush=True)
+    out["onset_block"] = {}
+    if mode == "same":
+        out["onset_block"]["referent_acc_ge_0.9"] = _onset([q["mean"] for q in out["referent"]["c1c2"]], 0.9)
+    out["onset_block"]["is_anchor_acc_ge_0.9"] = _onset([q["mean"] for q in out["is_anchor"]["c1"]], 0.9)
+    for s in TOKEN_SET_LABEL:
+        t = out["transport"][s]
+        t["c1_minus_c0"] = [a["mean"] - b["mean"] for a, b in zip(t["c1"], t["c0"])]
+    if mode == "spatial":
+        r = out["anchor_coord_r2"]
+        diff = [a["mean"] - b["mean"] for a, b in zip(r["c1"], r["c0"])]
+        out["anchor_coord_r2"]["c1_minus_c0_r2_gap"] = diff
+        out["onset_block"]["coord_r2_diff_token_ge_0.5"] = _onset([q["mean"] for q in r["c1_minus_c0"]], 0.5)
+        out["onset_block"]["coord_r2_gap_ge_half_max"] = _onset(diff, 0.5 * max(diff))
+    print(f"onset blocks: {out['onset_block']}")
+    return out
+
+
+def relational_marker_projection(caches, records, x21_dir):
+    """H4: raw-space mean token change (c − c0) of each role, projected onto the unit
+    single-hop referent marker (X21 n2: mean over pairs of c1 − c2 target raw_obj_mean)."""
+    rom1 = np.load(x21_dir / "feats_c1.npz")["raw_obj_mean"][:, 0].astype(np.float32)
+    rom2 = np.load(x21_dir / "feats_c2.npz")["raw_obj_mean"][:, 0].astype(np.float32)
+    marker = (rom1 - rom2).mean(0)                                                  # (12, D)
+    u = _unit(marker)
+    rom = {c: caches[c]["raw_obj_mean"].astype(np.float32) for c in caches}
+    rbg = {c: caches[c]["raw_bg_mean"].astype(np.float32) for c in caches}
+    ar = np.arange(len(records))
+    res = {"marker_source": str(x21_dir), "marker_n_pairs": int(len(rom1)),
+           "marker_norm_by_block": np.linalg.norm(marker, axis=-1).tolist(), "projection": {}, "cosine": {}}
+    for cond in ("c1", "c2"):
+        for role in ROLES + ("bg",):
+            if role == "bg":
+                d = rbg[cond] - rbg["c0"]
+            else:
+                idx = _role_index(records, role)
+                d = rom[cond][ar, idx] - rom["c0"][ar, idx]                            # (N, 12, D)
+            p, cs = (d * u).sum(-1), _cos(d, u[None])
+            res["projection"][f"{cond}_{role}"] = [_boot(p[:, l]) for l in range(NUM_LAYERS)]
+            res["cosine"][f"{cond}_{role}"] = [_boot(cs[:, l]) for l in range(NUM_LAYERS)]
+            print(f"marker proj {cond}_{role:<3} " + " ".join(f"{q['mean']:+.1f}" for q in res["projection"][f"{cond}_{role}"])
+                  + " | cos " + " ".join(f"{q['mean']:+.2f}" for q in res["cosine"][f"{cond}_{role}"]))
+    return res
+
+
+def raw_color_directions(n1_dir):
+    """Raw-space colour directions: unit(class mean of raw_obj_mean − grand mean) from the
+    1-object cache (color_vectors.npz stores the un-centred class means)."""
+    rom = np.load(n1_dir / "feats_c0.npz")["raw_obj_mean"][:, 0].astype(np.float32)
+    cols = np.array([r["target"]["color"] for r in load_labels(n1_dir)])
+    mu = rom.mean(0)
+    return {c: _unit(rom[cols == c].mean(0) - mu) for c in COLORS if (cols == c).sum() >= 5}
+
+
+def relational_write_cosine(caches, records, n1_dir, gca_layers):
+    """H5(i): per GCA layer, cosine of each object patch's GCA write vector with the
+    object's own raw-space colour direction; mean over patches per scene, CI over scenes."""
+    U = raw_color_directions(n1_dir)
+    N = len(records)
+    obj_col = [[o["color"] for o in r["objects"]] for r in records]
+    res = {"gca_layers": list(gca_layers), "direction_space": "raw residual (pre-norm), n1 class means centred",
+           "directions": sorted(U), "cosine": {}}
+    for cond in ("c1", "c2"):
+        c = caches[cond]
+        w = c["gca_write"]
+        wimg, wown = c["gca_write_img"].astype(int), c["gca_write_owner"].astype(int)
+        obj = wown > 0
+        wo = w[obj]
+        role = _role_per_token(records, wimg[obj], wown[obj])
+        cols = [obj_col[i][o - 1] for i, o in zip(wimg[obj], wown[obj])]
+        has = np.array([cc in U for cc in cols])
+        for k, l in enumerate(gca_layers):
+            Uk = np.stack([U[cc][l] if cc in U else np.zeros(w.shape[-1], np.float32) for cc in cols])
+            cs = _cos(wo[:, k, :].astype(np.float32), Uk)
+            for r_id, rname in enumerate(ROLES):
+                m = has & (role == r_id)
+                g = wimg[obj][m]
+                per = np.bincount(g, cs[m], minlength=N) / np.maximum(np.bincount(g, minlength=N), 1)
+                res["cosine"].setdefault(f"{cond}_{rname}", []).append(_boot(per[np.bincount(g, minlength=N) > 0]))
+        for rname in ROLES:
+            print(f"GCA write cos(own colour) {cond}_{rname} " +
+                  " ".join(f"L{l}:{q['mean']:+.3f}[{q['lo']:+.3f},{q['hi']:+.3f}]"
+                           for l, q in zip(gca_layers, res["cosine"][f"{cond}_{rname}"])))
+    return res
+
+
+def relational_strata(records, mode):
+    """H6: decoder accuracy (c1, c2) by the number of non-queried attributes
+    (shape / material / size, minus the same-as attribute) D shares with A and with T;
+    same-as: also by the shared attribute."""
+    ok = {c: np.array([r[f"pred_{c}"] == r["answers"][c] for r in records]) for c in ("c1", "c2")}
+    def nonq(r):
+        return [a for a in ("shape", "material", "size") if a != r.get("attribute")]
+    def shares(r, x, y):
+        return sum(r["objects"][r[x]][a] == r["objects"][r[y]][a] for a in nonq(r))
+    def cell(m):
+        return {"n": int(m.sum()), "acc_c1": float(ok["c1"][m].mean()) if m.any() else float("nan"),
+                "acc_c2": float(ok["c2"][m].mean()) if m.any() else float("nan")}
+    res = {"n_scenes": len(records), "overall": cell(np.ones(len(records), bool))}
+    for name, (x, y) in (("D_shares_with_A", ("D", "A")), ("D_shares_with_T", ("D", "T"))):
+        s = np.array([shares(r, x, y) for r in records])
+        res[name] = {str(k): cell(s == k) for k in sorted(set(s.tolist()))}
+    if mode == "same":
+        a = np.array([r["attribute"] for r in records])
+        res["by_shared_attribute"] = {v: cell(a == v) for v in ("shape", "material", "size")}
+    for k, v in res.items():
+        if isinstance(v, dict) and "n" not in v:
+            print(f"strata {k}: " + "  ".join(f"{s}: c1 {c['acc_c1']:.3f} c2 {c['acc_c2']:.3f} (n={c['n']})"
+                                              for s, c in v.items()))
+    return res
+
+
+def relational_field_alignment(caches, records, grid, seed, n_pairs=2000):
+    """H7(i): Pearson correlation of the c1 GCA-write-norm map between two scenes with the
+    same relation word, unaligned vs the second map rolled so the anchor centroids coincide."""
+    wn = caches["c1"]["gca_write_norm"].astype(np.float32)                        # (N, 6, P)
+    L = wn.shape[1]
+    rel = np.array([r["relation"] for r in records])
+    cent = np.array([r["centroids_row_col"][r["A"]] for r in records])
+    pairs = [(i, j) for i in range(len(records)) for j in range(i + 1, len(records)) if rel[i] == rel[j]]
+    rng = np.random.RandomState(seed)
+    if len(pairs) > n_pairs:
+        pairs = [pairs[k] for k in rng.choice(len(pairs), n_pairs, replace=False)]
+    def corr(a, b):
+        a, b = a - a.mean(-1, keepdims=True), b - b.mean(-1, keepdims=True)
+        return (a * b).sum(-1) / (np.linalg.norm(a, axis=-1) * np.linalg.norm(b, axis=-1) + 1e-8)
+    un, al = [], []
+    for i, j in pairs:
+        a, b = wn[i], wn[j].reshape(L, grid, grid)
+        sh = np.rint(cent[i] - cent[j]).astype(int)
+        un.append(corr(a, wn[j]))
+        al.append(corr(a, np.roll(b, (sh[0], sh[1]), axis=(1, 2)).reshape(L, -1)))
+    un, al = np.stack(un), np.stack(al)
+    res = {"gca_layers": [int(l) for l in caches["c1"]["gca_layers"]], "n_pairs": len(pairs),
+           "unaligned": [_boot(un[:, k]) for k in range(L)], "aligned": [_boot(al[:, k]) for k in range(L)],
+           "aligned_minus_unaligned": [_boot(al[:, k] - un[:, k]) for k in range(L)]}
+    for key in ("unaligned", "aligned"):
+        print(f"field corr {key:<10} " + " ".join(f"L{l}:{q['mean']:.3f}" for l, q in zip(res["gca_layers"], res[key])))
+    return res
+
+
+def _line_ci(ax, x, qs, color, ls, label, marker="o"):
+    m = [q["mean"] for q in qs]
+    ax.plot(x, m, ls, color=color, marker=marker, markersize=3, label=label)
+    ax.fill_between(x, [q["lo"] for q in qs], [q["hi"] for q in qs], color=color, alpha=0.10, linewidth=0)
+
+
+def plot_relational_probes(res, mode, label, out_path, gca_layers):
+    h = res["h1h2"]
+    x = list(range(NUM_LAYERS))
+    n_ax = 4 if mode == "spatial" else 3
+    fig, axes = plt.subplots(1, n_ax, figsize=(5.2 * n_ax, 4.8))
+    ax = axes[0]
+    if mode == "same":
+        _line_ci(ax, x, h["referent"]["c1c2"], ROLE_RGB["A"], "-", "named anchor vs answer object (A vs T), clean ∪ corrupted run")
+        _line_ci(ax, x, h["referent"]["c0_control"], ROLE_RGB["A"], ":", "same labels on no-question tokens (control)")
+    _line_ci(ax, x, h["is_anchor"]["c1"], "0.2", "-", "anchor vs other objects (A vs T ∪ D), clean run", marker="s")
+    _line_ci(ax, x, h["is_anchor"]["c0_control"], "0.2", ":", "same labels on no-question tokens (control)", marker="s")
+    ax.axhline(0.5, color="k", linewidth=0.6)
+    ax.set_ylim(0.4, 1.02)
+    ax.set_ylabel("probe accuracy")
+    ax.set_title("is this patch the named anchor?", fontsize=10)
+    ax = axes[1]
+    for s in TOKEN_SET_LABEL:
+        t = h["transport"][s]
+        _line_ci(ax, x, t["c1"], TOKEN_SET_RGB[s], "-", f"{TOKEN_SET_LABEL[s]}, clean run")
+        _line_ci(ax, x, t["c0"], TOKEN_SET_RGB[s], ":", f"{TOKEN_SET_LABEL[s]}, no question")
+    ax.axhline(h["chance_colour"], color="k", linewidth=0.6)
+    ax.set_ylim(0, 1.02)
+    ax.set_ylabel("7-way accuracy (anchor colour)")
+    ax.set_title("anchor-colour transport: absolute accuracy (black line = chance 1/7)", fontsize=10)
+    ax = axes[2]
+    for s in TOKEN_SET_LABEL:
+        t = h["transport"][s]
+        ax.plot(x, t["c1_minus_c0"], "-", color=TOKEN_SET_RGB[s], marker="o", markersize=3,
+                label=f"{TOKEN_SET_LABEL[s]} (max n tokens = {max(t['n_tokens'])})")
+    ax.axhline(0, color="k", linewidth=0.6)
+    ax.set_ylabel("accuracy, clean run − no question")
+    ax.set_title("anchor-colour transport signal (clean run − no question)", fontsize=10)
+    if mode == "spatial":
+        ax = axes[3]
+        r = h["anchor_coord_r2"]
+        for key, ls, lab in (("c1", "-", "clean-run token"), ("c0", ":", "no-question token"),
+                             ("c1_minus_c0", "--", "clean-run token − no-question token (same patch)")):
+            ax.plot(x, [q["mean"] for q in r[key]], ls, color="0.2", marker="o", markersize=3, label=lab)
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.set_ylim(-0.05, 1.02)
+        ax.set_ylabel("R² of anchor centroid (mean of row, col)")
+        ax.set_title("anchor position decoded from single background tokens (ridge)", fontsize=10)
+    for ax in axes:
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6)
+    on = ", ".join(f"{k}: {v}" for k, v in h["onset_block"].items())
+    fig.suptitle(f"{label} — relational question ({mode}), 3-object scenes: linear probes on cached patch tokens "
+                 f"(n={h['n_scenes']} scenes, GroupKFold(5) by scene)\nonset blocks: {on}", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_relational_marker_projection(res, mode, label, out_path, gca_layers):
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    x = list(range(NUM_LAYERS))
+    for ax, key, ylab in ((axes[0], "projection", "projection onto unit marker"),
+                          (axes[1], "cosine", "cosine(Δh, marker)")):
+        for cond, ls, cl in (("c1", "-", "clean run"), ("c2", "--", "corrupted run")):
+            for role in ROLES + ("bg",):
+                _line_ci(ax, x, res[key][f"{cond}_{role}"], ROLE_RGB[role], ls, f"{ROLE_LABEL[role]}, {cl}")
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.set_ylabel(ylab)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6)
+    axes[0].set_title("mean token change (question − no question) per role, along the single-hop marker", fontsize=10)
+    axes[1].set_title("cosine with the single-hop marker", fontsize=10)
+    fig.suptitle(f"{label} — relational question ({mode}): is the single-hop referent marker "
+                 f"(2-object clean − corrupted target change, n={res['marker_n_pairs']} pairs)\n"
+                 f"written on the anchor / answer / other object?", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_relational_write_cosine(res, mode, label, out_path):
+    gl = res["gca_layers"]
+    fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.2))
+    for cond, ls, cl in (("c1", "-", "clean run"), ("c2", "--", "corrupted run")):
+        for role in ROLES:
+            _line_ci(ax, gl, res["cosine"][f"{cond}_{role}"], ROLE_RGB[role], ls, f"{ROLE_LABEL[role]}, {cl}")
+    ax.axhline(0, color="k", linewidth=0.6)
+    ax.set_xticks(gl)
+    ax.set_xlabel("GCA layer")
+    ax.set_ylabel("cos(GCA write, own colour direction)")
+    ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — relational question ({mode}): does the gated cross-attention write the patch's own\n"
+                 f"colour direction? (raw space; mean over patches per scene, CI over scenes)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_relational_strata(res, mode, label, out_path):
+    groups = [k for k in ("D_shares_with_A", "D_shares_with_T", "by_shared_attribute") if k in res]
+    titles = {"D_shares_with_A": "non-queried attributes D shares with the anchor A",
+              "D_shares_with_T": "non-queried attributes D shares with the answer object T",
+              "by_shared_attribute": "attribute named in the same-as question"}
+    fig, axes = plt.subplots(1, len(groups), figsize=(4.6 * len(groups), 4.0), squeeze=False)
+    for ax, g in zip(axes[0], groups):
+        keys = list(res[g])
+        xs = np.arange(len(keys))
+        for off, cond, col, cl in ((-0.18, "c1", (0.2, 0.2, 0.2), "clean run"), (0.18, "c2", (0.6, 0.6, 0.6), "corrupted run")):
+            ax.bar(xs + off, [res[g][k][f"acc_{cond}"] for k in keys], 0.34, color=col, label=cl)
+        for i, k in enumerate(keys):
+            ax.text(i, 1.01, f"n={res[g][k]['n']}", ha="center", fontsize=7)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(keys)
+        ax.set_ylim(0, 1.08)
+        ax.set_title(titles[g], fontsize=9)
+        ax.set_ylabel("decoder accuracy")
+        ax.legend(fontsize=7, loc="lower left")
+    o = res["overall"]
+    fig.suptitle(f"{label} — relational question ({mode}): decoder accuracy by scene strata "
+                 f"(overall clean {o['acc_c1']:.3f}, corrupted {o['acc_c2']:.3f}, n={o['n']})", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_relational_field_alignment(res, label, out_path, onsets=None):
+    gl = res["gca_layers"]
+    fig, ax = plt.subplots(1, 1, figsize=(6.5, 4.2))
+    _line_ci(ax, gl, res["unaligned"], "0.5", "-", "unaligned (same relation word)")
+    _line_ci(ax, gl, res["aligned"], "#d62728", "-", "aligned: second map rolled so anchor centroids coincide")
+    ax.axhline(0, color="k", linewidth=0.6)
+    ax.set_xticks(gl)
+    ax.set_xlabel("GCA layer")
+    ax.set_ylabel("Pearson r of GCA-write-norm maps")
+    ax.legend(fontsize=7)
+    txt = f" | {onsets}" if onsets else ""
+    fig.suptitle(f"{label} — relational question (spatial): is the GCA write field anchored to the named object?\n"
+                 f"(clean run, n={res['n_pairs']} scene pairs){txt}", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_relational_probes_all(res, mode, label, out_dir):
+    gl = res["gca_layers"]
+    plot_relational_probes(res, mode, label, out_dir / "probes_h1h2.png", gl)
+    plot_relational_marker_projection(res["h4_marker"], mode, label, out_dir / "marker_projection.png", gl)
+    plot_relational_write_cosine(res["h5_write_cosine"], mode, label, out_dir / "gca_write_cosine.png")
+    plot_relational_strata(res["h6_strata"], mode, label, out_dir / "strata.png")
+    if "h7_field" in res:
+        on = res.get("h7_onsets")
+        txt = None
+        if on:
+            txt = (f"anchor-coordinate probe onset block {on['coord_probe_onset_block']}; "
+                   f"relative-to-anchor R² > absolute R² first at GCA layer {on['write_position_relative_gt_absolute_first_layer']}")
+        plot_relational_field_alignment(res["h7_field"], label, out_dir / "field_alignment.png", txt)
+
+
+def run_relational_probes(args, out_dir, label):
+    mode = args.relational_probes
+    if args.replot:
+        with open(out_dir / "probes.json") as f:
+            res = json.load(f)
+        plot_relational_probes_all(res, mode, label, out_dir)
+        return
+    cache_dir = Path(args.cache_dir)
+    with open(cache_dir / "relational_records.json") as f:
+        records = json.load(f)
+    assert records[0]["mode"] == mode, f"cache {cache_dir} is mode {records[0]['mode']}, not {mode}"
+    caches = {c: load_sparse(cache_dir, c) for c in ("c0", "c1", "c2")}
+    gca_layers = [int(l) for l in caches["c0"]["gca_layers"]]
+    print(f"relational probes ({mode}): {len(records)} scenes from {cache_dir}")
+    d_dir = Path(args.directions_dir)
+    res = {"mode": mode, "n_scenes": len(records), "cache_dir": str(cache_dir), "gca_layers": gca_layers}
+    print("\nH1/H2 probes ...")
+    res["h1h2"] = relational_probes_h1h2(caches, records, mode, args)
+    print("\nH4 marker projection ...")
+    res["h4_marker"] = relational_marker_projection(caches, records, d_dir / "n2")
+    print("\nH5 GCA write cosine ...")
+    res["h5_write_cosine"] = relational_write_cosine(caches, records, d_dir / "n1", gca_layers)
+    print("\nH6 strata ...")
+    res["h6_strata"] = relational_strata(records, mode)
+    if mode == "spatial":
+        print("\nH7 field alignment ...")
+        res["h7_field"] = relational_field_alignment(caches, records, args.grid, args.seed)
+        wp = cache_dir / "relational_write_position.json"
+        if wp.exists():
+            with open(wp) as f:
+                r2 = json.load(f)["r2"]
+            first = {y: next((gca_layers[k] for k in range(len(gca_layers))
+                              if r2[f"oriented/{y}/relative_to_anchor"][k] > r2[f"oriented/{y}/absolute"][k]), None)
+                     for y in ("c1", "diff_c1_c2")}
+            res["h7_onsets"] = {"coord_probe_onset_block": res["h1h2"]["onset_block"]["coord_r2_diff_token_ge_0.5"],
+                                "coord_probe_onset_block_gap_half_max": res["h1h2"]["onset_block"]["coord_r2_gap_ge_half_max"],
+                                "write_position_relative_gt_absolute_first_layer": first["c1"],
+                                "write_position_relative_gt_absolute_first_layer_diff_c1_c2": first["diff_c1_c2"]}
+            print(f"H7(ii) onsets: {res['h7_onsets']}")
+    with open(out_dir / "probes.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"Saved: {out_dir / 'probes.json'}")
+    plot_relational_probes_all(res, mode, label, out_dir)
+
+
+# ---------------------------------------------------------------------------
 # Mirror model (--mirror).  The ViT is vanilla; the gated cross-attention sits
 # inside RoBERTa-large (text tokens = query, ViT patch tokens h = key/value);
 # the 1-layer decoder reads the connector-projected RoBERTa tokens.  Same n2
@@ -3052,6 +3554,10 @@ def main():
                     help="only: relational questions on 3-object scenes (new --out-dir); "
                          "same = 'same {attribute} as the {colour} object', spatial = 'left of / right of / "
                          "in front of / behind the {colour} object'")
+    ap.add_argument("--relational-probes", default=None, choices=["same", "spatial"],
+                    help="only (CPU): H1/H2/H4/H5/H6/H7 probes on an existing --relational cache "
+                         "(--cache-dir, read-only) into a new --out-dir")
+    ap.add_argument("--cache-dir", default=None, help="--relational-probes: the --relational output dir to read")
     ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
     ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
                     help="--relational: directory whose n1/ cache gives the colour directions u")
@@ -3063,7 +3569,7 @@ def main():
     apply_style()
     out_dir = Path(args.out_dir)
     assert out_dir.resolve() != Path(args.x19_dir).resolve(), "refusing to write into the X19 directory"
-    if (args.relational or args.mirror) and not args.replot:
+    if (args.relational or args.mirror or args.relational_probes) and not args.replot:
         assert not (out_dir.exists() and any(out_dir.iterdir())), \
             f"--relational/--mirror need a new --out-dir (non-empty: {out_dir}); use --replot to regenerate figures"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -3075,6 +3581,10 @@ def main():
     global QUERIED
     QUERIED = args.queried
     print(f"args: {vars(args)}")
+    if args.relational_probes:
+        assert args.cache_dir or args.replot, "--relational-probes needs --cache-dir"
+        run_relational_probes(args, out_dir, label)
+        return
     if args.relational:
         run_relational(args, out_dir, label)
         return
