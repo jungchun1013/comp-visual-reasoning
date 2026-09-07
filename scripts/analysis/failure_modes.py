@@ -348,6 +348,259 @@ def plot_diagnosis(diag, out_dir):
     print(f"Saved: {out}")
 
 
+# ── X22 H7(iii): anchor-relative vs absolute-half spatial answering ──────
+
+SPATIAL_1HOP = [74, 75, 76, 77]   # attr_query_spatial, one relate
+SPATIAL_2HOP = [80, 81]           # attr_query_spatial, two relates
+IMG_W, IMG_H = 480, 320
+# direction word → (pixel axis, sign of (answer − anchor) the word names)
+DIR_AXIS = {"left": (0, -1), "right": (0, +1), "behind": (1, -1), "front": (1, +1)}
+DIR_ORDER = ["left", "right", "front", "behind"]
+
+
+def _boot_ci(correct, n_boot=2000, seed=0):
+    """Mean accuracy with 95% bootstrap CI over a 0/1 list."""
+    import numpy as np
+    c = np.asarray(correct, float)
+    if len(c) == 0:
+        return {"accuracy": None, "ci95": [None, None], "n": 0}
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(c), size=(n_boot, len(c)))
+    means = c[idx].mean(axis=1)
+    return {"accuracy": float(c.mean()),
+            "ci95": [float(np.percentile(means, 2.5)),
+                     float(np.percentile(means, 97.5))],
+            "n": int(len(c))}
+
+
+def _hop_rows(records, questions, scenes_by_img, families):
+    """One row per (question, relate hop): anchor/answer pixel geometry.
+
+    For each relate node the anchor is the object entering it and the target
+    is the object returned by the next `unique` after it (after any filters).
+    """
+    rows = []
+    for r in records:
+        if r["family"] not in families:
+            continue
+        q = questions[r["q_idx"]]
+        scene = scenes_by_img[q["image_index"]]
+        prog = q["program"]
+        outs = _exec_program(prog, scene)
+        n_rel = sum(n["function"] == "relate" for n in prog)
+        hop = 0
+        for k, node in enumerate(prog):
+            if node["function"] != "relate":
+                continue
+            hop += 1
+            anchor = outs[node["inputs"][0]]
+            m = next(i for i in range(k + 1, len(prog))
+                     if prog[i]["function"] == "unique")
+            target = outs[m]
+            d = node["value_inputs"][0]
+            ax_, sgn = DIR_AXIS[d]
+            pa = scene["objects"][anchor]["pixel_coords"]
+            pt = scene["objects"][target]["pixel_coords"]
+            centre = (IMG_W / 2, IMG_H / 2)[ax_]
+            half = centre
+            rel = (pt[ax_] - pa[ax_]) * sgn          # >0 ⇔ consistent w/ word
+            absoff = (pt[ax_] - centre) * sgn        # >0 ⇔ answer on named half
+            rows.append({
+                "q_idx": r["q_idx"], "family": r["family"], "hop": hop,
+                "n_hops": n_rel, "direction": d, "correct": bool(r["correct"]),
+                "anchor": anchor, "target": target,
+                "anchor_xy": pa[:2], "target_xy": pt[:2],
+                "rel_offset": rel, "abs_offset": absoff,
+                "abs_offset_norm": absoff / half,
+                "rel_consistent": rel > 0,
+                "abs_half_consistent": absoff > 0,
+                "dissociated": absoff < 0,
+                "n_objects": len(scene["objects"]),
+                "dist": ((pt[0] - pa[0]) ** 2 + (pt[1] - pa[1]) ** 2) ** 0.5,
+            })
+    return rows
+
+
+def _logit_fit(rows):
+    """Unpenalised logistic regression of correct on
+    [abs_half_consistent, n_objects, dist/100]; Wald SEs from the Hessian."""
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    X = np.array([[float(r["abs_half_consistent"]), r["n_objects"],
+                   r["dist"] / 100.0] for r in rows])
+    y = np.array([r["correct"] for r in rows], int)
+    clf = LogisticRegression(penalty=None, max_iter=2000).fit(X, y)
+    Xd = np.hstack([np.ones((len(X), 1)), X])
+    beta = np.concatenate([clf.intercept_, clf.coef_[0]])
+    p = 1 / (1 + np.exp(-Xd @ beta))
+    H = (Xd * (p * (1 - p))[:, None]).T @ Xd
+    se = np.sqrt(np.diag(np.linalg.inv(H)))
+    z = beta / se
+    from math import erf, sqrt
+    pval = [2 * (1 - 0.5 * (1 + erf(abs(zz) / sqrt(2)))) for zz in z]
+    names = ["intercept", "abs_half_consistent", "n_objects", "dist_px/100"]
+    return {"n": int(len(y)),
+            "note": "rel_consistent is 1 for every row (by construction) "
+                    "and is therefore omitted as a regressor",
+            "coef": {n: {"beta": float(b), "se": float(s), "z": float(zz),
+                         "p": float(pp), "odds_ratio": float(np.exp(b))}
+                     for n, b, s, zz, pp in zip(names, beta, se, z, pval)}}
+
+
+def _group_stats(rows):
+    """Per-direction and pooled accuracy for dissociated vs. not, offset bins."""
+    import numpy as np
+    out = {"per_direction": {}}
+    edges = np.linspace(0, 1, 6)
+    for d in DIR_ORDER + ["all"]:
+        sub = [r for r in rows if d == "all" or r["direction"] == d]
+        if not sub:
+            continue
+        ent = {}
+        for g, flag in (("dissociated", True), ("non_dissociated", False)):
+            gs = [r for r in sub if r["dissociated"] == flag]
+            ent[g] = _boot_ci([r["correct"] for r in gs])
+            bins = []
+            for lo, hi in zip(edges[:-1], edges[1:]):
+                b = [r["correct"] for r in gs
+                     if lo <= abs(r["abs_offset_norm"]) < hi
+                     or (hi == 1 and abs(r["abs_offset_norm"]) >= 1)]
+                bins.append({"bin": [float(lo), float(hi)], **_boot_ci(b)})
+            ent[g]["by_abs_offset_bin"] = bins
+        ent["n_total"] = len(sub)
+        ent["frac_dissociated"] = ent["dissociated"]["n"] / len(sub)
+        ent["rel_consistent_all"] = all(r["rel_consistent"] for r in sub)
+        if d == "all":
+            out["pooled"] = ent
+        else:
+            out["per_direction"][d] = ent
+    return out
+
+
+def dissociate(model_dir, questions, scenes_by_img, out_root):
+    """H7(iii): accuracy on spatial attr queries split by whether the answer
+    object lies on the image half the direction word names (CPU, records only).
+    """
+    model_dir = Path(model_dir)
+    out_dir = Path(out_root) / model_dir.name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tee_stdout(out_dir)
+    records = [json.loads(l) for l in open(model_dir / "records.jsonl")]
+    print(f"[{model_dir.name}] {len(records)} records; families 1-hop "
+          f"{SPATIAL_1HOP} 2-hop {SPATIAL_2HOP}")
+
+    res = {"model": model_dir.name, "families_1hop": SPATIAL_1HOP,
+           "families_2hop": SPATIAL_2HOP, "image_size": [IMG_W, IMG_H],
+           "convention": "pixel x grows rightward, pixel y grows toward the "
+                         "camera ('front'); dissociated = answer on the "
+                         "opposite image half from the direction word"}
+
+    rows1 = _hop_rows(records, questions, scenes_by_img, SPATIAL_1HOP)
+    res["single_hop"] = _group_stats(rows1)
+    res["single_hop"]["logit"] = _logit_fit(rows1)
+    res["single_hop"]["per_family_n"] = dict(Counter(r["family"] for r in rows1))
+
+    rows2 = _hop_rows(records, questions, scenes_by_img, SPATIAL_2HOP)
+    res["two_hop"] = {}
+    for hop in (1, 2):
+        sub = [r for r in rows2 if r["hop"] == hop]
+        res["two_hop"][f"hop{hop}"] = _group_stats(sub)
+        res["two_hop"][f"hop{hop}"]["logit"] = _logit_fit(sub)
+    res["two_hop"]["n_questions"] = len({r["q_idx"] for r in rows2})
+
+    (out_dir / "dissociation.json").write_text(json.dumps(res, indent=2))
+    with open(out_dir / "dissociation_rows.jsonl", "w") as f:
+        for r in rows1 + rows2:
+            f.write(json.dumps(r) + "\n")
+    for name, st in (("single_hop", res["single_hop"]),
+                     ("two_hop/hop1", res["two_hop"]["hop1"]),
+                     ("two_hop/hop2", res["two_hop"]["hop2"])):
+        print(f"--- {name}: n={st['pooled']['n_total']} "
+              f"dissociated={st['pooled']['dissociated']['n']}")
+        for d, e in list(st["per_direction"].items()) + [("all", st["pooled"])]:
+            print(f"  {d:7s} dissoc {e['dissociated']['accuracy']:.4f} "
+                  f"{e['dissociated']['ci95']} n={e['dissociated']['n']} | "
+                  f"non    {e['non_dissociated']['accuracy']:.4f} "
+                  f"{e['non_dissociated']['ci95']} n={e['non_dissociated']['n']}")
+        for k, v in st["logit"]["coef"].items():
+            print(f"  logit {k:22s} beta={v['beta']:+.4f} se={v['se']:.4f} "
+                  f"z={v['z']:+.2f} p={v['p']:.3g}")
+    plot_dissociation(res, out_dir)
+    return res
+
+
+def plot_dissociation(res, out_dir):
+    """dissociation.png: (a,c) per-direction acc for the two groups with CI;
+    (b,d) acc vs |answer offset from centre| bins; rows = 1-hop, 2-hop hop 2."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from analysis.plot_style import apply_style, S, line_kwargs
+    apply_style()
+    _tab10 = plt.cm.tab10.colors
+    colors = {"non_dissociated": _tab10[0], "dissociated": _tab10[3]}
+    labels = {"non_dissociated": "answer on named half",
+              "dissociated": "answer on opposite half (dissociated)"}
+
+    fig, axes = plt.subplots(2, 2, figsize=(6.4 * 2, 4.8 * 2))
+    for row, (name, st) in enumerate((("single-hop", res["single_hop"]),
+                                      ("two-hop (final hop)",
+                                       res["two_hop"]["hop2"]))):
+        ax = axes[row, 0]
+        dirs = [d for d in DIR_ORDER if d in st["per_direction"]] + ["all"]
+        x = np.arange(len(dirs))
+        for j, g in enumerate(("non_dissociated", "dissociated")):
+            ents = [st["per_direction"][d][g] if d != "all" else st["pooled"][g]
+                    for d in dirs]
+            acc = np.array([e["accuracy"] or 0 for e in ents])
+            lo = np.array([e["ci95"][0] or 0 for e in ents])
+            hi = np.array([e["ci95"][1] or 0 for e in ents])
+            ax.bar(x + (j - 0.5) * 0.38, acc, 0.38, color=colors[g],
+                   label=labels[g], yerr=[acc - lo, hi - acc], capsize=3)
+            for xi, e in zip(x + (j - 0.5) * 0.38, ents):
+                ax.text(xi, 0.02, f"n={e['n']}", ha="center", va="bottom",
+                        rotation=90, fontsize=S["tick_labelsize"] - 4,
+                        color="white")
+        ax.set_xticks(x); ax.set_xticklabels(dirs)
+        ax.set_ylim(0, 1.05); ax.set_ylabel("accuracy")
+        ax.set_title(f"{name}: by direction word",
+                     fontsize=S["subplot_title_fontsize"])
+        if row == 0:
+            fig.legend(*ax.get_legend_handles_labels(), loc="lower center",
+                       bbox_to_anchor=(0.5, -0.03), ncol=2, frameon=False,
+                       fontsize=S["legend_fontsize"])
+
+        ax = axes[row, 1]
+        for g in ("non_dissociated", "dissociated"):
+            bins = st["pooled"][g]["by_abs_offset_bin"]
+            xs = [np.mean(b["bin"]) for b in bins]
+            acc = [b["accuracy"] if b["n"] else np.nan for b in bins]
+            lo = [b["ci95"][0] if b["n"] else np.nan for b in bins]
+            hi = [b["ci95"][1] if b["n"] else np.nan for b in bins]
+            ax.plot(xs, acc, **line_kwargs(label=labels[g], color=colors[g]))
+            ax.fill_between(xs, lo, hi, color=colors[g], alpha=S["std_alpha"])
+            for xx, b in zip(xs, bins):
+                if b["n"]:
+                    ax.text(xx, (b["accuracy"] or 0) - 0.06, str(b["n"]),
+                            ha="center", fontsize=S["tick_labelsize"] - 4,
+                            color=colors[g])
+        ax.set_ylim(0, 1.05)
+        ax.set_xlabel("|answer offset from centre| / half-extent")
+        ax.set_ylabel("accuracy")
+        ax.set_title(f"{name}: by absolute offset",
+                     fontsize=S["subplot_title_fontsize"])
+
+    fig.suptitle(f"DINOv2 ({res['model']}) — anchor-relative vs absolute-half "
+                 f"spatial answers (1-hop n={res['single_hop']['pooled']['n_total']})",
+                 fontsize=S["suptitle_fontsize"] - 2)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    out = Path(out_dir) / "dissociation.png"
+    fig.savefig(out, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+
 def predict_batch(model, task_type, images, questions, inv_answer, device):
     if task_type == "decoder":
         return [p.strip().lower() for p in model.generate(images, questions)]
@@ -372,10 +625,17 @@ def main():
                     help="E5 follow-up diagnosis from records.jsonl joined with "
                          "CLEVR val questions/scenes (no GPU); writes "
                          "diagnosis.{json,png} into the model dir")
+    ap.add_argument("--dissociation", default=None, metavar="MODEL",
+                    help="X22 H7(iii): spatial attr-query accuracy split by "
+                         "whether the answer lies on the image half named by "
+                         "the direction word (no GPU); writes dissociation."
+                         "{json,png} under --dissociation-root/<MODEL>")
+    ap.add_argument("--dissociation-root",
+                    default="outputs/analysis/relational_dissociation")
     args = ap.parse_args()
 
-    if args.replot or args.diagnose:
-        sel = args.replot or args.diagnose
+    if args.replot or args.diagnose or args.dissociation:
+        sel = args.replot or args.diagnose or args.dissociation
         root = Path(args.output_root)
         dirs = sorted(d for d in root.iterdir() if d.is_dir()) \
             if sel == "all" else [root / sel]
@@ -392,6 +652,9 @@ def main():
             (droot / "scenes/CLEVR_val_scenes.json").read_text())["scenes"]
         scenes_by_img = {s["image_index"]: s for s in scenes}
         for d in dirs:
+            if args.dissociation:
+                dissociate(d, questions, scenes_by_img, args.dissociation_root)
+                continue
             tee_stdout(d)
             diagnose(d, questions, scenes_by_img)
         return
