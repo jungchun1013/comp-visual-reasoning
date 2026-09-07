@@ -796,6 +796,121 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   Caveat: 14×14 grid, 1–8 patches per object.
 - **Status**: ✅ A–K done 2026-08-31. Site section updated the same day.
 
+### X22. Relational selection in the visual stream — pre-registered mechanism tests
+- **Naming** (user, 2026-09-06): *relational* covers the same-as and spatial
+  question types. A relational question is a selection conditioned on a
+  property of another selected object: select the anchor, make one of its
+  properties (an attribute value, or its location) available, select the
+  answer object by that property, read the queried attribute of the answer
+  object. Attribute-match relations compare in an attribute subspace;
+  geometric relations compare positions and, under absolute position codes,
+  need the anchor's position broadcast before a relative comparison exists.
+  The story is stated in these general terms; CLEVR facts (camera-frame 3D
+  relations, templated questions) are controls or limitations, never claims.
+- **Motivation**: the 2026-09-02 three-object batch (transplant, projection,
+  write-position) was exploratory. Five literature sweeps (2026-09-06) turn it
+  into hypotheses with predictions and disconfirmation criteria written down
+  before any run. Registered here before the first GPU job.
+- **References that fix the design**: depth as sequential hops — Sanford,
+  Hsu & Telgarsky 2024 (arXiv 2402.09268), Peng, Narayanan & Papadimitriou
+  2024 (arXiv 2402.08164), Biran et al. 2024 "Hopping too late" (EMNLP), Yang
+  et al. 2024 (ACL), Liu et al. 2023 shortcuts (arXiv 2210.10749), Wang et
+  al. 2024 grokked composition (NeurIPS); relations as inner products —
+  Webb et al. 2024 relational bottleneck (TICS), Kerg et al. 2022 CoRelNet,
+  Altabaa et al. 2024 Abstractors (ICLR), Altabaa & Lafferty 2024/2025
+  (arXiv 2402.08856, 2405.16727), Lepori et al. 2024 (NeurIPS); position
+  infrastructure — Ke, He & Liu 2021 TUPE (QK decomposition into word/pos
+  terms), Kazemnejad et al. 2023, Heo et al. 2024 RoPE-ViT, Yamamoto et al.
+  2026 left/right heads from pos-embed × QK (arXiv 2601.12809), Meng et al.
+  2021 Conditional DETR (content vs spatial query), Liu et al. 2022 DAB-DETR,
+  Cui, Prakash, Bau et al. 2026 spatial binding rides on background tokens
+  (arXiv 2603.22278); suppression and scratch — McDougall et al. 2023 copy
+  suppression, Lad, Gurnee & Tegmark 2024 residual sharpening, Darcet et al.
+  2024 registers (high-norm tokens lose position), Sun et al. 2024 massive
+  activations (registers as biases), Pfau et al. 2024 filler tokens;
+  binding substrates — Smolensky 1990, Plate 1995, Kanerva 2009 (unbinding =
+  inner product, crosstalk grows with shared components), Hersche et al.
+  2023 NVSA, Ramsauer et al. 2020 Hopfield attention (metastable mixtures
+  for similar patterns); VLM binding — Assouel et al. 2025, Campbell et al.
+  2024, Haputhanthri et al. 2026, Song, Lepori & Pavlick 2026, Feng &
+  Steinhardt 2024; spatial failure modes — Chen et al. 2025 (ICML), Kamath
+  et al. 2023 What's Up, Qi et al. 2025, Ma et al. 2026.
+- **Model / data**: `clevr_dinov2_decoder1l_scratch_s42` (GCA at blocks
+  1,3,5,7,9,11; 1-layer decoder on patches); `data/clevr_three_object_v2`
+  (672 scenes, pairwise-distinct non-gray colours); roles A anchor (named by
+  colour), T answer, D third; conditions c0 no question, c1 clean, c2
+  corrupted (same-as: T named; spatial: opposite word), new c3 (spatial:
+  same word, D named — the 09-02 transplant could not test anchor necessity
+  for spatial because c2 keeps the anchor). New: queried attribute q ∈
+  {shape, material, size} with shared attribute s ≠ q (anchor still named by
+  colour); dissociation render `data/clevr_three_object_edge` (anchor pushed
+  to the image edge so the answer object lies on the opposite image half from
+  the asked direction); generality on `clevr_siglip_decoder1l_scratch_s42`,
+  `clevr_dinov2_decoder1l_scratch_s43` (MAE optional).
+- **Hypotheses, predictions, disconfirmation** (fixed before running):
+  - H1 ordering: the anchor's conditioning property is linearly decodable
+    before candidate tokens become causally necessary. Pass: probe onset ≤
+    transplant onset (same-as ≤ 3, spatial ≤ 9). Fail: candidates causal first.
+  - H2 transport, exactly one of: (a) property broadcast into candidate
+    patches, (b) held in background patches, (c) stays on the anchor and is
+    read by self-attention at the comparison block. Measured by per-block
+    probes from A/T/D/background (low- and high-norm) tokens and by SA
+    candidate→anchor mass c1−c0 per block and head. Fail: none holds, or the
+    c1−c0 change appears only at GCA layers with no SA change (GCA cannot
+    compare two patches: its keys are text).
+  - H3 attribute-specific comparison: projecting the anchor tokens onto the
+    complement of the shared-attribute subspace inside the anchor's causal
+    window breaks the answer; removing a non-shared attribute subspace or a
+    random subspace of the same rank does not. Fail: everything breaks, or
+    nothing does.
+  - H4 match marker: the selected candidate's c1−c0 change projects
+    positively and increasingly on the single-hop referent-marker direction
+    (X21); A and D do not. Fail: no T/D difference or orthogonal direction.
+  - H5 suppression after use: (i) block-11 GCA write on A has negative cosine
+    with A's own answer-attribute direction; (ii) masking only that write
+    shifts answers toward A's attribute; (iii) the effect is weaker when A
+    and T share the queried attribute. Fail: orthogonal write, or masking
+    has no effect.
+  - H6 interference: logit margin falls monotonically with the number of
+    non-queried attributes D shares with A (0/1/2: n = 204/339/109). Fail:
+    flat.
+  - H7 geometry, absolute first then relative: (i) the early field is
+    anchor- and content-independent and follows the positional embedding
+    (cross-scene field correlation; flipping the pos-embed grid flips the
+    field); (ii) the relative field appears ≥ 1 GCA layer after the anchor's
+    location is decodable from background tokens; (iii) on the dissociation
+    set the model answers the relative relation (accuracy near overall), not
+    the image half. Fail: field follows content; relative before anchor;
+    dissociation accuracy near 0.5.
+  - H8 anchor-position broadcast: SA heads at blocks 8–9 carrying anchor →
+    background mass (selection rule fixed: |c1−c0| ≥ 10× median, as in
+    `select_ablation_heads.py`; prior candidates from the 07-15 anchor-swap
+    patching: GCA L5H4, L11H8, L9H8, SA 8:0). Ablation leaves the absolute
+    field, lowers relative R² and dissociation accuracy; disjoint random
+    heads do not. Fail: no head meets the rule, or both fields collapse.
+  - H9 generality: the ordering results (H1, H2, H5(i), transplant windows)
+    replicate on SigLIP and seed 43; numbers are not required to match.
+- **Controls fixed**: c0 no-question; transplant self-control (1.00);
+  random subspace of equal rank; random norm-matched vectors; disjoint random
+  heads; random background rows for pos-embed edits; probes GroupKFold(5) by
+  scene; bootstrap CIs over scenes; all cells reported whatever the sign.
+- **Known limitations declared up front**: spatial accuracy is at ceiling
+  (margins replace error rates); CLEVR relations are camera-frame 3D while
+  the analysis uses 2D centroids (disagreeing scenes reported, not claimed);
+  pos-embed edits perturb frozen features (interpret against the random-row
+  control); probes are correlational, transplant / projection / masking /
+  ablation are causal — the write-up keeps the two levels apart.
+- **Code**: `scripts/analysis/patch_language_condition.py` (`--relational-probes`
+  CPU mode on the existing caches; `--relational-v2` GPU passes with
+  `--sa-attn`, `--project-attr`, `--gca-mask`, `--pos-flip`, `--head-ablate`,
+  `--same-queried`, `--spatial-c3`); hooks `SubspaceProjector`,
+  `GCAWriteMasker`, `PosEmbedEditor`, `SAAttnCapture` in
+  `src/analysis/patching_utils.py`; render option `--anchor-edge` in
+  `scripts/analysis/render_single_objects.py`. Outputs in new directories
+  `patch_language_condition/relational_{same,spatial}_{probes,v2}`,
+  `relational_same_q{shape,material,size}`, `relational_spatial_edge`.
+- **Status**: registered 2026-09-07 before the first GPU job.
+
 ## Part 2 — Design-consistency findings (D1–D11)
 
 **D1 [major, disclosure required] Performance model ≠ mechanistic model.** Tables use
