@@ -89,6 +89,57 @@
   image half has at most a marginal effect. Code `failure_modes.py
   --dissociation MODEL` (2a6eadc); outputs
   `outputs/analysis/relational_dissociation/clevr_dinov2_decoder1l_scratch_s42/`.
+- **2026-09-07 — X22 stage G1 (GPU re-extraction with margins, self-attention
+  capture, spatial anchor-swap condition, queried-attribute variants). The
+  clean transport test and the anchor-necessity test for spatial are in;
+  H6 is disconfirmed on margins.** Code 56e9d66 (`--relational-v2`,
+  `--spatial-c3`, `--same-queried`, `--relation-order rotate`,
+  `--check-preds-dir`); dirs `relational_same_v2` (652), `relational_spatial_v2`
+  (494; c3 = same relation word with the third object named as anchor, valid
+  in 31 scenes only, because the relation from the third object must also pick
+  exactly one object), `relational_same_q{shape,material,size}`. v2
+  predictions equal the 09-02 records on every scene.
+  (H2 transport — clean version, pass for (b) and (c)) the anchor's shared
+  attribute, which the question never states, decoded from background tokens
+  (shape, 3-way, n = 326 scenes, majority 0.37): c0 0.45 / 0.50 / 0.51 / 0.52
+  / 0.60 / 0.62 / 0.71 / 0.72 / 0.74 / 0.76 / 0.77 / 0.91 vs c1 0.45 / 0.48 /
+  0.49 / 0.55 / 0.60 / 0.85 / 0.94 / 0.98 / 0.99 / 1.00 / 1.00 / 0.99 (blocks
+  0–11). The no-question baseline rises with depth because background tokens
+  aggregate scene statistics (two of three objects share the shape); the
+  question-specific gain appears at block 5 (+0.23) and saturates by block 7.
+  Material and size behave the same (c1 0.92 / 0.97 at block 5 / 6 vs c0 0.72
+  / 0.74; 0.89 / 0.96 vs 0.65 / 0.67). Third-object tokens are confounded (its
+  own value excludes one class; c0 already 0.81 at block 5).
+  Self-attention (fp32 capture, argmax identical to fused): mass from
+  candidate patches onto anchor patches, c1 − c0, blocks 0–11 — same-as
+  T → A 0.00 / −0.01 / −0.01 / 0.00 / −0.01 / 0.02 / 0.04 / 0.14 / 0.12 / 0.07
+  / 0.10 / −0.07; D → A 0.11 / 0.08 / 0.06 / 0.07 at blocks 7–10; background
+  → A 0.07 / 0.10 / 0.05 / 0.09; anchor → anchor +0.17 / +0.14 at 7–8 then
+  −0.09 at 9 and −0.21 at 11. Spatial: T → A +0.11 / +0.06 at blocks 7–8
+  only, D → A +0.12 / +0.07, background → A +0.08 / +0.07, anchor → anchor
+  −0.12 at 9 and −0.21 at 11. So under the question every non-anchor token
+  reads the anchor through the frozen backbone's self-attention in blocks
+  7–10 (same-as) or 7–8 (spatial); the reading is not selective for the
+  answer object (D reads as much as T), and at block 11 the anchor stops
+  attending to itself. Sequence for same-as: anchor identified (3) → its
+  shared attribute in background tokens (5–7) → candidates and background
+  attend to the anchor (7–10) → candidates causal (transplant 3–10) → answer
+  in background (11).
+  (H1 for spatial — pass, now with a valid test) replacing the anchor's
+  tokens by those of the c3 run (n = 31): P(clean answer) 1.00 / 1.00 / 1.00 /
+  0.94 / 0.94 / 0.94 / 0.87 / 0.48 / 0.29 / 0.23 / 0.29 / 0.97 at blocks 0–11,
+  the answer moving to the c3 answer. Anchor tokens are causally necessary in
+  blocks 7–10 for spatial (3–10 for same-as), matching the block-7 onset of
+  the anchor-coordinate probe and preceding the candidates' onset at 9. c2
+  transplant with rotated relation order reproduces 09-02 (T 0.81 and D 0.61
+  at block 9; background 0.32 at 11).
+  (H6 — disconfirmed) mean logit margin by attributes the third object shares
+  with the anchor 0 / 1 / 2: 9.23 / 9.01 / 9.27 (Spearman −0.09); with the
+  answer object 9.68 / 8.86 / 9.16.
+  (queried attribute ≠ colour) shape query: accuracy 0.942 / 0.950 (n = 643;
+  gate ≥ 0.9 passed); scenes where anchor and answer share the queried shape
+  n = 155, accuracy 1.00, margin 8.56 vs 0.924 and 7.70 when they differ.
+  Material and size runs pending in the chain.
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
