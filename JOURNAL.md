@@ -166,7 +166,9 @@
   P(answer) to 0.75 (colour), 0.61 (shape; 0.31 to the anchor's shape) and
   0.67 (material; 0.33 to the anchor's material). Block 9: masking the
   anchor's write gives 0.97 (colour) / 0.81 (shape, 0.15 to the anchor).
-  Together with H5(i), the anchor is not suppressed at the last GCA layer; it
+  Size query (`relational_same_qsize_v2`, n = 614, accuracy 0.902): masking
+  the anchor's block-11 write 1.00, the answer object's 0.75 (0.25 to the
+  anchor's size). Together with H5(i), the anchor is not suppressed at the last GCA layer; it
   simply stops being needed once the answer has moved. The 09-02 sentence
   "anchor suppressed at block 11" is withdrawn.
   (H7 — mixed, decisive on the late stage) flipping the positional
@@ -176,7 +178,8 @@
   object's rows makes it the answer in 55%, random background rows 0.95
   unchanged. The GCA write field under the flip correlates with the
   *unmirrored* clean field at layers 1 / 3 (0.91 / 0.96) and with the
-  *mirrored* one at layers 9 / 11 (0.47 vs 0.10; 0.59 vs −0.19). So the early
+  *mirrored* one at layers 9 / 11 (0.47 vs 0.10; 0.59 vs −0.19); layers 5 / 7
+  are mixed (0.56 vs 0.42; 0.37 vs 0.70). So the early
   absolute field is read off image content (the scene's shading and floor
   perspective carry absolute position), not the positional embedding, and
   only the late anchor-centred computation uses the positional embedding.
