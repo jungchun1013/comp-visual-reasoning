@@ -874,7 +874,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   - H6 interference: logit margin falls monotonically with the number of
     non-queried attributes D shares with A (0/1/2: n = 204/339/109). Fail:
     flat.
-  - H7 geometry, absolute first then relative: (i) the early field is
+  - H7 geometry, absolute first then relative: (i) the shallow-layer field is
     anchor- and content-independent and follows the positional embedding
     (cross-scene field correlation; flipping the pos-embed grid flips the
     field); (ii) the relative field appears ≥ 1 GCA layer after the anchor's
@@ -913,7 +913,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   run 2026-09-07/08 (DINOv2 s42, SigLIP s42, DINOv2 s43 epoch 14, edge
   render, CLEVR-val dissociation). Tally in JOURNAL 2026-09-08: H1 pass;
   H2 (b)+(c) with (c) causal for same-as; H3 specific but small; H4 partial;
-  H5 disconfirmed; H6 disconfirmed; H7 late stage pass, early field
+  H5 disconfirmed; H6 disconfirmed; H7 deep-layer stage pass, shallow-layer field
   content-driven; H8 disconfirmed for spatial, supported for same-as; H9
   order replicates, anchor-relative field s42-only. Addendum 2026-09-08:
   SigLIP H5/H8 cells (`relational_same_v2_siglip/{h5_gca_mask,

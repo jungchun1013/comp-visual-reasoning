@@ -143,7 +143,7 @@
 - **2026-09-07 — X22 stages G2–G5 (causal): the comparison is
   attribute-specific but distributed; there is no suppression of the anchor
   after use; the geometric relation is computed from the positional
-  embedding late, while the early direction field comes from image content;
+  embedding at the deep layers, while the shallow-layer direction field comes from image content;
   the self-attention heads that read the anchor are necessary for same-as
   and carry the absolute-position component for spatial.** Modes
   `--h3-projection`, `--h5-gca-mask`, `--h7-posembed`, `--h8-head-ablation`
@@ -171,7 +171,7 @@
   anchor's size). Together with H5(i), the anchor is not suppressed at the last GCA layer; it
   simply stops being needed once the answer has moved. The 09-02 sentence
   "anchor suppressed at block 11" is withdrawn.
-  (H7 — mixed, decisive on the late stage) flipping the positional
+  (H7 — mixed, decisive on the deep-layer stage) flipping the positional
   contribution along the relation axis (content untouched) moves 94% of
   answers to the third object, the orthogonal flip none (0.99); mirroring only
   the anchor's rows sends 21% to the anchor (n = 295), mirroring the third
@@ -182,7 +182,7 @@
   are mixed (0.56 vs 0.42; 0.37 vs 0.70). So the early
   absolute field is read off image content (the scene's shading and floor
   perspective carry absolute position), not the positional embedding, and
-  only the late anchor-centred computation uses the positional embedding.
+  only the deep-layer anchor-centred computation uses the positional embedding.
   (H8 — disconfirmed for spatial, supported for same-as) rule-selected heads
   (|c1 − c0| ≥ 10× median over 144 cells, capped at 8): spatial 8:5, 7:7,
   8:6, 9:7, 7:2, 7:3, 10:0, 7:10 — zeroing them leaves accuracy 0.998
@@ -224,7 +224,7 @@
   (SigLIP, `clevr_siglip_decoder1l_scratch_s42`, 16 × 16 grid) same-as n =
   650, accuracy 0.977 / 0.980. Referent probe onset block 3 (as DINOv2).
   Anchor's shared shape from background tokens: c1 0.75 / 0.99 at blocks 4 /
-  5 vs c0 0.65 / 0.67 — onset block 5, one block earlier than DINOv2's rise
+  5 vs c0 0.65 / 0.67 — onset block 5, one block shallower than DINOv2's rise
   (0.85 at 5, 0.98 at 7). Self-attention onto the anchor peaks at block 5
   (answer object +0.11, third +0.08, background +0.12 / +0.11 at 5 / 6)
   instead of 7–8. Transplant: anchor necessary from block 3 (min 0.60 at 5)
@@ -240,7 +240,7 @@
   c1 − c0 signal is small (≤ 0.04). Reading: the stage order (anchor
   identified → shared attribute in background → candidates read the anchor →
   candidates causal → answer in background) holds on SigLIP with every stage
-  two blocks earlier, and SigLIP keeps the anchor and a distributed
+  two blocks shallower, and SigLIP keeps the anchor and a distributed
   background readout to the last block rather than a single block-11 step.
   (DINOv2 seed 43 — first attempt invalid) `relational_{same,spatial}_v2_dinov2s43`
   used `best.pt`, which in that run directory is a stale epoch-7 file (val
@@ -261,7 +261,7 @@
   block 3; anchor's shared shape from background tokens c1 0.75 / 0.97 at
   blocks 5 / 7 (c0 0.62 / 0.72); candidate → anchor self-attention peak at
   blocks 8–9 (+0.12 / +0.12, third object +0.07, background +0.06 — half
-  the seed-42 amplitude, one block later); transplant: anchor and answer
+  the seed-42 amplitude, one block deeper); transplant: anchor and answer
   object necessary from block 5 (minima 0.82 and 0.71, versus 0.63 / 0.46
   from block 3 on seed 42) and still at block 11 (0.82 / 0.71); third
   object never; background only at block 11 (0.53). Marker projection block
@@ -285,18 +285,18 @@
   and distributed over blocks 2–10. H4 marker — reaches the answer object
   by block 11, anchor not de-marked (partial). H5 suppression after use —
   disconfirmed on every model and query. H6 interference — disconfirmed.
-  H7 geometry — late anchor-relative computation uses the positional
-  embedding (causal, s42 and edge render); the early absolute field is
+  H7 geometry — deep-layer anchor-relative computation uses the positional
+  embedding (causal, s42 and edge render); the shallow-layer absolute field is
   content-driven, not embedding-driven (H7(i) half fails); relative field
   after anchor localisation (pass on s42; on s43 the relative field is weak
   and late); behaviour is anchor-relative on CLEVR val (pass). H8 broadcast
   heads — disconfirmed for spatial (heads carry the absolute part; accuracy
   unchanged), supported for same-as. H9 generality — same-as order holds on
-  SigLIP (two blocks earlier) and s43 (two blocks later, shallower); spatial
+  SigLIP (two blocks shallower) and s43 (two blocks deeper, with a smaller causal window); spatial
   causal order holds on both, the anchor-relative write field only on s42.
   Limitations to state: spatial anchor-swap condition n = 31 / 12 / 7;
   edge render did not produce a dissociation stratum (layout flaw); the
-  content origin of the early field is inferred from the embedding flip,
+  content origin of the shallow-layer field is inferred from the embedding flip,
   not measured directly; subspace estimates are low-rank class means.
 - **2026-09-08 — X22 H9 addendum: SigLIP replicates the causal
   self-attention result for same-as (heads two blocks earlier), the null
