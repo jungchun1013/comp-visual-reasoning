@@ -909,7 +909,13 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   `scripts/analysis/render_single_objects.py`. Outputs in new directories
   `patch_language_condition/relational_{same,spatial}_{probes,v2}`,
   `relational_same_q{shape,material,size}`, `relational_spatial_edge`.
-- **Status**: registered 2026-09-07 before the first GPU job.
+- **Status**: registered 2026-09-07 before the first GPU job. ✅ All stages
+  run 2026-09-07/08 (DINOv2 s42, SigLIP s42, DINOv2 s43 epoch 14, edge
+  render, CLEVR-val dissociation). Tally in JOURNAL 2026-09-08: H1 pass;
+  H2 (b)+(c) with (c) causal for same-as; H3 specific but small; H4 partial;
+  H5 disconfirmed; H6 disconfirmed; H7 late stage pass, early field
+  content-driven; H8 disconfirmed for spatial, supported for same-as; H9
+  order replicates, anchor-relative field s42-only.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

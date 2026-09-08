@@ -253,6 +253,51 @@
   (T 0.77, D 0.68 at block 9; background 0.51 at 11) but no readable
   anchor-coordinate probe. Kept on disk; rerun on `epoch_14.pt` into
   `relational_{same,spatial}_v2_dinov2s43_ep14` (+ `_probes`).
+- **2026-09-08 — X22 closed: seed-43 (epoch 14, val 0.918) replicates the
+  same-as stage order with a shallower causal window; spatial replicates the
+  causal order but not the anchor-relative write field. Final tally of the
+  nine pre-registered hypotheses below.**
+  (seed 43 same-as, n = 652, accuracy 0.982 / 0.986) referent probe onset
+  block 3; anchor's shared shape from background tokens c1 0.75 / 0.97 at
+  blocks 5 / 7 (c0 0.62 / 0.72); candidate → anchor self-attention peak at
+  blocks 8–9 (+0.12 / +0.12, third object +0.07, background +0.06 — half
+  the seed-42 amplitude, one block later); transplant: anchor and answer
+  object necessary from block 5 (minima 0.82 and 0.71, versus 0.63 / 0.46
+  from block 3 on seed 42) and still at block 11 (0.82 / 0.71); third
+  object never; background only at block 11 (0.53). Marker projection block
+  9 anchor +1.8 vs answer −0.1; block 11 answer +5.9, anchor +6.4, third
+  +4.4. GCA write cosine ≈ 0; margins by shared attributes 10.46 / 10.45 /
+  10.88 (flat). (seed 43 spatial, n = 494, accuracy 1.000 / 0.996)
+  candidates causal at 8–10 (answer 0.80, third 0.46 at block 8–10),
+  background at 11 (0.50); anchor-swap condition valid in 7 scenes only
+  (0.57 at blocks 8–10, 1.0 at 11); anchor-coordinate probe peaks at block
+  7 (R² 0.43, below the 0.5 criterion); write-position R² absolute 0.08 /
+  0.35 / 0.12 / 0.75 / 0.03 / 0.00, anchor-relative 0.00 / 0.00 / 0.00 /
+  0.03 / 0.01 / 0.28 — the layer-9 anchor-relative field of seed 42 (0.60)
+  is absent; field alignment to the anchor lowers correlation at every
+  layer as on seed 42.
+  Tally (DINOv2 s42 primary; SigLIP and DINOv2 s43 for order only):
+  H1 ordering — pass on all three. H2 transport — the anchor's property
+  reaches background tokens (b) and candidates read the anchor through
+  self-attention (c), causal for same-as on s42 (accuracy 0.972 → 0.744
+  under ablation); (a) broadcast into candidates not separable from (b).
+  H3 attribute-specific comparison — specificity confirmed, effect small
+  and distributed over blocks 2–10. H4 marker — reaches the answer object
+  by block 11, anchor not de-marked (partial). H5 suppression after use —
+  disconfirmed on every model and query. H6 interference — disconfirmed.
+  H7 geometry — late anchor-relative computation uses the positional
+  embedding (causal, s42 and edge render); the early absolute field is
+  content-driven, not embedding-driven (H7(i) half fails); relative field
+  after anchor localisation (pass on s42; on s43 the relative field is weak
+  and late); behaviour is anchor-relative on CLEVR val (pass). H8 broadcast
+  heads — disconfirmed for spatial (heads carry the absolute part; accuracy
+  unchanged), supported for same-as. H9 generality — same-as order holds on
+  SigLIP (two blocks earlier) and s43 (two blocks later, shallower); spatial
+  causal order holds on both, the anchor-relative write field only on s42.
+  Limitations to state: spatial anchor-swap condition n = 31 / 12 / 7;
+  edge render did not produce a dissociation stratum (layout flaw); the
+  content origin of the early field is inferred from the embedding flip,
+  not measured directly; subspace estimates are low-rank class means.
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/
