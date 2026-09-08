@@ -298,6 +298,30 @@
   edge render did not produce a dissociation stratum (layout flaw); the
   content origin of the early field is inferred from the embedding flip,
   not measured directly; subspace estimates are low-rank class means.
+- **2026-09-08 — X22 H9 addendum: SigLIP replicates the causal
+  self-attention result for same-as (heads two blocks earlier), the null
+  for spatial, and shows no late GCA-write necessity because its read-out
+  is finished by block 7.** Runs `relational_same_v2_siglip/{h5_gca_mask,
+  h8_head_ablation}` and `relational_spatial_v2_siglip/h8_head_ablation`
+  (user request 2026-09-08 "一起做吧"; same cells as the DINOv2 chain;
+  checkpoint best.pt, grid 16, n = 635 same-as / 478 spatial clean-correct).
+  H8 same-as: the |Δ| ≥ 10× median rule selects 8 of 16 qualifying
+  candidate→anchor / background→anchor cells, all in blocks 5–6 (DINOv2:
+  blocks 7–8); zeroing them drops accuracy 0.977 → 0.611 with P(answer =
+  third object's colour) 0.36 and P(anchor's colour) 0.00; two random
+  8-head sets 0.975 / 0.966. H8 spatial: 3 cells qualify (block 5),
+  accuracy 1.000 → 0.996, write-position R² unchanged (relative ≤ 0.10 at
+  every layer) — the same null as DINOv2. H5 (GCA write masked at blocks
+  9 and 11 on anchor / answer / third / background / random): every cell
+  stays at 1.00 (DINOv2: masking the answer's block-11 write gives 0.75).
+  Explanation from the existing SigLIP transplant curves: background
+  tokens become necessary gradually from block 5 (agreement 0.97 → 0.88 →
+  … → 0.79 at 11) instead of DINOv2's block-11 cliff (0.97 → 0.35), and
+  the answer object's necessity peaks at block 5 (0.82) then recovers
+  (0.97 at 11); so the answer marker and the move to background are done
+  by block 7 and the two masked layers have nothing left to remove.
+  Follow-up (not run): mask the answer's GCA write at blocks 5 and 7 on
+  SigLIP to test that directly.
 - **2026-09-02 — Relational (same-as / spatial) status: the 2026-07-15 batch
   never got a write-up; read off here before the 3-object mechanism run.**
   (a) Position-only RSA (`conditional_rsa/clevr_dinov2_decoder1l_scratch_pos_only/

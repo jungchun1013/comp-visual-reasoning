@@ -915,7 +915,12 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   H2 (b)+(c) with (c) causal for same-as; H3 specific but small; H4 partial;
   H5 disconfirmed; H6 disconfirmed; H7 late stage pass, early field
   content-driven; H8 disconfirmed for spatial, supported for same-as; H9
-  order replicates, anchor-relative field s42-only.
+  order replicates, anchor-relative field s42-only. Addendum 2026-09-08:
+  SigLIP H5/H8 cells (`relational_same_v2_siglip/{h5_gca_mask,
+  h8_head_ablation}`, `relational_spatial_v2_siglip/h8_head_ablation`) —
+  same-as head ablation causal (0.977 → 0.611, heads at blocks 5–6),
+  spatial null, GCA-write mask at blocks 9/11 no effect (read-out finished
+  by block 7 on SigLIP); see JOURNAL 2026-09-08 addendum.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 
