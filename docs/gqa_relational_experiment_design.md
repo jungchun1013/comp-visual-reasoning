@@ -173,7 +173,8 @@ anchor 的顏色(對應 CLEVR 讀 anchor 的 shape),答案是 category 而不是
 
 **通過。** contrast 的 CI 下界 > 0。輔助指標是 decoder attention 的 referent 對
 background 每 patch 的比值,CI 下界 > 1;CLEVR 上這個比值是 60 倍,真實影像上不預設倍數,
-只要求大於 1。
+只要求大於 1。**不成立時:** contrast 的 CI 含 0 或為負,結論是語言條件化在自然場景中
+未顯示 referent 對 non-referent 的選擇性重組,後三條不再檢驗。
 
 **防呆。** 用層窗平均而不是「某一層顯著」,避免十二層裡挑最好的一層。V 從 c0 算,
 不含任何問句資訊,所以 contrast 不會因為 V 的定義本身偏向 referent。causal 對應
@@ -191,15 +192,17 @@ background 讀出,target 到第 9 層才變成必要。
 ΔR² = R²(c1) − R²(c0) 和 ΔAcc = Acc(c1) − Acc(c0),不是 c1 的絕對值。**這與 CLEVR 的
 操作定義不同**:X22-H1 的 spatial 探針是以 c1 − c0 的 token 差當輸入回歸 anchor 座標,
 H2a 的 same-as 探針是 c1 與 c0 分別報準確率。GQA 改用增量是為了 leakage 控制(§6 H2
-防呆),但為了可比,CLEVR SigLIP 的 cache 用同一個 ΔR² / ΔAcc 定義重算一次(CPU),
-兩種定義的 CLEVR 數字都報。
+防呆),是方法上的改進,不是為了對齊 CLEVR。選配:CLEVR SigLIP 的 cache 用同一個
+ΔR² / ΔAcc 定義重算一次(CPU),方便並排;不做也不影響 X23 的判準。
 k_condition 定義為第一個 ΔR²(或 ΔAcc)的 CI 下界超過 0.1 的層。k_target 是 causal 量,
 在 S_correct 上做:把 target 的 patch 換成 c2 版本,第一個使 P(clean answer) 下降 ≥ 0.2
 且 CI 不含 0 的層。
 
 **通過。** ordering score = bootstrap 樣本中 k_condition < k_target 的比例,≥ 0.9。用
 比例而不是「看曲線判斷早於」,是因為兩個 k 都有抽樣誤差,單看點估計的先後可以是
-噪音。
+噪音。**不成立時:** ordering score < 0.9,或 k_condition 在任何層都不存在(ΔR² 的 CI
+下界從未超過 0.1),或 k_target 不存在(target 在任何層都不必要);三種情況分開報,
+都算 H2 不成立。
 
 **防呆。** 這條最容易被 leakage 騙。真實影像裡 background 本來就帶場景資訊:anchor 是
 banana,pretrained 特徵可能從 category 就猜得到 yellow;anchor 是 stove,位置可能從廚房
@@ -227,7 +230,8 @@ CLEVR 上這是兩條 branch 最清楚的差異:same-as 關掉規則選出的 8 
 **通過。** 判準是 interaction:(Δ_selected − Δ_random)_same 減
 (Δ_selected − Δ_random)_spatial,CI 下界 > 0。不用「same-as 顯著、spatial 不顯著」,因為
 A 顯著加 B 不顯著不等於 A 和 B 有顯著差異,這是常見但錯的推論,而它正好是我們核心故事
-的關鍵一步。
+的關鍵一步。**不成立時:** interaction 的 CI 含 0(兩種關係的 head 定位程度沒有差別),
+或反向(spatial 比 same-as 更稀疏);兩者都照報,都撤回「關係種類決定計算形式」。
 
 **防呆與解讀限制。** spatial 的 null 有很多來源:選 head 的統計量可能不適合 spatial、
 其他 head 可能補上、MLP 可能參與、可能是很多弱 head、positional embedding 的路徑可能
@@ -254,16 +258,21 @@ relational 題裡 target、anchor、third object 的 patch mean 在 marker 上�
 target 對零,因為問句本身會讓所有物件的投影都動,要看的是 target 有沒有被額外選出。
 不比 target 對 anchor:CLEVR 上 anchor 在第 11 層的投影不低於 target(DINOv2 +8.4 對
 +7.9,s43 +6.4 對 +5.9),anchor 沒有被 de-mark,這是 X22-H4 記錄的 partial 結果;
-GQA 上 anchor 的投影照報,不進判準。
+GQA 上 anchor 的投影照報,不進判準。**不成立時:** target 減 third object 的 CI 含 0,
+結論是 relational 題的 target 沒有取得 direct query 的 referent 表徵,撤回「兩條 branch
+收斂回同一讀出路徑」。
 
 **防呆。** marker 從 direct 題算,和 relational 題的 role 無關,避免用 relational 題自己的
 資料定義方向再用同一批資料測。以 V 為方向的投影另列 secondary。causal 對應(把 direct
 題 c1 的 referent 狀態 transplant 到 relational 題的 target patch,看答案是否維持)列
 secondary。
 
-**四條的關係。** 都成立,故事是 binding → {attribute retrieval, feature-based reasoning,
-spatial reasoning} → shared target selection。H1 不成立,整節改成「機制未在真實影像上
-重現」,不再談後三條。H2 或 H4 不成立,撤回 relational 的那一段。H3 不成立,撤回
+**四條的關係。** 都成立,故事用專案已定的名字寫:binding → attribute retrieval
+(direct query)/ relational selection(same-as 以 attribute 比較、spatial 以位置差)→
+shared target selection。這和 CLEVR 的 Binding → Retrieval 兩階段、relational 統稱
+same-as 與 spatial(2026-09-06)是同一套命名;外部建議的「feature-based reasoning /
+spatial reasoning」分類若要採用,是命名決定,另議。H1 不成立,整節改成「機制未在真實
+影像上重現」,不再談後三條。H2 或 H4 不成立,撤回 relational 的那一段。H3 不成立,撤回
 「關係種類決定計算形式」,兩條 branch 只保留順序主張。判準不因結果改。
 
 ## 7. 其他分析:為什麼降級,不是不做
