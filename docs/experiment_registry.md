@@ -922,6 +922,54 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   spatial null, GCA-write mask at blocks 9/11 no effect (read-out finished
   by block 7 on SigLIP); see JOURNAL 2026-09-08 addendum.
 
+### X23. CLEVR mechanism observations on real images (GQA) — pre-registered
+- **Design document**: `docs/gqa_relational_experiment_design.md` (v5, 2026-09-11,
+  reviewed by the user in ten points; all adopted). Four primary hypotheses with
+  frozen statistical criteria (H1 referent selection generalizes; H2 the anchor's
+  property is decodable outside the anchor before the target is causally
+  necessary, ordering score ≥ 0.9; H3 head-ablation interaction same-as vs
+  spatial, CI lower bound > 0, plus cumulative ablation curve; H4 the target
+  acquires the single-hop referent marker, target − third object CI > 0).
+  Everything else secondary / exploratory. Analysis populations: S_eligible
+  (scene graph / program / geometry only) for observational analyses, S_correct
+  for interventions, coverage reported everywhere. Bootstrap by image, 95 % CI.
+- **Models**: GQA-trained `gqa_siglip_decoder1l_scratch_s42` (primary; its
+  `best.pt` was chosen on balanced val in 2026-06 with aggregate accuracy only —
+  X23 items are held-out but not checkpoint-independent, stated in the paper);
+  CLEVR-trained `clevr_siglip_decoder1l_scratch_s42` as a transfer test on
+  questions whose answers are CLEVR colours (direct only, see step 0).
+- **Data**: GQA val balanced (only train/val carry scene graphs); counterfactual
+  questions are natural GQA questions of the same image from
+  `val_all_questions.json` (spatial c2 = same anchor + opposite relation; c3 =
+  same target + other anchor; direct c2 = other referent, same query; same-as
+  c2 = roles swapped). Geometry presets: relaxed (patch counts as an object's at
+  ≥ 0.3 cover, ≥ 2 patches per role, ≤ 50 % image area, role IoU ≤ 0.05) for
+  the primary analysis; strict (0.5 / 4 / 30 % / 0) as a robustness subset;
+  margin along the relation axis 2 patches (1 / 3 as robustness). Background
+  (b) = patches no box covers at the preset threshold; (a) = non-role object
+  patches. Left/right only; front/behind excluded.
+- **Step 0 (2026-09-11, CPU, no model output seen)**: code
+  `src/analysis/gqa_roles.py` + `--gqa-filter {direct,spatial,same}` in
+  `patch_language_condition.py`; outputs
+  `outputs/analysis/patch_language_condition/x23_step0b_{spatial,same,direct}/`
+  (records, owner maps, funnel per rule and per variant, blind audit page
+  `audit/index.html`). S_eligible (relaxed, margin 2): spatial 263 questions /
+  157 images (c2 80, c3 188, both 5; dissociated 30; all category answers —
+  no attribute-answer spatial question has a natural counterfactual); direct
+  1,016 / 759 images (233 answerable by the CLEVR model); same-as 25 (only 2
+  with a counterfactual → same-as on GQA is observational and behavioural only;
+  H3's same-as side stays on CLEVR). Strict subsets 48 / 500 / 10. Earlier
+  draft directories `gqa_{spatial,same,direct}`, `_v2`, `_v3`,
+  `gqa_step0_*`, `x23_step0_*` are superseded drafts of the same step (first
+  rules; constructed counterfactuals; background definition; referent-word
+  casing) and are not used.
+- **Rule revisions made in step 0** (before any model output): natural instead
+  of constructed counterfactuals; relaxed geometry preset as primary; background
+  (b) redefined. Reasons and the first-version funnel (76 / 8 / 125) are in the
+  design document §5a.
+- **Status**: thresholds frozen with this entry; GPU steps 1–4 not started;
+  human audit pending (60 items per type, blind).
+
 ## Part 2 — Design-consistency findings (D1–D11)
 
 **D1 [major, disclosure required] Performance model ≠ mechanistic model.** Tables use

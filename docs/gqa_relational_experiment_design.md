@@ -154,6 +154,57 @@ anchor 的顏色(對應 CLEVR 讀 anchor 的 shape),答案是 category 而不是
 只有在 anchor 也屬於問句裡的 class 詞(例如 animal)時才是合法問句,附錄 A 第 11 條加
 這個條件。245 題篩完可能只剩幾十題,每張圖都標 n,不因為 n 小而放寬規則。
 
+## 5a. 步驟 0 的結果與規則修訂(2026-09-11,尚未看任何模型輸出)
+
+篩選程式(`src/analysis/gqa_roles.py`,`--gqa-filter`)跑完第一版規則後,三個題型的
+S_eligible 分別只有 76、8、125 題,遠低於預估。原因有三,對應三項修訂;每項都在看任何
+模型輸出之前決定,並保留第一版的 funnel 供對照。
+
+**修訂一:counterfactual 改用 GQA 原生題,不再自行構造。** 第一版用 scene graph 自行
+構造 c2 / c3,需要知道「哪些物件屬於 vegetable 這個 class 詞」,scene graph 沒有這個
+階層,保守處理下大半題目被排除。改成從 `val_all_questions.json`(同一 split 的完整
+題庫,200 萬題)取同一張圖上 GQA 自己生成的題:spatial 的 c2 是同 anchor、相反方向、
+同 class 詞、同 query、答案不同的題;c3 是同方向、同 class、同 query、同答案物件、
+不同 anchor 的題;direct 的 c2 是同圖、指向不同物件、同 query、答案不同的題;same-as
+的 c2 是角色對調的題。唯一性由 GQA 的生成器保證,措辭在分布內,比自行構造更乾淨。
+候選中有原生 c2 或 c3 的比例:spatial 1,809 / 4,528,direct 2,876 / 4,795,same-as
+9 / 192。same-as 沒有原生 c2 時,若 anchor 是 class 詞的已知成員(從題庫的 relate
+argument 建表)才構造 c2,否則該題只有 c1,留給 observational 分析,不進 intervention。
+
+**修訂二:幾何門檻改成兩個 preset,主分析用 relaxed,strict 為 robustness 子集。**
+第一版的 strict(patch 覆蓋率 ≥ 0.5 才算該物件的 patch、每個 role ≥ 4 個 patch、
+面積 ≤ 30%、role 間 IoU = 0)是照 CLEVR 的直覺訂的;真實影像在 16×16 grid 下物件
+常只有一兩個 patch、box 常輕微重疊。relaxed 為覆蓋率 ≥ 0.3、≥ 2 個 patch、面積
+≤ 50%、IoU ≤ 0.05。CLEVR SigLIP 的物件本來就是 1 到 20 個 patch(X21-F 的註記),
+relaxed 與它在同一範圍。兩個 preset 的 records 都輸出,主假設在 relaxed 上判定,
+strict 子集的效應方向在 appendix 報。
+
+**修訂三:background (b) 的定義。** 第一版要求 patch 完全不被任何標注 box 碰到,真實
+影像標注密集,很多圖剩不到 8 個這種 patch。改成「沒有任何 box 覆蓋達門檻(與 owner
+相同的覆蓋率)」的 patch;(a) 仍是非 role 物件覆蓋達門檻的 patch,兩者互斥。
+
+修訂後的 S_eligible(relaxed,margin 2 patch):
+
+| 題型 | S_eligible | 其中 | strict 子集 |
+|---|---|---|---|
+| spatial | 263 題 / 157 圖 | 有 c2 80、有 c3 188、兩者 5;dissociated 30;全部答 category | 48 |
+| direct | 1,016 題 / 759 圖 | 全部有原生配對;答案在 CLEVR 八色內 233 | 500 |
+| same-as | 25 題 | 有 c2 只有 2(皆原生);其餘 23 只有 c1 | 10 |
+
+兩個後果要寫進論文:spatial 中答 colour / size / material 的題沒有一題有原生 c2 或
+c3,所以 CLEVR 訓練的模型只能在 direct(233 題)上做 transfer 測試,spatial 不做;
+same-as 在 GQA 上 intervention 的 n 是 2,只做 observational(H2 的 ΔAcc)與行為,
+H3 的 same-as 一側在 GQA 不可判定,H3 在 GQA 只報 spatial 的 cumulative curve,
+same-as 對 spatial 的 interaction 留在 CLEVR。margin 1 / 3 的 spatial 子集分別為
+292 / 189 題(relaxed)。
+
+Referent word(GCA 對指涉詞的 attention 用)取自 GQA annotations 標的問句位置的
+最後一個詞(例如 mobile phone → phone),不用 scene graph 的名稱,因為兩者常不同
+(freezer 對 refrigerator)。
+
+Audit 頁面:`outputs/analysis/patch_language_condition/x23_step0b_<mode>/audit/index.html`,
+每題型 60 題(same-as 全部),blind,勾選後下載 JSON。
+
 ## 6. 四條主假設
 
 每條四段:它是哪個主張、在 GQA 上怎麼量、什麼算通過、我們怎麼防止自己看到想看的。

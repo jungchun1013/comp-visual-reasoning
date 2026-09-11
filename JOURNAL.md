@@ -22,6 +22,34 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
+  frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
+  (v5 after the user's ten-point review), registry X23. New module
+  `src/analysis/gqa_roles.py` (scene graph + program → role records, owner
+  maps at grid 16, funnel, blind audit page) wired as `--gqa-filter` in
+  `patch_language_condition.py`; `SparseExtractor.referent_token_index` now
+  falls back to the first BPE piece of a multi-piece word (GQA nouns).
+  First rules gave S_eligible 76 / 8 / 125 (spatial / same-as / direct): the
+  constructed counterfactuals needed class membership the scene graph lacks,
+  the CLEVR-style geometry (≥ 4 patches at 0.5 cover, IoU 0) removed half the
+  candidates, and "background = no box touches the patch" left < 8 patches in
+  many images. Revised before looking at any model output: counterfactuals =
+  natural GQA questions of the same image from `val_all_questions.json`
+  (spatial candidates with such a question 1,809 / 4,528; direct 2,876 /
+  4,795; same-as 9 / 192); geometry preset relaxed (0.3 cover, ≥ 2 patches,
+  ≤ 50 %, IoU ≤ 0.05) as primary with strict as a robustness subset;
+  background (b) = no box reaches the cover threshold. Final S_eligible
+  (relaxed, margin 2): spatial 263 (c2 80, c3 188; all category answers),
+  direct 1,016 (233 CLEVR-answerable), same-as 25 (2 with a counterfactual).
+  Outputs `outputs/analysis/patch_language_condition/x23_step0b_{spatial,
+  same,direct}/`; `gqa_*`, `gqa_*_v2/_v3`, `gqa_step0_*`, `x23_step0_*` are
+  superseded drafts of this step. Referent words come from GQA's question
+  annotations (head noun as written, "freezer" not "refrigerator", casing
+  kept), checked against the RoBERTa tokenisation of every question (0
+  misses). Consequences for the design: the CLEVR-trained model's transfer
+  test is direct-only; same-as on GQA is observational/behavioural only.
+  Audit pages ready (60 / 60 / 25 items); GPU steps wait for the audit.
+
 - **2026-09-07 — Relational X22 (pre-registered; naming: "relational" =
   same-as + spatial). Stage C0 (CPU, existing caches) read against the
   registered predictions; dissociation render done; GPU stage G1 running.**

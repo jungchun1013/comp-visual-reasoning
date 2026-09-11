@@ -231,6 +231,10 @@ class SparseExtractor:
         idx, last = [], []
         for row, w in zip(toks, words):
             cand = [j for j, t in enumerate(row) if t == "Ġ" + w]
+            if not cand:
+                # word split into several BPE pieces (GQA nouns): use its first piece
+                first = self.tokenizer.convert_ids_to_tokens(self.tokenizer(" " + w, add_special_tokens=False)["input_ids"])[0]
+                cand = [j for j, t in enumerate(row) if t == first]
             assert cand, f"referent token '{w}' not found in {row}"
             idx.append(cand[0])
             last.append(max(j for j, t in enumerate(row) if t == "</s>"))
@@ -4463,6 +4467,17 @@ def main():
                     help="only (X22 H7): --cache-dir spatial run; positional embedding flipped / rows exchanged")
     ap.add_argument("--h8-head-ablation", action="store_true",
                     help="only (X22 H8): --cache-dir run; SA heads selected by the SA-mass rule zeroed")
+    ap.add_argument("--gqa-filter", default=None, choices=["direct", "spatial", "same"],
+                    help="X23 step 0 (CPU): build S_eligible records / owner maps / funnel / audit page from GQA "
+                         "scene graphs + programs (analysis.gqa_roles); needs a new --out-dir")
+    ap.add_argument("--gqa-root", default="/nfs/turbo/coe-chaijy/jungchun/data/gqa")
+    ap.add_argument("--gqa-split", default="val")
+    ap.add_argument("--gqa-meta-dir", default="outputs/analysis/patch_language_condition/gqa_meta",
+                    help="cache of the answer vocab and the class-membership table (shared by all modes)")
+    ap.add_argument("--gqa-margin", type=float, default=2.0, help="centre distance along the relation axis, patches")
+    ap.add_argument("--gqa-geometry", default="strict", choices=["strict", "relaxed"],
+                    help="box-geometry preset for the untagged records (both presets are always written)")
+    ap.add_argument("--gqa-audit-n", type=int, default=60, help="items on the blind audit page (0 = none)")
     ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
     ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
                     help="--relational: directory whose n1/ cache gives the colour directions u")
@@ -4486,6 +4501,10 @@ def main():
     global QUERIED
     QUERIED = args.queried
     print(f"args: {vars(args)}")
+    if args.gqa_filter:
+        from analysis.gqa_roles import run_filter
+        run_filter(args, out_dir)
+        return
     if args.relational_probes:
         assert args.cache_dir or args.replot, "--relational-probes needs --cache-dir"
         run_relational_probes(args, out_dir, label)
