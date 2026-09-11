@@ -21,25 +21,25 @@ difference 分散在多個 head 且依賴 positional embedding。
 因為訓練資料。** 主張層級同 CLEVR 的跨 backbone 主張:只主張 stage 的順序、效應的有無與
 head 的稀疏或分散,不主張層數與數值。
 
-## 2. 模型(兩個 arm,同一個 backbone)
+## 2. 模型(兩個模型,同一個 backbone)
 
-| arm | checkpoint | 訓練資料 | 在 GQA 上的角色 |
+| 模型 | checkpoint | 訓練資料 | 在 GQA 上的角色 |
 |---|---|---|---|
-| G | `gqa_siglip_decoder1l_scratch_s42` | GQA balanced train | 在分布內;全套觀察的主要重現 |
-| C | `clevr_siglip_decoder1l_scratch_s42` | CLEVR | zero-shot;只答得出答案在 CLEVR 八種顏色內的題 |
+| GQA 訓練的模型 | `gqa_siglip_decoder1l_scratch_s42` | GQA balanced train | 在分布內;全套觀察的主要重現 |
+| CLEVR 訓練的模型 | `clevr_siglip_decoder1l_scratch_s42` | CLEVR | zero-shot;只答得出答案在 CLEVR 八種顏色內的題 |
 
-兩個 arm 共用 SigLIP ViT-B/16 @256(grid 16×16,每個 patch 16 px)、GCA 於第 1/3/5/7/9/11
-層、1 層 decoder、凍結的 RoBERTa-large 文字端。文字端凍結,所以 arm C 能編碼 GQA 的句子;
+兩個模型共用 SigLIP ViT-B/16 @256(grid 16×16,每個 patch 16 px)、GCA 於第 1/3/5/7/9/11
+層、1 層 decoder、凍結的 RoBERTa-large 文字端。文字端凍結,所以 CLEVR 訓練的模型能編碼 GQA 的句子;
 GCA 的投影只看過 CLEVR 句子,GQA 的名詞對它是分布外。答案為分類(`max_answers 1500`),
-arm C 的有效答案只有 CLEVR 的 28 個,顏色八種(red、blue、green、yellow、gray、brown、
+CLEVR 訓練的模型的有效答案只有 CLEVR 的 28 個,顏色八種(red、blue、green、yellow、gray、brown、
 purple、cyan)。影像處理為直接 resize 到 256×256(`src/model/model.py:209`,無 crop),
 scene graph 的 box 以 (x / W · 16, y / H · 16) 對到 patch。
 
-Arm C 的用途:若 arm G 的觀察在 arm C 也出現,機制來自語言條件化架構在凍結 backbone 上
-的作用,與訓練影像的領域無關;若 arm C 的 accuracy 低於 0.3(chance 0.125)則只報行為,
-不做機制分析。Arm C 不是主線,結果無論方向都報。
+CLEVR 訓練的模型的用途:若 GQA 訓練的模型上的觀察在它身上也出現,機制來自語言條件化架構在凍結 backbone 上
+的作用,與訓練影像的領域無關;若它的 accuracy 低於 0.3(chance 0.125)則只報行為,
+不做機制分析。CLEVR 訓練的模型不是主線,結果無論方向都報。
 
-Arm G 在 GQA balanced val 的表現(最後一次 eval,131,727 題):overall 0.636;
+GQA 訓練的模型在 GQA balanced val 的表現(最後一次 eval,131,727 題):overall 0.636;
 semantic/rel 0.548(61,363);semantic/attr 0.711(42,165);structural/query 0.509
 (67,866)。checkpoint 以 val 選出(`best.pt`),行為數字註明此點。
 
@@ -74,8 +74,8 @@ argument 直接帶 target 的 object id(例:`vegetable,to the right of,s (595636
    target 的 category 不同。
 2. box 幾何(patch 座標):role 之間 IoU = 0;每個 role ≥ 4 個 patch;任一 role ≤ 30%
    影像。
-3. 三個 role 的答案值都在 arm G 的答案詞彙內;arm C 另篩答案在八種顏色內。
-4. c1 答對(逐 arm)。
+3. 三個 role 的答案值都在 GQA 訓練的模型的答案詞彙內;CLEVR 訓練的模型另篩答案在八種顏色內。
+4. c1 答對(兩個模型各自)。
 
 Direct(對應 CLEVR two-object 的 refer-target / refer-distractor pair):
 5. 同一張圖內另有一題 direct query 指向不同物件、問同一 attribute、答案不同;兩題互為
@@ -115,7 +115,7 @@ same-as:命名 target);c3(spatial):換 anchor。與 CLEVR `relational_*_v2` 定�
 預測以 CLEVR SigLIP 的結果為準(同 backbone);「通過」指方向與順序一致。標 ◇ 者在
 CLEVR 上已知 backbone-specific,列為探索,不設通過條件。
 
-### 4.1 Direct query(arm G;arm C 視 accuracy)
+### 4.1 Direct query(GQA 訓練的模型;CLEVR 訓練的模型視 accuracy)
 
 | id | CLEVR 觀察 | GQA 測量 | 預測 |
 |---|---|---|---|
@@ -130,7 +130,7 @@ CLEVR 上已知 backbone-specific,列為探索,不設通過條件。
 | D9 | X21-D3:SigLIP 的 background 在深層帶 question type ◇ | c0 的 background 換入 | 探索 |
 | D10 | X21-A5:GCA write norm 無 role 選擇性,cos(write, V) ≤ 0.11 | 同法 | 一致 |
 
-### 4.2 Relational(arm G;spatial 的 colour 子集另跑 arm C)
+### 4.2 Relational(GQA 訓練的模型;spatial 的 colour 子集另用 CLEVR 訓練的模型跑)
 
 | id | CLEVR 觀察 | GQA 測量 | 預測 |
 |---|---|---|---|
@@ -158,7 +158,7 @@ CLEVR 上已知 backbone-specific,列為探索,不設通過條件。
 
 c0 無問句;transplant 與 patching 的 clean-self 對照每格 1.00;隨機 8 個 disjoint head;
 norm-matched random vector;random background rows;ridge 與 probe 用 GroupKFold(5) by
-image;R2 另以 c0 的 background 對照;arm C 的 chance 為 0.125。
+image;R2 另以 c0 的 background 對照;CLEVR 訓練的模型的 chance 為 0.125。
 
 ## 6. 實作
 
@@ -176,12 +176,12 @@ image;R2 另以 c0 的 background 對照;arm C 的 chance 為 0.125。
 
 | 步驟 | 內容 | 資源 |
 |---|---|---|
-| 0 | 三個題型的篩選、funnel、50 題抽查、arm C 顏色子集計數 | CPU,一天 |
-| 1 | arm G:c0–c3 feature cache、行為(R0)、D1/D2/D3/D8/D10 從 cache 算 | GPU 約 1.5 小時 + CPU |
-| 2 | arm G:D5 patching、D6 intervention、R1 transplant | GPU 約 2 小時 |
-| 3 | arm G:D4 decoder attention、R3 SA capture、R2/R7/R8 regression | GPU 30 分鐘 + CPU |
-| 4 | arm G:D7 head scan、R4 head ablation、R5 mask、R6 pos-embed | GPU 約 1.5 小時 |
-| 5 | arm C:行為;若 ≥ 0.3,重跑步驟 1–4 的 direct 與 spatial 部分 | GPU 約 3 小時 |
+| 0 | 三個題型的篩選、funnel、50 題抽查、CLEVR 訓練的模型的顏色子集計數 | CPU,一天 |
+| 1 | GQA 訓練的模型:c0–c3 feature cache、行為(R0)、D1/D2/D3/D8/D10 從 cache 算 | GPU 約 1.5 小時 + CPU |
+| 2 | GQA 訓練的模型:D5 patching、D6 intervention、R1 transplant | GPU 約 2 小時 |
+| 3 | GQA 訓練的模型:D4 decoder attention、R3 SA capture、R2/R7/R8 regression | GPU 30 分鐘 + CPU |
+| 4 | GQA 訓練的模型:D7 head scan、R4 head ablation、R5 mask、R6 pos-embed | GPU 約 1.5 小時 |
+| 5 | CLEVR 訓練的模型:行為;若 ≥ 0.3,重跑步驟 1–4 的 direct 與 spatial 部分 | GPU 約 3 小時 |
 | 6 | 圖與 JSON、JOURNAL、registry X23 | — |
 
 步驟 0 出結果後再排 GPU;n 不足時放寬 3.2 第 7 條,記為新版本目錄。
@@ -199,7 +199,7 @@ category,篩選同 3.2,mask 從 COCO instances 標注補;先報行為,accuracy �
 - scene graph 漏標使唯一性不成立;抽查錯誤率 > 10% 則加人工複核(只複核不挑題)。
 - 真實影像的 role 常很大或互相遮擋;IoU = 0 與 ≤ 30% 規則處理,另報 role 大小分層。
 - direct 的 c2 配對題不一定存在;合成 c2 的問句措辭與 GQA 生成句不同,分開報。
-- arm C 分布外,可能連行為都不成立;此時結論是「機制需要在該領域訓練」,照報。
+- CLEVR 訓練的模型在分布外,可能連行為都不成立;此時結論是「機制需要在該領域訓練」,照報。
 - 只有一個真實影像 backbone;跨 backbone 主張留在 CLEVR,必要時再訓 DINOv2 GQA
   (每 epoch 約 2 小時,18 epoch 約 36 小時)。
 
