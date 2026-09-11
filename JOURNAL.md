@@ -49,6 +49,24 @@
   misses). Consequences for the design: the CLEVR-trained model's transfer
   test is direct-only; same-as on GQA is observational/behavioural only.
   Audit pages ready (60 / 60 / 25 items); GPU steps wait for the audit.
+- **2026-09-11 — X23 step 0 audit (model annotators): the scene-graph
+  populations do not survive a visual check.** At the user's request the
+  blind audit was done by eight Opus subagents (20 items each, conservative
+  rule: tick only when confident), answers in
+  `x23_step0b_<mode>/audit/audit_answers_model.json`. Items passing the four
+  core checks (roles, boxes, relation, unique): spatial 6 / 60, direct 10 /
+  60, same-as 2 / 25. Per check the weak point is `unique` (spatial 9 / 60,
+  direct 15 / 60): GQA scene graphs list one instance where the picture holds
+  several ("the woman" with two older girls, two sofas, many chairs), so
+  scene-graph uniqueness is not visual uniqueness. Second: `roles` / `boxes`
+  (≈ 55 %), driven by 2–3-patch objects on cluttered regions (bowl, plate,
+  cheese) and boxes dominated by a neighbour; `relation` holds for spatial
+  (56 / 60) but fails for same-as (2 / 25: colour not verifiable or shared by
+  other objects). Consequence: the funnel rules of step 0 are necessary but
+  not sufficient; a visual selection step is required before any GPU work
+  (decision pending with the user: audit the full S_eligible with model
+  annotators and keep passing items, with a size floor for competing
+  instances). Numbers recorded before any model output.
 
 - **2026-09-07 — Relational X22 (pre-registered; naming: "relational" =
   same-as + spatial). Stage C0 (CPU, existing caches) read against the
