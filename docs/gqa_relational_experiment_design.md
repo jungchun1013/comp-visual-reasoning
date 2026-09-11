@@ -1,209 +1,295 @@
-# 實驗設計:CLEVR 上的機制觀察在真實影像(GQA)上的重現
+# 實驗設計 X23:CLEVR 上的機制觀察是否在真實影像(GQA)上存活
 
-> 提案,2026-09-11(第二版:範圍從 relational 擴成 CLEVR 全部機制觀察,模型加入
-> CLEVR 訓練的 SigLIP 做 zero-shot 對照)。狀態:未啟動,等使用者核可。
+> 提案第三版,2026-09-11。狀態:未啟動,等使用者核可。
+> 第三版依使用者十點修改:分析母體分層、checkpoint 與 val 的關係、統計判準、null 的
+> 解讀、spatial ground truth 的定義、synthetic c2 的地位、CLEVR 訓練模型的解讀、probe
+> leakage 控制、human audit、primary 假設縮減為四條。
 > 事實來源:`docs/experiment_registry.md` §X19–X22、`JOURNAL.md`、
 > `outputs/model/gqa_siglip_decoder1l_scratch_s42.log`、`src/data/gqa.py`、
-> `src/model/model.py`、`scripts/analysis/patch_language_condition.py`,以及
-> 2026-09-11 對 `val_balanced_questions.json` 的 program 統計。
+> `src/model/model.py`、`scripts/analysis/patch_language_condition.py`、2026-09-11 對
+> `val_balanced_questions.json` 的 program 統計。
 
-## 1. 研究問題
+## 1. 研究問題與設計核心
 
-CLEVR 上的主張分兩段。Direct query:GCA 把問句寫進 visual stream,referent 在中層被
-標出,non-referent 的被問 attribute 從自己的 patch 上被移除,decoder 的 cross-attention
-只讀 referent 的 patch;被問 attribute 的 difference-in-means 方向可加性地決定答案。
-Relational:先選 anchor,anchor 的 conditioning quantity(same-as 是被共享的 attribute,
-spatial 是位置)經 frozen self-attention 送到其他 patch,target 被選出後得到與 direct
-query 相同的 referent direction;attribute similarity 落在少數 attention head,position
-difference 分散在多個 head 且依賴 positional embedding。
+CLEVR 上的發現依賴兩件真實影像沒有的東西:scene graph 讓每個 predicate 可以精確求值,
+成對渲染讓 counterfactual 只差一個變數。原 workshop paper 已把這列為最大限制。X23 的
+問題因此不是「把 CLEVR 實驗搬到 GQA」,而是:**在 controlled domain 找到的機制發現,
+在自然場景的變異、標注的模糊、與問句的自然分布下,哪些存活、哪些不存活。**
 
-本節回答:**這些觀察在真實影像與真實問句上是否重現;若重現,是因為語言條件化的架構,還是
-因為訓練資料。** 主張層級同 CLEVR 的跨 backbone 主張:只主張 stage 的順序、效應的有無與
-head 的稀疏或分散,不主張層數與數值。
+設計核心是三個嚴謹度風險,不是實作細節:
+- **sample selection**:分析母體不得以模型是否答對來定義(§3.1)。
+- **confirmatory / exploratory 邊界**:四條 primary 假設在跑前寫死統計判準(§4),其餘
+  一律標 secondary 或 exploratory(§5),不得事後升級。
+- **operationalization 的差異**:CLEVR 的每個量在 GQA 上的定義都重寫一次(§4 各條的
+  「GQA 定義」欄),文字上區分 observational 與 causal,不沿用 CLEVR 的機制語言描述
+  GQA 上尚未做因果檢驗的量。
 
-## 2. 模型(兩個模型,同一個 backbone)
+主張層級:只主張 stage 順序、效應方向與 head 定位的有無,不主張層數與數值。
 
-| 模型 | checkpoint | 訓練資料 | 在 GQA 上的角色 |
+## 2. 模型
+
+| 模型 | checkpoint | 訓練資料 | 在 X23 的地位 |
 |---|---|---|---|
-| GQA 訓練的模型 | `gqa_siglip_decoder1l_scratch_s42` | GQA balanced train | 在分布內;全套觀察的主要重現 |
-| CLEVR 訓練的模型 | `clevr_siglip_decoder1l_scratch_s42` | CLEVR | zero-shot;只答得出答案在 CLEVR 八種顏色內的題 |
+| GQA 訓練的模型 | `gqa_siglip_decoder1l_scratch_s42` | GQA balanced train | primary:H1–H4 的 confirmatory test |
+| CLEVR 訓練的模型 | `clevr_siglip_decoder1l_scratch_s42` | CLEVR | secondary:transfer test,只能答顏色在 CLEVR 八種內的題 |
 
-兩個模型共用 SigLIP ViT-B/16 @256(grid 16×16,每個 patch 16 px)、GCA 於第 1/3/5/7/9/11
-層、1 層 decoder、凍結的 RoBERTa-large 文字端。文字端凍結,所以 CLEVR 訓練的模型能編碼 GQA 的句子;
-GCA 的投影只看過 CLEVR 句子,GQA 的名詞對它是分布外。答案為分類(`max_answers 1500`),
-CLEVR 訓練的模型的有效答案只有 CLEVR 的 28 個,顏色八種(red、blue、green、yellow、gray、brown、
-purple、cyan)。影像處理為直接 resize 到 256×256(`src/model/model.py:209`,無 crop),
-scene graph 的 box 以 (x / W · 16, y / H · 16) 對到 patch。
+共用 SigLIP ViT-B/16 @256(grid 16×16)、GCA 於第 1/3/5/7/9/11 層、1 層 decoder、凍結的
+RoBERTa-large 文字端、分類式答案頭(`max_answers 1500`;CLEVR 訓練的模型有效答案 28
+個)。影像直接 resize 到 256×256(`src/model/model.py:209`,無 crop),box 以
+(x / W · 16, y / H · 16) 對到 patch。
 
-CLEVR 訓練的模型的用途:若 GQA 訓練的模型上的觀察在它身上也出現,機制來自語言條件化架構在凍結 backbone 上
-的作用,與訓練影像的領域無關;若它的 accuracy 低於 0.3(chance 0.125)則只報行為,
-不做機制分析。CLEVR 訓練的模型不是主線,結果無論方向都報。
+**Checkpoint 與 val 的關係(聲明)**:GQA 訓練的模型的 `best.pt` 是 2026-06 依 balanced
+val 的 aggregate accuracy 選出的;X23 的任何機制測量都未參與 checkpoint 選擇。X23 的題目
+是 held-out items,但 **不是 checkpoint-independent**,論文用這個措辭,不稱 independent
+replication。乾淨版本是重訓一次:GQA train 切出一小塊 development split 選 checkpoint,
+balanced val 完全凍結給 X23。成本一次訓練(每 epoch 約 2 小時,18 epoch 約 36 小時,
+佔唯一 GPU)。是否重訓由使用者決定;不重訓則以上聲明進論文。
 
-GQA 訓練的模型在 GQA balanced val 的表現(最後一次 eval,131,727 題):overall 0.636;
-semantic/rel 0.548(61,363);semantic/attr 0.711(42,165);structural/query 0.509
-(67,866)。checkpoint 以 val 選出(`best.pt`),行為數字註明此點。
+**CLEVR 訓練的模型的解讀上限**:兩個模型不只差訓練影像,還差問句分布、答案詞彙、視覺
+統計、關係頻率與優化軌跡。若機制在它身上重現,只能寫「the mechanism transfers across
+substantial visual and linguistic distribution shift without GQA-specific training」,
+不能寫「由架構而非資料導致」。
 
-## 3. 資料與篩選
+GQA 訓練的模型在 balanced val 的表現(最後一次 eval,131,727 題):overall 0.636;
+semantic/rel 0.548(61,363);semantic/attr 0.711(42,165);structural/query 0.509(67,866)。
+
+## 3. 資料、母體與篩選
 
 **來源描述(論文用)**:GQA 建立在 Visual Genome 的圖片與 scene graph 之上,圖片來自
-COCO 與 YFCC100M;問句由 functional program 自動生成,每題附 program,relate 步驟的
-argument 直接帶 target 的 object id(例:`vegetable,to the right of,s (595636)`),
-問句名詞與答案也對應到 object id。只有 train 與 val 有 scene graph,故用 **val balanced**
-(132,062 題;`val_sceneGraphs.json`)。
+COCO 與 YFCC100M;問句由 functional program 生成,relate 步驟的 argument 帶 target 的
+object id,問句名詞與答案對應到 object id。只有 train 與 val 有 scene graph,故用 val
+balanced(132,062 題)。
 
-**與 Song, Lepori & Pavlick 2026 的差別**:他們人工挑 100 張 COCO 圖並自行合成問句;
-本節不手挑,全以規則篩選,每一層的數量寫成 funnel,並隨機抽 50 題人工檢查 scene graph
-錯誤率。
+母體統計(2026-09-11):direct colour / attribute query 6,481;direct position 6,460;
+spatial left / right 單一 relate 無額外 filter:答 category 3,619、答 attribute ≈ 900;
+有額外 filter 1,623;same-as open query(relate argument 為 same color)245;
+same-as verify / compare ≈ 2,200。
 
-### 3.1 母體(2026-09-11 統計,val balanced)
+### 3.1 兩層母體
 
-| 題型 | 定義(program) | n |
-|---|---|---|
-| direct colour / attribute | 無 relate、無 same 的 query;detailed ∈ {directOf, directWhich, material} | 6,481 |
-| direct position | 同上,detailed = positionQuery(「哪一側」) | 6,460 |
-| spatial,答 category | 恰一個 relate,left / right,無額外 filter,query | 3,619 |
-| spatial,答 colour / size / material | 同上,detailed ∈ {directOf, directWhich, how, material} | ≈ 900 |
-| spatial,有額外 filter | 同上但 select 後有 filter | 1,623 |
-| same-as,open query | relate 的 argument 為 same color,query(「和 Y 同色的 X 是什麼」) | 245 |
-| same-as,verify / compare | same / common 類 program,答 yes / no 或 attribute 名 | ≈ 2,200 |
+- **S_eligible**:只由 scene graph、program 與幾何定義的樣本(§3.2 的規則,不含任何
+  模型輸出)。所有 representational 分析(probe、attention、regression、projection)
+  的 primary 母體。
+- **S_correct** = S_eligible ∩ {c1 答對}。只有以 clean answer 為 causal endpoint 的
+  intervention(transplant、patching、head ablation、pos-embed 翻轉、additive
+  intervention)用它。
+- 每個結果同時報 n_eligible、n_correct、coverage = n_correct / n_eligible。兩個模型的
+  S_eligible 相同(CLEVR 訓練的模型另加答案在八種顏色內的規則,形成子集,分開報);
+  S_correct 各自不同,論文明說兩者的 intervention 母體不同。
 
-### 3.2 篩選規則(依序套用,每步記數量)
+### 3.2 S_eligible 的規則(依序套用,每步記數量與排除原因)
 
 共用:
 1. anchor(direct 為 referent)的名稱在 scene graph 中唯一;relational 題 anchor 與
    target 的 category 不同。
 2. box 幾何(patch 座標):role 之間 IoU = 0;每個 role ≥ 4 個 patch;任一 role ≤ 30%
    影像。
-3. 三個 role 的答案值都在 GQA 訓練的模型的答案詞彙內;CLEVR 訓練的模型另篩答案在八種顏色內。
-4. c1 答對(兩個模型各自)。
+3. 三個 role 的答案值都在 GQA 訓練的模型的答案詞彙內。
 
-Direct(對應 CLEVR two-object 的 refer-target / refer-distractor pair):
-5. 同一張圖內另有一題 direct query 指向不同物件、問同一 attribute、答案不同;兩題互為
-   c1 / c2。找不到配對的題以 scene graph 自動改寫問句(換 referent 名稱,答案取自
-   scene graph 的 attribute)補上,記為合成 c2 並分開報。
+Direct:
+4. **natural pair**:同一張圖內另有一題 GQA 原生的 direct query,指向不同物件、問同一
+   attribute、答案不同;兩題互為 c1 / c2。這是 primary 母體。
+5. **synthetic c2**(secondary,不與 natural pool):找不到配對時以 scene graph 改寫
+   referent 名稱、答案取自 scene graph。附 linguistic control:synthetic 句與 GQA 原句
+   的 RoBERTa embedding 距離分布、c1 → natural c2 與 c1 → synthetic c2 分開報、
+   human audit 檢查 grammaticality 與 semantic validity(§7)。
 
 Spatial:
-6. 2D 一致性:box 中心算出的 left / right 與 scene graph 標的 relation 一致;不一致者
-   剔除並報比例。沿 relation 軸中心距 ≥ 2 個 patch。
-7. c2(換方向詞):anchor 另一側恰有一個與 target 同 category、答案不同的物件,通過
-   第 2 條;此物件即 third object。c3(換 anchor):另有一物件對 target 唯一成立同一
-   relation、名稱唯一、category 與 anchor / target 皆不同。c2 與 c3 至少一個可構造。
-8. 行為分離集:target 落在方向詞相反的影像半邊(對應 X22-H7d),另記子集。
+6. relation 只取 to the left of / to the right of。front / behind 明確排除:它們牽涉
+   深度、大小、遮擋與透視,不是同一種 reference-frame 計算,不與 left / right 合併。
+7. **2D image-plane criterion**:box 中心算出的 left / right 與 scene graph 標注一致;
+   不一致者排除並報比例。論文措辭:「we restrict analysis to GQA relations whose
+   scene-graph annotation agrees with a preregistered 2-D image-plane criterion」,
+   不寫「GQA spatial relations are …」。
+8. 沿 relation 軸中心距 ≥ 2 個 patch。理由:CLEVR 用 2/24 grid 的比例,16×16 grid
+   下對應 1.3 個 patch,取整為 2 保證兩個 role 之間至少一個非 role patch。
+   robustness:1 / 2 / 3 個 patch 三個版本,appendix 報 H2、H3 的效應是否穩定。
+9. counterfactual:c2(換方向詞)要求 anchor 另一側恰有一個與 target 同 category、
+   答案不同的物件並通過第 2 條,此物件為 third object;c3(換 anchor)要求另一物件對
+   target 唯一成立同一 relation、名稱唯一、category 與兩者皆不同。至少一個可構造。
+10. 行為分離集:target 落在方向詞相反的影像半邊,另記子集。
 
 Same-as(open query 245 題):
-9. anchor 的 colour 在問句中未出現(問句只說「same color as the Y」,天然滿足);
-   場景中恰一個其他物件與 anchor 同色,即 target;另有一個不同色、與 target 同
-   category 的物件當 third object(若無則 third object 取任一不同色物件,分開報)。
-   c2 = 命名 target 為 anchor。
-
-預估:spatial 篩後數百到一千題,direct 數千題,same-as 一百上下。same-as 若 < 60 題,
-只報行為與 head ablation,transplant 曲線標明 n。
+11. 問句不含 anchor 的 colour(模板天然滿足);場景中恰一個其他物件與 anchor 同色
+    (target);另有一個不同色、與 target 同 category 的物件(third object;若無,
+    取任一不同色物件,分開報)。c2 = 命名 target 為 anchor。
 
 ### 3.3 Role 與 patch 分組
 
-anchor / referent、target、third object / distractor 各取 box 內 patch。background 分兩類
-分開報:(a) 有標注但非 role 的其他物件;(b) 不在任何標注 box 內。CLEVR 的 background
-對應 (b);transplant 的 background 組用 (b),regression 兩類都跑。
+anchor / referent、target、third object / distractor 各取 box 內 patch。background 分
+(a) 有標注但非 role 的物件、(b) 不在任何標注 box 內,分開報;transplant 的 background
+組用 (b),regression 兩類都跑。
 
 ### 3.4 Forward pass
 
-c0 無問句;c1 原題;c2 依題型(direct:指向 distractor 的配對題;spatial:換方向詞;
-same-as:命名 target);c3(spatial):換 anchor。與 CLEVR `relational_*_v2` 定義相同。
+c0 無問句;c1 原題;c2 依題型;c3(spatial)換 anchor。
 
-## 4. 要重現的觀察與預測(跑前登記)
+## 4. Primary 假設(四條;統計判準跑前凍結)
 
-預測以 CLEVR SigLIP 的結果為準(同 backbone);「通過」指方向與順序一致。標 ◇ 者在
-CLEVR 上已知 backbone-specific,列為探索,不設通過條件。
+通用統計規則:所有 CI 為 bootstrap by image(1,000 次,95%);「起始層」以預先定義的
+threshold 與 CI 下界決定,不以肉眼讀曲線;層的自由度以預先指定的層窗處理,全曲線另附。
 
-### 4.1 Direct query(GQA 訓練的模型;CLEVR 訓練的模型視 accuracy)
+### H1 — Referent selection generalizes
+語言條件化在自然場景中把被指涉物件相對於非指涉物件重新組織。
 
-| id | CLEVR 觀察 | GQA 測量 | 預測 |
+- **GQA 定義**(observational,S_eligible):V = c0 下 referent 的 patch mean 減 background (b)
+  的 patch mean(單位向量);selection contrast = referent 的 patch mean 在 V 上的投影
+  (c1 − c0)減 non-referent 的同一量(c2 − c0)。
+- **統計**:第 5 到 11 層(CLEVR SigLIP 的分裂層窗)的平均 contrast,bootstrap CI。
+- **通過**:CI 下界 > 0。輔以 decoder attention 的 referent / background per-patch
+  mass 比,CI 下界 > 1。
+- **Causal 對應**(secondary,S_correct):activation patching object 組 c1 ← c2。
+
+### H2 — Bound information becomes available downstream
+anchor 的任務相關性質在 relational target 被選出之前就可從 anchor 之外 decode。
+
+- **GQA 定義**(observational,S_eligible):spatial:從 background (b) 的 token 以 ridge
+  回歸 anchor 的 box 中心,ΔR² = R²(c1) − R²(c0),GroupKFold(5) by image;same-as:
+  從 background (b) 以 7-way probe 讀 anchor 的 colour,ΔAcc = Acc(c1) − Acc(c0)。
+- **k_condition**:第一個 ΔR²(或 ΔAcc)的 CI 下界 > 0.1 的層。
+- **k_target**(causal,S_correct):第一個 transplant target 組使 P(clean answer) 下降
+  ≥ 0.2 且 CI 不含 0 的層。
+- **統計**:ordering score = bootstrap 樣本中 k_condition < k_target 的比例。
+- **通過**:ordering score ≥ 0.9。
+- **leakage 控制**(§6):label-shuffled probe、category-matched split、
+  category-only baseline;ΔR² 是主量,不報 R²(c1) 單獨值。
+
+### H3 — Relation type determines the downstream computation
+feature comparison 顯示稀疏的 head 層級因果定位;spatial 未顯示同樣的稀疏定位。
+
+- **GQA 定義**(causal,S_correct):依固定規則(|c1 − c0| 的 SA attention 到 anchor
+  ≥ 10× median,上限 8 個)選 head,zero;Δ = accuracy 下降;random = 同數量 disjoint
+  隨機 head(3 個 seed)。
+- **統計**:interaction = (Δ_selected − Δ_random)_same − (Δ_selected − Δ_random)_spatial,
+  bootstrap CI。
+- **通過**:interaction 的 CI 下界 > 0。
+- **cumulative ablation curve**(primary 的一部分):同一 ranking 累積 ablate
+  m = 1, 2, 4, 8, 16, 32 個 head,對照 matched-random curve;報兩個題型的曲線與
+  「掉到 0.5 baseline 所需的 m」。
+- **解讀限制**:spatial 的 null 只寫成「spatial does not exhibit the sparse head-level
+  localization detected by this selection criterion」;不寫「distributed」,除非
+  cumulative curve 顯示 spatial 需要多個 head 才逐步下降而 same-as 前幾個就陡降。
+  null 不稱 evidence of absence,除非附 equivalence test(預先設 margin 0.05)。
+
+### H4 — Relational selection returns to a shared referential state
+被選出的 target 取得 direct query 的 referent representation。
+
+- **GQA 定義**(observational,S_eligible):V 取自 direct 題(H1)的 referent 方向;
+  relational 題中 target、anchor、third object 的 patch mean 在 V 上的投影 c1 − c0。
+- **統計**:第 9 到 11 層平均,target 減 third object 的差,bootstrap CI。
+- **通過**:CI 下界 > 0。
+- **causal 對應**(secondary,S_correct):把 direct 題 c1 的 referent 狀態 transplant
+  到 relational 題的 target patch,看答案是否維持。
+
+若 H1–H4 皆成立,故事為:binding → {attribute retrieval, feature-based reasoning,
+spatial reasoning} → shared target selection。任一不成立,該分支的主張撤回,不改判準。
+
+## 5. Secondary 與 exploratory(照報,不進 confirmatory 判準)
+
+| 原 id | 內容 | 地位 | 母體 |
 |---|---|---|---|
-| D1 | X21-C referent probe:referent 對 non-referent 的 per-patch probe 從中層起 ≥ 0.96,c0 為 0.50 | 同法,object patch 上 GroupKFold by image | 有起始層,c0 0.50 |
-| D2 | X21-A1/A2 selection contrast:refer-target 減 refer-distractor 在 no-question object direction 上的投影,SigLIP 第 5 層起;non-referent 被壓低 | V = c0 的 object patch mean 減 background (b) mean;同一投影 | 起始層存在;non-referent 投影低於 no-question |
-| D3 | X21-E attribute directions:own-colour 投影 referent 上升、non-referent 下降(SigLIP 第 7 層起分裂) | colour direction 由 scene graph 標色的物件(獨立影像集)difference-in-means 得到 | 分裂存在 |
-| D4 | X21-D1 decoder attention:referent ≫ background ≫ non-referent(SigLIP 113 : 1.8 : 0.1 ×1e-3) | 同法,依 role 分組 | referent 的 per-patch mass 至少 5× background |
-| D5 | X21-D2 activation patching:object token 從中層起帶答案,SigLIP 無第 11 層 background 步驟 ◇ | c1 ← c2 逐層換 object / background (b) | object 組有效;background 組是否有效列為探索 |
-| D6 | X21-B additive intervention:colour difference-in-means 加到 referent 上翻轉答案,random / background 對照為 0 | 同法,α ∈ {1, 2},逐層 | 翻轉率 ≥ 0.5 於某層;對照 ≤ 0.1 |
-| D7 | X21-H head scan:無單一 head 必要;整層 GCA 第 7 / 9 層 ablation 拿掉 selection | 同法,258 個 ablation | 單 head 中位 Δ ≈ 0;至少一整層 GCA 有效 |
-| D8 | X21-M2:attention 不是 high-norm artifact | 同法 | 排除 high-norm token 後比值不變 |
-| D9 | X21-D3:SigLIP 的 background 在深層帶 question type ◇ | c0 的 background 換入 | 探索 |
-| D10 | X21-A5:GCA write norm 無 role 選擇性,cos(write, V) ≤ 0.11 | 同法 | 一致 |
+| D1 | per-patch referent probe 起始層 | secondary | eligible |
+| D3 | attribute-specific direction 的分裂 | secondary | eligible |
+| D5 | activation patching(H1 的 causal 對應) | secondary | correct |
+| D6 | additive colour intervention 與對照 | secondary | correct |
+| D7 | 258 個單 head / 整層 ablation scan | secondary | correct |
+| D8 | attention 的 high-norm 控制 | secondary | eligible |
+| D9 | background 帶 question type(SigLIP-specific) | exploratory | correct |
+| D10 | GCA write norm 無 role 選擇性 | exploratory | eligible |
+| R0 | 行為:分離集、c2 移動比例 | secondary | eligible(行為本身) |
+| R3 | candidate → anchor 的 SA attention 峰 | secondary | eligible |
+| R5 | GCA write mask(anchor 未被 suppress) | exploratory | correct |
+| R6 | positional embedding 翻轉 | secondary | correct |
+| R7 | absolute → relative write field(DINOv2 s42-specific) | exploratory | eligible |
+| synthetic c2 全部 | | secondary,不 pool | — |
+| CLEVR 訓練的模型全部 | | secondary(transfer) | 其自身的 eligible / correct |
+| threshold robustness(1/2/3 patch) | | appendix | — |
 
-### 4.2 Relational(GQA 訓練的模型;spatial 的 colour 子集另用 CLEVR 訓練的模型跑)
+不可移植、留在 CLEVR 的觀察:template RSA(X21-A7/A8)、成對渲染的 additivity 與
+KMeans(X19)、無 GCA 模型(X20-C)。
 
-| id | CLEVR 觀察 | GQA 測量 | 預測 |
-|---|---|---|---|
-| R0 | X22-H7d 行為:答的是 anchor-relative 關係 | 分離集 accuracy 對整體;c2 答案移到 third object 的比例 | 分離集不低於整體 0.1;c2 移動 ≥ 0.6 |
-| R1 | X22-H1 / H2c 順序:anchor 先於 target 變 causally necessary | transplant 起始層 | anchor ≤ target |
-| R2 | X22-H2a:anchor 未被說出的 conditioning quantity 可從 background decode,早於 target 必要 | spatial:anchor 中心 ridge;same-as:anchor 的 colour 7-way | 起始層 < target 必要層 |
-| R3 | X22-H2b:candidate → anchor 的 SA attention c1 − c0 有峰 | `SAAttnCapture` | 峰存在 |
-| R4 | X22-H8:same-as 規則選出的 head ablation 掉 ≥ 0.15(SigLIP 0.98 → 0.61);spatial null | 同規則(|Δ| ≥ 10× median,上限 8),隨機對照 | same-as 掉、spatial 不掉;反向亦照報 |
-| R5 | X22-H5:anchor 用後未被 suppress;target 的最後 GCA 寫入才必要 ◇(SigLIP 全為 1.00) | `GCAWriteMasker` | 探索 |
-| R6 | X22-H7b:翻轉 positional embedding 沿 relation 軸使答案跟著翻;正交軸不變 | `PosEmbedEditor` | 沿軸翻轉錯誤率 ≥ 0.5,正交 ≤ 0.1 |
-| R7 | X22-H7c:absolute → relative 的 write field 切換 ◇(只在 DINOv2 s42) | regression 兩類 background | 探索 |
-| R8 | X22-H4:target 得到 direct query 的 referent direction | D2 的 V 投影於 target,c1 − c0 | target 投影上升 |
+CLEVR 訓練的模型的分析何時跑:不用 aggregate accuracy 門檻;需要 clean answer 的
+intervention 在其 S_correct 達到預先設定的最小 n(100)時跑,representational 分析在
+S_eligible 上一律跑。
 
-### 4.3 不可移植的觀察(論文明說留在 CLEVR)
+## 6. Probe 的 leakage 控制(H2、D1、D3 通用)
 
-- X19-3/4/5、X21-A7/A8 template RSA:需要逐位置相同的 background template 或成對渲染,
-  真實影像沒有。
-- X19-1/2 additivity 需要同一物件有無 distractor 的成對圖;真實影像只能做同 category
-  跨圖的弱版本,列選配。
-- X20-C −CA:需要 GQA 的無 GCA 模型;隔壁專案 grounding check 有 SigLIP no-CA 的 GQA
-  模型,若可取得只報行為。
-- X21-G/J 換被問 attribute:GQA 的 material / size 題數夠,列第二輪。
+1. c1 對 c0 的差(ΔR²、ΔAcc)為主量。
+2. label-shuffled probe(within image)給 chance 分布。
+3. category-matched split:train / test 的 anchor category 不重疊,排除「banana 預測
+   yellow」式的 category → attribute 捷徑。
+4. category-only baseline:只用 anchor category(one-hot)預測同一 label,報其 accuracy;
+   probe 必須顯著高於它。
+5. image-grouped CV(GroupKFold(5) by image)。
+6. same-as 的 colour probe 另限制到 colour entropy 高的 category(scene graph 中該
+   category 的顏色分布 entropy ≥ 1.5 bit)做子集分析。
 
-## 5. 控制組
+## 7. Human audit(blind)
 
-c0 無問句;transplant 與 patching 的 clean-self 對照每格 1.00;隨機 8 個 disjoint head;
-norm-matched random vector;random background rows;ridge 與 probe 用 GroupKFold(5) by
-image;R2 另以 c0 的 background 對照;CLEVR 訓練的模型的 chance 為 0.125。
+- 分層抽樣:direct、spatial、same-as 各 ≥ 50 題,總計 150–200;synthetic c2 另抽 50。
+- 審查者看不到模型答案與任何機制結果,只檢查:anchor / target assignment、box 品質、
+  relation 有效性、唯一性、synthetic c2 的語法與語意。
+- 至少一位審查者;兩位則報 agreement(Cohen's κ)。錯誤率 > 10% 的題型加全量複核
+  (只複核,不挑題)。
+- audit 在任何機制分析之前完成並凍結。
 
-## 6. 實作
+## 8. 控制組
 
-全部放在 `scripts/analysis/patch_language_condition.py`,不新開分析腳本:
-- `assign_roles` 新增 GQA 路徑(輸入 scene graph box、program 的 object id;幾何規則在
-  patch 座標上做),direct 題的配對與合成 c2 也在此。
-- 篩選為 CPU 步驟(`--gqa-filter`),輸出 `records.jsonl` 與 funnel 表。
-- 既有 flags 沿用:預設 extract、`--attr-directions`、`--intervene`、`--readout`、
-  `--head-scan`、`--attn-norm-control`、`--relational-v2` 系列、`--h7-posembed`、
-  `--h8-head-ablation`、`--h5-gca-mask`。
-- 輸出目錄 `outputs/analysis/patch_language_condition/gqa_{direct,spatial,same}/` 與
-  `gqa_{direct,spatial}_clevrmodel/`;舊目錄不動。
+c0 無問句;transplant 與 patching 的 clean-self 每格 1.00;disjoint 隨機 head(3 seed);
+norm-matched random vector;random background rows;label shuffle;category-only
+baseline;equivalence test 的 margin 0.05。
 
-## 7. 執行順序與成本(GPU 一次一件,先驗證 CVD=0)
+## 9. 實作
+
+全部放在 `scripts/analysis/patch_language_condition.py`:`assign_roles` 加 GQA 路徑
+(scene graph box、program object id、幾何規則、natural pair 配對、synthetic c2 生成與
+標記);`--gqa-filter` 為 CPU 篩選,輸出 `records.jsonl`、funnel 表(含每步排除原因與
+數量)、audit 抽樣清單;既有 flags 沿用;新增 `--h8-cumulative` 做 cumulative ablation
+curve;bootstrap 與 CI 統一在後處理。輸出目錄
+`outputs/analysis/patch_language_condition/gqa_{direct,spatial,same}/` 與
+`gqa_{direct,spatial}_clevrmodel/`。任何規則放寬記為 `x23_v2` 目錄,不覆蓋。
+
+## 10. 執行順序與成本(GPU 一次一件)
 
 | 步驟 | 內容 | 資源 |
 |---|---|---|
-| 0 | 三個題型的篩選、funnel、50 題抽查、CLEVR 訓練的模型的顏色子集計數 | CPU,一天 |
-| 1 | GQA 訓練的模型:c0–c3 feature cache、行為(R0)、D1/D2/D3/D8/D10 從 cache 算 | GPU 約 1.5 小時 + CPU |
-| 2 | GQA 訓練的模型:D5 patching、D6 intervention、R1 transplant | GPU 約 2 小時 |
-| 3 | GQA 訓練的模型:D4 decoder attention、R3 SA capture、R2/R7/R8 regression | GPU 30 分鐘 + CPU |
-| 4 | GQA 訓練的模型:D7 head scan、R4 head ablation、R5 mask、R6 pos-embed | GPU 約 1.5 小時 |
-| 5 | CLEVR 訓練的模型:行為;若 ≥ 0.3,重跑步驟 1–4 的 direct 與 spatial 部分 | GPU 約 3 小時 |
-| 6 | 圖與 JSON、JOURNAL、registry X23 | — |
+| 0 | 篩選、funnel、audit 抽樣與審查、threshold 三版本的母體 | CPU,一到兩天(含 audit) |
+| 1 | GQA 訓練的模型:c0–c3 cache;H1、H4、H2 的 observational 部分;D1/D3/D8/D10/R3 | GPU 約 1.5 小時 + CPU |
+| 2 | H2 的 k_target transplant;D5;D6 | GPU 約 2 小時 |
+| 3 | H3 head ablation + cumulative curve(same、spatial);D7;R6;R5 | GPU 約 2.5 小時 |
+| 4 | CLEVR 訓練的模型:同上,依最小 n 規則 | GPU 約 3 小時 |
+| 5 | bootstrap、圖、JSON、JOURNAL、registry X23 | CPU |
 
-步驟 0 出結果後再排 GPU;n 不足時放寬 3.2 第 7 條,記為新版本目錄。
+步驟 0 完成並凍結 threshold 後才排 GPU。
 
-## 8. 第二輪(視第一輪):RefCOCO+ 圖片、換被問 attribute
+## 11. 第二輪(視第一輪)
 
-本機 `/nfs/turbo/coe-chaijy/jungchun/data/refcocop` 有 19,992 張 COCO train2014 圖與 box
-及不含位置詞的 expression。以 GQA 模板措辭合成 spatial 與 direct 題,答案為 COCO
-category,篩選同 3.2,mask 從 COCO instances 標注補;先報行為,accuracy ≥ 0.4 才做機制。
-另以 GQA 的 material / size 題重跑 D3 / D6(對應 X21-G/J)。
+RefCOCO+ 圖片(本機 `data/refcocop`,19,992 張 COCO train2014 圖、box、不含位置詞的
+expression)以 GQA 模板合成 spatial 與 direct 題,篩選同 §3,mask 從 COCO instances 補;
+material / size 被問 attribute 的變體。
 
-## 9. 風險
+## 12. 風險
 
-- rel/query 子集 accuracy 約 0.5,clean 答對後 n 折半;以 funnel 報告並放寬規則。
-- scene graph 漏標使唯一性不成立;抽查錯誤率 > 10% 則加人工複核(只複核不挑題)。
-- 真實影像的 role 常很大或互相遮擋;IoU = 0 與 ≤ 30% 規則處理,另報 role 大小分層。
-- direct 的 c2 配對題不一定存在;合成 c2 的問句措辭與 GQA 生成句不同,分開報。
-- CLEVR 訓練的模型在分布外,可能連行為都不成立;此時結論是「機制需要在該領域訓練」,照報。
-- 只有一個真實影像 backbone;跨 backbone 主張留在 CLEVR,必要時再訓 DINOv2 GQA
-  (每 epoch 約 2 小時,18 epoch 約 36 小時)。
+- rel/query 子集 accuracy 約 0.5,S_correct 可能不足:coverage 照報;intervention 的
+  最小 n 為 100,未達則只報 observational。
+- scene graph 漏標:audit 錯誤率與全量複核規則。
+- natural pair 可能稀少:synthetic c2 為 secondary,不補進 primary。
+- 真實影像的 role 大或遮擋:IoU = 0 與 ≤ 30% 規則,另報 role 大小分層。
+- 單一真實影像 backbone:跨 backbone 主張留在 CLEVR。
+- checkpoint 非 independent(§2 聲明)。
 
-## 10. 記錄
+## 13. 學術倫理規則(寫進 registry,跑前提交)
 
-registry 新增 X23(本表);JOURNAL 在步驟 0 與每個 GPU 步驟後追加;結果先給使用者,網站與
-RESULTS 待使用者決定。
+- 所有 threshold、層窗、最小 n、equivalence margin 在看任何結果前凍結。
+- 篩選規則的任何放寬成為 X23-v2,原結果保留不覆蓋。
+- 同一 model / dataset 上重複探索後不稱 independent replication;用「held-out items,
+  not checkpoint-independent」。
+- observational probe 不稱 causal;null ablation 不稱 evidence of absence,除非附
+  equivalence 或 power analysis。
+- 公開報告 excluded-item 數量與排除原因(funnel)。
+- 結果無論方向全部報告;secondary / exploratory 不事後升級為 primary。
+
+## 14. 記錄
+
+registry 新增 X23(本表);JOURNAL 在步驟 0 與每個 GPU 步驟後追加;結果先給使用者,
+網站與 RESULTS 待使用者決定。
