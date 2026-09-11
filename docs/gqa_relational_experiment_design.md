@@ -143,10 +143,16 @@ criterion 一致的那個子集」,要這樣寫,不能寫成前者。
 取整為 2 保證兩個 role 之間至少隔一個非 role 的 patch,transplant 才不會同時碰到兩個
 物件。robustness:1、2、3 個 patch 三個版本都跑,附錄報 H2、H3 的效應是否穩定。
 
-**Same-as 只用 open query 的 245 題。** GQA 的 same 類多是 verify(「兩個是不是同色」),
-沒有一個被選出的 target 可以分析。open query 的模板「和 Y 同色的 X 是什麼」天然不說
-anchor 的顏色,正好滿足 H2 需要的「conditioning quantity 在問句裡未出現」。245 題篩完
-可能只剩幾十題,所以 same-as 的 n 會很小,每張圖都標 n,不因為 n 小而放寬規則。
+**Same-as 只用 open query 的 245 題,而且 attribute 的角色和 CLEVR 相反。** GQA 的
+same 類多是 verify(「兩個是不是同色」),沒有一個被選出的 target 可以分析。open query
+的模板「What is the [class] that has the same color as the [anchor]?」天然不說 anchor 的
+顏色,正好滿足 H2 需要的「conditioning quantity 在問句裡未出現」。但要注意角色對調:
+CLEVR 的 same-as 是 anchor 由顏色命名、共享的是 shape / material / size、問的是顏色;
+GQA 是 anchor 由 category 命名、共享的是顏色、問的是 category。所以 H2 在 GQA 上讀的是
+anchor 的顏色(對應 CLEVR 讀 anchor 的 shape),答案是 category 而不是顏色,X21-E 那類
+以顏色方向為軸的分析在 same-as 上不適用,論文明說。另外 c2(把 target 當 anchor 命名)
+只有在 anchor 也屬於問句裡的 class 詞(例如 animal)時才是合法問句,附錄 A 第 11 條加
+這個條件。245 題篩完可能只剩幾十題,每張圖都標 n,不因為 n 小而放寬規則。
 
 ## 6. 四條主假設
 
@@ -159,10 +165,11 @@ anchor 的顏色,正好滿足 H2 需要的「conditioning quantity 在問句裡�
 的第一步,不成立的話後面三條都沒有基礎。
 
 **怎麼量(observational,S_eligible)。** 取 c0 下 referent 的 patch mean 減 background (b)
-的 patch mean,單位化,叫 V;這是「這個物件在沒有問句時的方向」。selection contrast 是
-referent 在 V 上的投影從 c0 到 c1 的變化,減去 non-referent 在同一 V 上從 c0 到 c2 的
-變化。CLEVR 上這個 contrast 在 SigLIP 從第 5 層開始為正並持續到第 11 層,所以層窗取
-第 5 到 11 層的平均。
+的 patch mean,單位化,叫 V;這是「這個物件在沒有問句時的方向」。selection contrast 量
+的是**同一個物件**(c1 的 referent):它在 V 上的投影從 c0 到 c1 的變化(問句指向它),
+減去它從 c0 到 c2 的變化(問句指向另一個物件)。這與 X21-A1 的 Δ_ref − Δ_nonref 定義
+相同,都在同一物件上量,V 不變。CLEVR 上這個 contrast 在 SigLIP 從第 5 層開始為正並
+持續到第 11 層,所以層窗取第 5 到 11 層的平均。
 
 **通過。** contrast 的 CI 下界 > 0。輔助指標是 decoder attention 的 referent 對
 background 每 patch 的比值,CI 下界 > 1;CLEVR 上這個比值是 60 倍,真實影像上不預設倍數,
@@ -179,8 +186,13 @@ background 每 patch 的比值,CI 下界 > 1;CLEVR 上這個比值是 60 倍,真
 background 讀出,target 到第 9 層才變成必要。
 
 **怎麼量。** spatial:從 background (b) 的 token 用 ridge regression 回歸 anchor 的 box
-中心。same-as:從 background (b) 用 7-way probe 讀 anchor 的 colour。兩者的主量都是
-問句帶來的增量,ΔR² = R²(c1) − R²(c0) 和 ΔAcc = Acc(c1) − Acc(c0),不是 c1 的絕對值。
+中心。same-as:從 background (b) 用 k-way probe 讀 anchor 的 colour,k 為 eligible 集裡
+出現的顏色值數(GQA 的顏色詞比 CLEVR 的 7 種多)。兩者的主量都是問句帶來的增量,
+ΔR² = R²(c1) − R²(c0) 和 ΔAcc = Acc(c1) − Acc(c0),不是 c1 的絕對值。**這與 CLEVR 的
+操作定義不同**:X22-H1 的 spatial 探針是以 c1 − c0 的 token 差當輸入回歸 anchor 座標,
+H2a 的 same-as 探針是 c1 與 c0 分別報準確率。GQA 改用增量是為了 leakage 控制(§6 H2
+防呆),但為了可比,CLEVR SigLIP 的 cache 用同一個 ΔR² / ΔAcc 定義重算一次(CPU),
+兩種定義的 CLEVR 數字都報。
 k_condition 定義為第一個 ΔR²(或 ΔAcc)的 CI 下界超過 0.1 的層。k_target 是 causal 量,
 在 S_correct 上做:把 target 的 patch 換成 c2 版本,第一個使 P(clean answer) 下降 ≥ 0.2
 且 CI 不含 0 的層。
@@ -203,10 +215,14 @@ colour entropy 高的 category 子集。完整清單在附錄 B。
 CLEVR 上這是兩條 branch 最清楚的差異:same-as 關掉規則選出的 8 個 head 掉到 0.61
 (SigLIP),spatial 關掉同樣選出的 head 完全不動。
 
-**怎麼量(causal,S_correct)。** 用固定規則選 head:c1 − c0 的 SA attention 到 anchor
-的變化,|Δ| ≥ 10× median 的 cell,上限 8 個。zero 掉,量 accuracy 下降 Δ_selected。
-對照是同數量的 disjoint 隨機 head,3 個 seed,Δ_random。同時做 cumulative ablation:
-同一個 ranking 累積 zero 掉 1、2、4、8、16、32 個 head,對照 matched-random 曲線。
+**怎麼量(causal,S_correct)。** 用與 X22-H8 完全相同的規則選 head:統計量是
+**background patch → anchor patch** 的 SA attention mass 的 c1 − c0 變化,只看第 5 到
+10 層的 144 個 cell,|Δ| ≥ 10× median 的入選,上限 8 個。zero 掉,量 accuracy 下降
+Δ_selected。對照是同數量的 disjoint 隨機 head,Δ_random;CLEVR 用 2 個 seed,這裡用
+3 個(多一個,不少)。同時做 cumulative ablation:同一個 ranking 累積 zero 掉 1、2、4、
+8、16、32 個 head,對照 matched-random 曲線。cumulative curve 在 CLEVR 上沒做過,為了
+讓 interaction 可比,CLEVR SigLIP 的 same-as 與 spatial 也補跑同一條曲線(GPU 約 20
+分鐘),結果進 CLEVR 的 registry,不進 X23 的判準。
 
 **通過。** 判準是 interaction:(Δ_selected − Δ_random)_same 減
 (Δ_selected − Δ_random)_spatial,CI 下界 > 0。不用「same-as 顯著、spatial 不顯著」,因為
@@ -226,16 +242,24 @@ head-level localization detected by this selection criterion」;要寫「distrib
 這條讓兩條 branch 收斂回同一個讀出路徑,是「binding → 分支 → shared target selection」
 故事的最後一段。
 
-**怎麼量(observational,S_eligible)。** V 取自 direct 題,也就是 H1 的方向。relational
-題裡 target、anchor、third object 的 patch mean 在 V 上的投影從 c0 到 c1 的變化,取第 9
-到 11 層平均(CLEVR 上 target 的投影在這幾層上升)。
+**怎麼量(observational,S_eligible)。** 方向與 X22-H4 相同:**single-hop referent
+marker**,即 direct 題的 natural pair 上,referent 的 patch mean 在 c1(指向它)減 c2
+(指向另一物件)的平均差,逐層一個方向。這不是 H1 的 V(V 是沒有問句時物件自己的
+方向;marker 是問句帶來的「被指涉」方向,兩者在 CLEVR 上是不同的量,X21 分別報)。
+relational 題裡 target、anchor、third object 的 patch mean 在 marker 上的投影從 c0 到 c1
+的變化,取第 9 到 11 層平均。CLEVR 上 target 的投影主要在第 11 層上升(第 9 層 +0.9,
+第 11 層 +7.9),層窗含第 9 層是保守取法。
 
 **通過。** target 減 third object 的差,CI 下界 > 0。比的是 target 對 third object,而不是
 target 對零,因為問句本身會讓所有物件的投影都動,要看的是 target 有沒有被額外選出。
+不比 target 對 anchor:CLEVR 上 anchor 在第 11 層的投影不低於 target(DINOv2 +8.4 對
++7.9,s43 +6.4 對 +5.9),anchor 沒有被 de-mark,這是 X22-H4 記錄的 partial 結果;
+GQA 上 anchor 的投影照報,不進判準。
 
-**防呆。** V 從 direct 題算,和 relational 題的 role 無關,避免用 relational 題自己的資料
-定義方向再用同一批資料測。causal 對應(把 direct 題 c1 的 referent 狀態 transplant 到
-relational 題的 target patch,看答案是否維持)列 secondary。
+**防呆。** marker 從 direct 題算,和 relational 題的 role 無關,避免用 relational 題自己的
+資料定義方向再用同一批資料測。以 V 為方向的投影另列 secondary。causal 對應(把 direct
+題 c1 的 referent 狀態 transplant 到 relational 題的 target patch,看答案是否維持)列
+secondary。
 
 **四條的關係。** 都成立,故事是 binding → {attribute retrieval, feature-based reasoning,
 spatial reasoning} → shared target selection。H1 不成立,整節改成「機制未在真實影像上
@@ -268,8 +292,9 @@ spatial reasoning} → shared target selection。H1 不成立,整節改成「機
 | 距離門檻 1 / 2 / 3 patch | — | appendix | — |
 
 留在 CLEVR、不移植的:template RSA 需要逐位置相同的 background template;成對渲染的
-additivity 與 KMeans 需要同一物件有無 distractor 的孿生圖;無 GCA 模型需要 GQA 版本。
-論文明說這三類為什麼只在 CLEVR 有。
+additivity 與 KMeans 需要同一物件有無 distractor 的孿生圖;無 GCA 模型需要 GQA 版本;
+X21-A3 的「非指涉問句」(c3 = What color is the object?)在 GQA 沒有對應的原生題型,
+不合成。論文明說這四類為什麼只在 CLEVR 有。
 
 ## 8. 人工審查:為什麼要 blind、為什麼 50 題不夠
 
@@ -291,7 +316,7 @@ GPU 一次一件,先驗證 CVD=0。步驟 0 完成、所有門檻凍結之後才
 | 0 | 篩選、funnel、audit、三個門檻版本的母體;所有門檻凍結並提交 registry | CPU,一到兩天 |
 | 1 | GQA 訓練的模型:c0–c3 cache;H1、H4、H2 的 observational 部分;secondary 的 observational 項 | GPU 約 1.5 小時 + CPU |
 | 2 | H2 的 k_target transplant;patching;additive intervention | GPU 約 2 小時 |
-| 3 | H3 head ablation 與 cumulative curve;head scan;pos-embed;write mask | GPU 約 2.5 小時 |
+| 3 | H3 head ablation 與 cumulative curve;head scan;pos-embed;write mask;CLEVR SigLIP 補跑 cumulative curve | GPU 約 3 小時 |
 | 4 | CLEVR 訓練的模型:同上,依最小 n 規則 | GPU 約 3 小時 |
 | 5 | bootstrap、圖、JSON、JOURNAL、registry X23 | CPU |
 
@@ -361,7 +386,8 @@ Spatial:
 Same-as(open query 245 題):
 11. 問句不含 anchor 的 colour(模板天然滿足);場景中恰一個其他物件與 anchor 同色
     (target);另有一個不同色、與 target 同 category 的物件(third object;若無則取任一
-    不同色物件,分開報)。c2 = 把 target 當 anchor 命名。
+    不同色物件,分開報)。c2 = 把 target 當 anchor 命名,且 anchor 必須屬於問句的 class
+    詞(否則 c2 不是合法問句,該題排除並記數)。
 
 ## 附錄 B:probe 的 leakage 控制(H2 與所有 secondary probe 通用)
 
