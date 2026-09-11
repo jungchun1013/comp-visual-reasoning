@@ -67,6 +67,24 @@
   (decision pending with the user: audit the full S_eligible with model
   annotators and keep passing items, with a size floor for competing
   instances). Numbers recorded before any model output.
+- **2026-09-11 — X23 step 0c: visual selection over the whole S_eligible
+  (rules V1–V3 frozen in registry before running).** User decision: re-select
+  the items with fixed rules instead of sampling. V1 = every role object ≥ 4
+  patches (spatial 263 → 159, direct 1,016 → 640); V2 = Opus annotator on the
+  box-overlaid image, keep iff roles, boxes, relation, unique all true, with
+  `unique` counting only clearly visible competitors (≈ ≥ 4 patches, not
+  border-cut, not occluded); V3 = direct needs c2 true, spatial keeps the item
+  and drops a failed c2/c3. New function `visual_select` in
+  `src/analysis/gqa_roles.py`; outputs `x23_step0c_{spatial,direct}/`.
+  Result: spatial **35** questions / 27 images (c2 10, c3 18), direct **184**
+  / 148 images (45 CLEVR-answerable). Spatial loses items almost only on
+  `unique` (63 of 98 surviving boxes): GQA's queried kinds ("furniture",
+  "device") often have a second plausible answer on the same side, which is
+  question ambiguity rather than scene-graph omission; the left/right
+  relation itself held in 157 / 159. Direct loses on unique (149), roles
+  (125: wrong-object boxes, mislabels), boxes (109) and wrong listed colours
+  (54). 33 subagents, two chunks re-run after a rate limit; every chunk
+  complete. GPU steps still not started.
 
 - **2026-09-07 — Relational X22 (pre-registered; naming: "relational" =
   same-as + spatial). Stage C0 (CPU, existing caches) read against the

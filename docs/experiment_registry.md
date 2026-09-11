@@ -967,8 +967,47 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   of constructed counterfactuals; relaxed geometry preset as primary; background
   (b) redefined. Reasons and the first-version funnel (76 / 8 / 125) are in the
   design document §5a.
+- **Step 0 audit (2026-09-11, model annotators)**: eight Opus subagents
+  audited the blind samples (rule: tick only when confident). Four core checks
+  (roles, boxes, relation, unique) pass for 6 / 60 spatial, 10 / 60 direct,
+  2 / 25 same-as; `unique` is the main failure (scene-graph uniqueness is not
+  visual uniqueness), then 2–3-patch objects on cluttered regions and boxes
+  dominated by a neighbour. Answers: `x23_step0b_<mode>/audit/audit_answers_model.json`.
+  Same-as on GQA is dropped (2 usable items).
+- **Step 0c — visual selection (rules frozen 2026-09-11 before running)**:
+  applied to the whole S_eligible of step 0b (spatial 263, direct 1,016);
+  output `x23_step0c_{spatial,direct}/` (records, owner maps, funnel, all
+  annotator answers). Rules, in order: (V1) every role object covers ≥ 4
+  patches at the relaxed threshold (spatial 159, direct 640 survive; from
+  the records, no annotator); (V2) an Opus annotator sees the box-overlaid
+  image and the questions and marks roles / boxes / relation / unique / c2,
+  ticking only when confident; the item is kept iff roles, boxes, relation
+  and unique are all true. `unique` in this pass: a second instance of the
+  anchor's (direct: referent's) category counts as a competitor only if it is
+  clearly visible — roughly ≥ 4 grid patches, not cut off at the border, not
+  heavily occluded; tiny background instances are ignored. (V3) spatial:
+  a c2 / c3 whose check fails is removed from the item (has_c2 / has_c3 set
+  false) but the item stays; direct: the c2 check must pass (the pair defines
+  the third object), else the item is dropped. Annotators see no model
+  output. The populations S_eligible of every hypothesis are read from
+  step 0c from here on; 0b stays as the pre-audit funnel. Expected sizes at
+  the sampled pass rates are small (spatial tens, direct low hundreds) and
+  are reported as-is.
+- **Step 0c result (2026-09-11)**: 33 Opus annotators, 799 items, every
+  item answered. Funnel (first failing check in the order roles, boxes,
+  relation, unique): spatial 263 → V1 159 → roles 113 → boxes 98 → unique
+  **35** questions / 27 images (c2 10, c3 18; relation held in 157 / 159);
+  direct 1,016 → V1 640 → roles 515 → boxes 406 → relation 352 → unique 203
+  → c2 **184** questions / 148 images (45 answerable by the CLEVR model).
+  Outputs `x23_step0c_{spatial,direct}/` (records with `visual_audit` per
+  item, owner maps, funnel, `audit_answers_model_full.json`, all box-overlaid
+  images under `audit/`). Consequences: the CLEVR-trained model's transfer
+  interventions are below the n_correct ≥ 100 gate (45 eligible) and are
+  reported as behavioural only; spatial interventions use n ≤ 18 per
+  counterfactual and are reported with their CIs, no further relaxation
+  without a new directory.
 - **Status**: thresholds frozen with this entry; GPU steps 1–4 not started;
-  human audit pending (60 items per type, blind).
+  populations = step 0c.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

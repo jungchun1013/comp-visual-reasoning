@@ -698,6 +698,55 @@ def audit_page(out_dir, records, images_root, n_items, seed=42, max_width=560):
 # ---------------------------------------------------------------------------
 # driver
 # ---------------------------------------------------------------------------
+# step 0c: visual selection (registry X23 rules V1–V3)
+# ---------------------------------------------------------------------------
+
+VISUAL_CORE = ("roles", "boxes", "relation", "unique")
+
+
+def size_floor(records, mode, min_patches):
+    """V1: every role object covers >= min_patches patches (from the records)."""
+    roles = (lambda r: (r["A"], r["T"], r["D"])) if mode != "direct" else (lambda r: (r["T"], r["D"]))
+    return [i for i, r in enumerate(records) if all(r["objects"][j]["n_patches_cov"] >= min_patches for j in roles(r))]
+
+
+def visual_select(in_dir, out_dir, mode, answers, min_patches=4):
+    """Apply V1 (size floor) and V2/V3 (annotator answers keyed by question_id, values
+    with the VISUAL_CORE keys and 'c2') to the step-0b records of `in_dir`; write the
+    step-0c records / owner maps / funnel / answers to `out_dir`."""
+    in_dir, out_dir = Path(in_dir), Path(out_dir)
+    records = json.load(open(in_dir / "relational_records.json"))
+    owners = np.load(in_dir / "owner.npy")
+    fun = Funnel(len(records))
+    fun.steps["0 program shape"] = len(records)
+    keep_idx = set(size_floor(records, mode, min_patches))
+    kept, kept_owner = [], []
+    for i, r in enumerate(records):
+        qid = r["question_id"]
+        if i not in keep_idx:
+            fun.drop(qid, f"V1 role object < {min_patches} patches"); continue
+        a = answers.get(qid)
+        if a is None:
+            fun.drop(qid, "V2 not audited"); continue
+        bad = [k for k in VISUAL_CORE if not a.get(k)]
+        if bad:
+            fun.drop(qid, f"V2 {bad[0]} false"); continue
+        r = dict(r)
+        if mode == "direct":
+            if not a.get("c2"):
+                fun.drop(qid, "V3 c2 false"); continue
+        else:
+            if not a.get("c2"):                      # one flag covers c2 and c3 in the audit
+                r["has_c2"], r["has_c3"] = False, False
+        r["visual_audit"] = {k: bool(a.get(k)) for k in VISUAL_CORE + ("c2", "small", "multiple")}
+        r["visual_audit"]["note"] = a.get("note", "")
+        kept.append(r); kept_owner.append(owners[i])
+    fun.steps["final S_eligible"] = len(kept)
+    write_outputs(out_dir, mode, kept, kept_owner, fun)
+    with open(out_dir / "audit_answers_model_full.json", "w") as f:
+        json.dump(answers, f, indent=1)
+    return kept
+
 
 def run_filter(args, out_dir):
     """--gqa-filter MODE: S_eligible for MODE under both geometry presets and (spatial)
