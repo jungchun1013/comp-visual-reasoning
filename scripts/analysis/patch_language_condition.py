@@ -3990,7 +3990,8 @@ def plot_h7_posembed(res, label, out_path):
 
 # ---- H8: SA head ablation ----------------------------------------------------------
 
-def select_h8_heads(cache_dir, owners, n_scenes, return_ranking=False):
+def select_h8_heads(cache_dir, owners, n_scenes, return_ranking=False,
+                    measures=("bg_to_A", "candidate_to_A")):
     """Per (block, head) c1 − c0 change of (i) background-query mass on the anchor keys
     (sa_bg_from_anchor averaged over background patches) and (ii) candidate→anchor mass
     (mean of T→A and D→A from sa_mass). Rule: blocks H8_BLOCK_RANGE, |Δ| ≥ H8_RATIO ×
@@ -4004,6 +4005,8 @@ def select_h8_heads(cache_dir, owners, n_scenes, return_ranking=False):
         m = sa[c]["sa_mass"][:n_scenes].astype(np.float32)
         return 0.5 * (m[..., 1, 0] + m[..., 2, 0])
     delta = {"bg_to_A": (bg_to_A("c1") - bg_to_A("c0")).mean(0), "candidate_to_A": (cand_to_A("c1") - cand_to_A("c0")).mean(0)}
+    delta = {k: v for k, v in delta.items() if k in measures}     # the design registers bg_to_A only
+    assert delta, f"no measure left; measures={measures}"
     ratio, cells = {}, {}
     for name, D in delta.items():
         med = float(np.median(np.abs(D)))
@@ -4016,10 +4019,10 @@ def select_h8_heads(cache_dir, owners, n_scenes, return_ranking=False):
               f"{int((ratio[name][H8_BLOCK_RANGE[0]:H8_BLOCK_RANGE[1] + 1] >= H8_RATIO).sum())}")
     ranked = sorted(cells, key=lambda c: -cells[c])
     selected = ranked[:H8_MAX_HEADS]
-    info = {"n_meeting_rule": len(cells), "selected": [{"block": l, "head": h, "ratio": cells[(l, h)],
-                                                       "delta_bg_to_A": float(delta["bg_to_A"][l, h]),
-                                                       "delta_candidate_to_A": float(delta["candidate_to_A"][l, h])}
-                                                      for l, h in selected],
+    info = {"n_meeting_rule": len(cells), "measures": list(delta),
+            "selected": [{"block": l, "head": h, "ratio": cells[(l, h)]}
+                         | {f"delta_{k}": float(v[l, h]) for k, v in delta.items()}
+                         for l, h in selected],
             "median_abs_delta": {k: float(np.median(np.abs(v))) for k, v in delta.items()}}
     print(f"H8 selected {len(selected)} of {len(cells)} cells meeting the rule: "
           + " ".join(f"({l},{h},{cells[(l, h)]:.0f}x)" for l, h in selected))
@@ -4033,7 +4036,9 @@ def select_h8_heads(cache_dir, owners, n_scenes, return_ranking=False):
 
 def run_h8_head_ablation(out_dir, args, run, cache_dir, gca_layers, label):
     records, trunk, steervit = run.records, run.trunk, run.steervit
-    selected, info = select_h8_heads(cache_dir, run.owner.numpy(), run.N)
+    measures = ("bg_to_A",) if args.h8_measure == "background" else ("bg_to_A", "candidate_to_A")
+    selected, info = select_h8_heads(cache_dir, run.owner.numpy(), run.N, measures=measures)
+    info["h8_measure"] = args.h8_measure
     all_cells = [(l, h) for l in range(NUM_LAYERS) for h in range(trunk.blocks[0].attn.num_heads)]
     pool = [c for c in all_cells if c not in selected]
     rnd0 = [pool[k] for k in np.random.RandomState(0).choice(len(pool), len(selected), replace=False)]
@@ -5110,6 +5115,10 @@ def main():
     ap.add_argument("--intervene", action="store_true")
     ap.add_argument("--queried", default="color", choices=["color", "shape", "material", "size"],
                     help="queried attribute of every question (c1/c2 refer by another attribute)")
+    ap.add_argument("--h8-measure", default="both", choices=["both", "background"],
+                    help="head-selection statistic: 'background' is the rule the design "
+                         "registers (background patch → anchor SA mass only); 'both' is what "
+                         "the 2026-09-07/08 runs used (max over that and candidate → anchor)")
     ap.add_argument("--exclude-values", default="",
                     help="comma-separated queried-attribute values to drop from the pair selection "
                          "(e.g. cyan for the GQA-trained model, whose answer vocabulary lacks it)")

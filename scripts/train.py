@@ -201,6 +201,14 @@ def main(cfg: DictConfig):
         model = build_model(steervit, cfg)
         model = model.to(device)
 
+        if cfg.model.get("text_encoder", "roberta-large") == "learned":
+            # Build the word embedding NOW: it is otherwise created on the first text
+            # encoding, which happens after the optimizer is constructed below, so it
+            # would never appear in a parameter group and would never be updated.
+            steervit._init_word_embedding(cfg.data.get("root"))
+            assert any(p.requires_grad for p in steervit._word_embedding.parameters()), \
+                "learned word embedding must be trainable"
+
         # Lazy text encoding cache (saves ~23% of forward time from epoch 2+)
         # Not applicable for learned text encoder (no RoBERTa to cache)
         if cfg.get("text_cache", True) and cfg.model.get("text_encoder", "roberta-large") != "learned":

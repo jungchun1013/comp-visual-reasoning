@@ -109,7 +109,7 @@ def _load_main(ckpt, device):
     from model import CrossAttnViT
 
     fc_kwargs = {}
-    for key in ("use_gate", "condition_type", "feature_aggregation"):
+    for key in ("use_gate", "condition_type", "feature_aggregation", "text_encoder"):
         if key in cfg.model:
             fc_kwargs[key] = cfg.model[key]
     if cfg.model.get("text_cross_attn_layers") is not None:
@@ -120,6 +120,10 @@ def _load_main(ckpt, device):
         resolution=cfg.model.resolution,
         pretrained=cfg.model.get("pretrained", True),
         **fc_kwargs)
+    if getattr(steervit, "text_encoder_type", None) == "learned":
+        # the embedding is otherwise built on the first text encoding, i.e. after
+        # load_state_dict, so its saved weight would be dropped by strict=False
+        steervit._init_word_embedding()
 
     model_cfg = OmegaConf.create(
         {"model": cfg.model, "task": cfg.task, "data": cfg.data})
@@ -133,6 +137,14 @@ def _load_main(ckpt, device):
         vocab = build_clevr_decoder_vocab()
 
     model = model.to(device)
-    model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    incompatible = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    # Missing keys are normal here: the frozen backbone is rebuilt from pretrained weights
+    # and never saved. Unexpected keys are not: they are saved tensors with no destination
+    # in the reconstructed model, which strict=False would drop in silence.
+    if incompatible.unexpected_keys:
+        raise RuntimeError(
+            f"load_any_checkpoint: {len(incompatible.unexpected_keys)} saved tensors have no "
+            f"destination in the reconstructed model, so the reconstruction does not match the "
+            f"checkpoint: {list(incompatible.unexpected_keys)[:8]}")
     model.eval()
     return model, steervit, steervit.get_transforms(), vocab, task_type
