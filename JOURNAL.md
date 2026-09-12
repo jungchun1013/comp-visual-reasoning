@@ -230,9 +230,14 @@
   0.954 / 0.914, and the errors go to the third object, P(D) 0.18, not to the
   anchor, P(A) 0.00. Same-as SigLIP 0.977 → **0.628** [0.611], random 0.975 /
   0.966, P(D) 0.35. Spatial DINOv2 1.000 → **0.998** [0.998], random 0.998 /
-  0.964, while the block-11 absolute-position R² collapses 0.360 → 0.072
-  against 0.502 for a random set, the same shape as the earlier 0.36 → 0.03.
-  Spatial edge render 1.000 → 1.000, R² 0.344 → 0.064 against 0.495.
+  0.964. Spatial edge render 1.000 → 1.000.
+  Write-position R² for spatial DINOv2, predicting absolute anchor position at
+  block 11 from the c1 − c2 readout: 0.360 with no ablation, 0.072 with the
+  selected heads zeroed, 0.502 and 0.464 with the two random sets. Edge render
+  on the same quantity: 0.344, 0.064, 0.495. NOTE, unexplained: the random sets
+  land ABOVE the unablated value rather than near it, so this comparison is not
+  yet a clean control and must not be carried into a conclusion until that is
+  understood. The earlier run reported 0.36 → 0.03 for the selected set.
   **Interpretation changes in exactly one place.** The same-as claim does not
   depend on the undocumented second statistic and can be reported with the
   registered rule, citing the earlier selection as a sensitivity check. For
@@ -240,9 +245,15 @@
   accuracy unchanged" must not be used: under the registered rule none of the
   144 cells of blocks 5–10 reaches 10× the median, so there is no testable
   head set on that model, which is a different statement from a measured null.
-  The same-as SigLIP run has 14 qualifying cells on the same criterion, so the
-  contrast between the two relation types is sharper than before: only the
-  attribute-match task has heads that meet the registered criterion at all.
+  **Correction 2026-09-12, my own overclaim, flagged by Codex.** I first wrote
+  that only the attribute-match task has heads meeting the registered
+  criterion. That is false: spatial DINOv2 has 12 qualifying cells and the
+  edge render 12. The accurate statement is backbone-specific. On SigLIP the
+  same rule finds qualifying heads for same-as, 14 cells, and none for
+  spatial. On DINOv2 it finds them for both, 10 and 12 cells, but only the
+  same-as ablation damages the answer. Failing to find a head set and finding
+  one whose removal does nothing are different outcomes and must be reported
+  as such per relation type and per backbone.
 
 - **2026-09-12 — learned-text ablation repaired and retraining.** Fixes in
   commit 7f2d8e4, verified on the old checkpoint: the loader now forwards

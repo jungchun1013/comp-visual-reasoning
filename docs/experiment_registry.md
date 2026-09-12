@@ -896,11 +896,16 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
     default stays `both` so the recorded runs remain reproducible). Same-as
     survives unchanged: DINOv2 0.972 → 0.732 (was 0.744), SigLIP 0.977 →
     0.628 (was 0.611), random sets 0.91–0.98. Spatial DINOv2 and the edge
-    render keep accuracy at 0.998 / 1.000 with the block-11 absolute-position
-    R² collapsing 0.360 → 0.072 and 0.344 → 0.064. Spatial SigLIP selects
-    **0 heads** under the registered rule, so its earlier "null" is a
-    no-qualifying-head outcome, not a measured null; report it that way
-    (JOURNAL 2026-09-12).
+    render keep accuracy at 0.998 / 1.000. Spatial SigLIP selects **0 heads**
+    under the registered rule, so its earlier "null" is a no-qualifying-head
+    outcome, not a measured null; report it that way. The relation-type
+    contrast is backbone-specific: SigLIP yields qualifying heads for same-as
+    (14 cells) and none for spatial, while DINOv2 yields both (10 and 12) and
+    only the same-as ablation damages the answer. The block-11
+    absolute-position R² (0.360 none / 0.072 selected / 0.502 random on
+    spatial DINOv2) is NOT yet a usable control, because the random sets
+    exceed the unablated value for reasons not established (JOURNAL
+    2026-09-12).
   - H9 generality: the ordering results (H1, H2, H5(i), transplant windows)
     replicate on SigLIP and seed 43; numbers are not required to match.
 - **Controls fixed**: c0 no-question; transplant self-control (1.00);
