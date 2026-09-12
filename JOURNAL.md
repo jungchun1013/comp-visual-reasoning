@@ -207,6 +207,58 @@
   0.85 at block 5 and 0.98 at block 7 with one, stays a CLEVR-only claim for
   now. It cannot yet be said to extend to natural images.
 
+- **2026-09-12 — head selection redone under the rule the design actually
+  registers (background patch → anchor SA mass only). The same-as causal
+  result survives on both backbones with almost the same numbers; the spatial
+  SigLIP cell changes character, because under the registered rule NO head
+  meets the criterion at all.** New flag `--h8-measure {both,background}`,
+  default `both` so the 2026-09-07/08 runs stay reproducible; new dirs
+  `relational_*/h8_head_ablation_bgrule/`, old dirs untouched. User request
+  2026-09-12.
+  Selections, registered rule versus what the earlier runs used:
+
+  | run | registered rule | earlier rule |
+  |---|---|---|
+  | same-as DINOv2 | 8 of 10 cells: (8,5) (10,0) (9,7) (10,8) (8,6) (9,2) (7,7) (8,11) | 8 of 14: same but (7,2) (7,10) instead of (7,7) (8,11) |
+  | same-as SigLIP | 8 of 14: (5,6) (6,2) (5,9) (6,9) (5,1) (6,11) (6,4) (5,11) | 8 of 16: same but (5,5) instead of (5,11) |
+  | spatial DINOv2 | 8 of 12: (8,5) (7,7) (8,6) (9,7) (7,3) (10,0) (8,11) (7,11) | 8 of 13: same but (7,2) (7,10) instead of (8,11) (7,11) |
+  | spatial SigLIP | **0 of 0** | 3 of 3: (5,5) (5,6) (5,4) |
+  | spatial edge render | 8 of 12: identical to spatial DINOv2 | 8 of 13: (7,2) instead of (8,11) |
+
+  Ablation outcomes under the registered rule, with the earlier value in
+  brackets: same-as DINOv2 accuracy 0.972 → **0.732** [0.744], random sets
+  0.954 / 0.914, and the errors go to the third object, P(D) 0.18, not to the
+  anchor, P(A) 0.00. Same-as SigLIP 0.977 → **0.628** [0.611], random 0.975 /
+  0.966, P(D) 0.35. Spatial DINOv2 1.000 → **0.998** [0.998], random 0.998 /
+  0.964, while the block-11 absolute-position R² collapses 0.360 → 0.072
+  against 0.502 for a random set, the same shape as the earlier 0.36 → 0.03.
+  Spatial edge render 1.000 → 1.000, R² 0.344 → 0.064 against 0.495.
+  **Interpretation changes in exactly one place.** The same-as claim does not
+  depend on the undocumented second statistic and can be reported with the
+  registered rule, citing the earlier selection as a sensitivity check. For
+  spatial SigLIP the earlier sentence "zeroing the selected heads leaves
+  accuracy unchanged" must not be used: under the registered rule none of the
+  144 cells of blocks 5–10 reaches 10× the median, so there is no testable
+  head set on that model, which is a different statement from a measured null.
+  The same-as SigLIP run has 14 qualifying cells on the same criterion, so the
+  contrast between the two relation types is sharper than before: only the
+  attribute-match task has heads that meet the registered criterion at all.
+
+- **2026-09-12 — learned-text ablation repaired and retraining.** Fixes in
+  commit 7f2d8e4, verified on the old checkpoint: the loader now forwards
+  `text_encoder` and builds the word embedding before `load_state_dict`, so a
+  learned-text checkpoint reconstructs as learned with embedding (82, 768) and
+  weights equal to the file instead of coming back as RoBERTa; saved tensors
+  with no destination now raise instead of being dropped by `strict=False`;
+  `train.py` builds the embedding before the optimizer is constructed, with an
+  assertion that it is trainable. Retraining as
+  `clevr_dinov2_learned_text_decoder1l_v2_s42`, 16 epochs, started 10:35, the
+  2026-06 directory preserved. Trainable parameters now 25,939,493. Early
+  signal worth checking at the end: training accuracy reached 0.49 by step 200
+  of epoch 0, whereas the old run's recorded figures were 0.2456 final and
+  0.4667 windowed train accuracy, consistent with the old embedding having
+  been frozen at its random initialisation.
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
