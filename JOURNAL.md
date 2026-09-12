@@ -77,6 +77,26 @@
   selection mechanism learned on CLEVR does not carry over to real images;
   reported as behavioural + observational only (45 colour-answer items <
   the 100-item gate for interventions).
+  (reverse direction, user request: GQA-trained SigLIP on the CLEVR
+  query-attr pairs) `x23_gqamodel_clevr/`; same settings as the
+  CLEVR-trained SigLIP run `siglip/` (256 / grid 16, 64 background patches,
+  all pairs) with `--exclude-values cyan` (the GQA answer vocabulary holds
+  seven of the eight CLEVR colours, metal / rubber, large / small, yes / no;
+  no shapes, no numbers) → 215 pairs. Behaviour: c1 0.474, c2 0.433 (the
+  CLEVR-trained model 1.000 / 1.000); no question → target colour 0.033.
+  Decoder attention under c1 per token ×1e3: target 31.1, other object
+  28.8, background 2.9 (CLEVR-trained: target 113.1, other object 0.1,
+  background 1.8) — both objects attended alike, so the answer is a choice
+  between the two objects' colours at about chance (≈ 0.5). Selection
+  contrast Δ_ref ≈ 0 at blocks 0–10 (|Δ| ≤ 0.06), +0.47 at block 11;
+  Δ_nonref −0.12 at block 11; the CLEVR-trained model reaches +15.3 at block
+  5 and +28.7 at block 7. Only 12 pairs have both questions correct, so the
+  token-swap test is not informative. Conclusion for both directions: the
+  selection mechanism does not transfer across the CLEVR / GQA image
+  distributions in either direction — each model shows it only on the
+  distribution it was trained on. The claim "the same selection structure
+  appears on real images" therefore means learned anew on GQA, not carried
+  over.
 
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`

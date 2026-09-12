@@ -1034,6 +1034,12 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   (n = 3 / 12 per counterfactual); H3 rule selects 0 heads, cumulative
   curve no difference from random up to m = 8; CLEVR-trained model: H1
   +0.26 [−0.09, +0.64] not supported, referent / background attention 4.0.
+  Reverse direction (added 2026-09-12 at the user's request, not
+  pre-registered, behavioural + observational): GQA-trained SigLIP on the
+  CLEVR query-attr pairs (`x23_gqamodel_clevr/`, 215 pairs after excluding
+  cyan, `--exclude-values`): accuracy c1 0.474 / c2 0.433, decoder attention
+  target 31 vs other object 29 per token (CLEVR-trained 113 vs 0.1),
+  Δ_ref ≈ 0 through block 10 — no transfer in either direction.
 - **Status**: thresholds frozen with this entry; steps 1–4 run 2026-09-12
   (`x23_gqa_direct/`, `x23_gqa_spatial/` superseded for c2/c3 by
   `x23_gqa_spatial_v2/` — its H2 still running, `x23_gqa_spatial_v2_causal/`,

@@ -133,6 +133,11 @@ def prepare_subsets(n1_entries, n2_entries, args, out_dir, x19_pca_pairs):
     segmentation fails on either, write labels.json + masks_debug.png."""
     rng = np.random.RandomState(args.seed)
     cand = [i for i, e in enumerate(n2_entries) if seg_ok(e)]
+    excl = {v for v in (args.exclude_values or "").split(",") if v}
+    if excl:                                                  # values absent from the model's answer vocabulary
+        cand = [i for i in cand if n2_entries[i][QUERIED] not in excl
+                and all(d[QUERIED] not in excl for d in n2_entries[i]["distractors"])]
+        print(f"Pairs after excluding {sorted(excl)} as target/distractor {QUERIED}: {len(cand)}")
     if args.n_pairs and args.n_pairs < len(cand):
         cand = sorted(int(i) for i in rng.choice(cand, args.n_pairs, replace=False))
     print(f"Eligible pairs under the X19 segmentation filter: {len(cand)}")
@@ -5077,6 +5082,9 @@ def main():
     ap.add_argument("--intervene", action="store_true")
     ap.add_argument("--queried", default="color", choices=["color", "shape", "material", "size"],
                     help="queried attribute of every question (c1/c2 refer by another attribute)")
+    ap.add_argument("--exclude-values", default="",
+                    help="comma-separated queried-attribute values to drop from the pair selection "
+                         "(e.g. cyan for the GQA-trained model, whose answer vocabulary lacks it)")
     ap.add_argument("--head-combos", action="store_true",
                     help="only: keep/zero head subsets of GCA layers 7 and 9 (needs head_scan.json)")
     ap.add_argument("--head-scan", action="store_true",
