@@ -167,6 +167,46 @@
   RoBERTa model. Reconciliation order and which reruns to take is the user's
   call; nothing above has been rewritten.
 
+- **2026-09-12 (later) — the corrected anchor-position probe finished, and a
+  power control shows H2 is NOT DECIDABLE on the GQA spatial population at 27
+  images. The null is uninformative, not evidence against transport.** Dir
+  `x23_gqa_spatial_h2/`, cache-only from `x23_gqa_spatial_v2`, nothing in the
+  source directory touched.
+  Corrected probe, 35 questions / 27 images, 200 image bootstrap, blocks 0–11:
+  R² is negative in both conditions at every block, between −0.104 and −0.168;
+  ΔR² runs from −0.019 to −0.003 with every CI containing zero; the
+  image-level label shuffle gives +0.000 to +0.038. k_condition None, with 196
+  of 200 bootstrap replicates yielding no onset and 4 at block 11. H4 in the
+  same directory reproduces +1.74 [+0.90, +2.56] exactly, as expected since it
+  uses only c0 and c1.
+  **Power control** (`/home/jungchun/.claude/jobs/4060016c/tmp/h2_power.py`):
+  the same estimator, same image-grouped CV, asked to recover the anchor
+  centroid from the ANCHOR'S OWN patches, which carry the position by
+  construction through the positional embedding. R² blocks 0 / 5 / 9 / 11:
+  +0.234 / +0.180 / −0.224 / −0.098 without a question and +0.234 / +0.220 /
+  −0.023 / −0.075 with one; background (b) is −0.168 / −0.110 / −0.110 /
+  −0.119 and −0.168 / −0.118 / −0.115 / −0.139. So the estimator cannot
+  recover position even where it must be present, and absolute R² never
+  approaches the registered ΔR² threshold of 0.1. Two causes, both structural:
+  deeper ViT tokens mix positions through attention so single-token absolute
+  position stops being linearly recoverable, and the label takes only 27
+  distinct values while image-grouped CV forces extrapolation to positions
+  never seen in training.
+  **Consequence for the record**: H2 on GQA must be reported as not testable
+  at this sample size, never as "the anchor's position is not transported".
+  The registered k_condition criterion was unreachable from the start on this
+  population, which is a design fault, not a result. Making it testable is
+  bounded by the number of images, not by code: relaxing the population back
+  toward the 157 images available before the visual-selection rules would
+  abandon step 0c; changing the target from an absolute centroid to a
+  relative or ordinal quantity would raise label coverage; a within-image
+  token-position decoding would let each image contribute many distinct
+  labels. Not chosen; the user decides.
+  Framing consequence: the CLEVR result that the anchor's shared attribute
+  becomes decodable from background patches, 0.60 without a question versus
+  0.85 at block 5 and 0.98 at block 7 with one, stays a CLEVR-only claim for
+  now. It cannot yet be said to extend to natural images.
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module

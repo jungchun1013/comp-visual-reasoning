@@ -1029,8 +1029,13 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   head ablation.
 - **Results (2026-09-12, JOURNAL same day)**: H1 pass on query attr
   (+2.21 [+1.83, +2.61], n = 184); H4 pass on spatial (+1.74 [+0.90,
-  +2.56], n = 35); H2 not supported under the fixed-alpha probe
-  (`x23_gqa_spatial/`), RidgeCV rerun pending; transplant k_target None
+  +2.56], n = 35); **H2 not decidable on this population** — the corrected
+  probe (`x23_gqa_spatial_h2/`, image-grouped alpha, leakage-free bootstrap)
+  gives ΔR² −0.019 to −0.003 with every CI containing zero and k_condition
+  None, but a power control recovering the anchor centroid from the anchor's
+  own patches reaches only R² +0.234 at block 0 and is negative by block 9,
+  so the registered threshold of 0.1 is unreachable at 27 images; report as
+  untestable, never as evidence against transport (JOURNAL 2026-09-12 later); transplant k_target None
   (n = 3 / 12 per counterfactual); H3 rule selects 0 heads, cumulative
   curve no difference from random up to m = 8; CLEVR-trained model: H1
   +0.26 [−0.09, +0.64] not supported, referent / background attention 4.0.
