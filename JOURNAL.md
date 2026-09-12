@@ -98,6 +98,75 @@
   appears on real images" therefore means learned anew on GQA, not carried
   over.
 
+- **2026-09-12 (later, correction note) — an external review pass raised seven
+  findings; I verified every one against the code and the saved artifacts.
+  Three of them affect statements in the entry above, which stands as written
+  for the record but must not be quoted without these corrections.** Review
+  brief at repo root `REVIEW_2026-09-12.md`.
+  (1) **H1 used a different statistic and a different population from the
+  preregistration.** Design `docs/gqa_relational_experiment_design.md:213`
+  registers the SAME-object quantity proj_V(c1) − proj_V(c2) of the referent,
+  which the code stores as `ref`; the entry above reports `contrast`, which
+  additionally subtracts the other object's analogous difference. The design's
+  eligibility appendix also gives the CLEVR-trained model its own population,
+  answers within the eight CLEVR colours. Recomputed with both registered
+  choices (cache-only, `/home/jungchun/.claude/jobs/4060016c/tmp/h1_registered.py`):
+  GQA-trained `ref` 184 items +1.174 [+0.872, +1.490], 45-item colour subset
+  +1.855 [+1.219, +2.540]; CLEVR-trained `ref` 184 items +0.331 [+0.029,
+  +0.651], 45-item colour subset +0.290 [−0.388, +1.132]. So H1 passes for the
+  GQA-trained model under every combination, and the no-transfer verdict for
+  the CLEVR-trained model holds ONLY on the registered 45-item population; on
+  all 184 items the registered statistic has a CI above zero. The
+  informative contrast is `nonref`: −1.040 for the GQA-trained model versus
+  +0.068 for the CLEVR-trained one, i.e. what transfer lacks is the
+  suppression of the other object.
+  (2) **"marker projection identical for target and other object" is wrong.**
+  The saved direct sanity statistic for the CLEVR-trained model is T − D
+  +0.287 [+0.060, +0.503]; small, CI excluding zero, and in-sample, so it is
+  not independent H4 evidence either way.
+  (3) **The anchor-position probe had image leakage in its bootstrap.** Images
+  were resampled and each occurrence was given a NEW group id, so copies of
+  one image fell into different CV folds; reproduced at 27 images with 3 / 3 /
+  1 / 1 / 2 originals shared between train and test per fold. Same function:
+  alpha selected at token level, one independent image draw per block combined
+  into onset samples, label shuffle at record level. Fixed in this commit:
+  image-grouped alpha, bootstrap preserving original image identity, one draw
+  shared by all blocks, image-level shuffle. Two registered controls remain
+  UNIMPLEMENTED and are marked as such, category-matched split and
+  category-only baseline (design lines 261-262, 455-457). The old spatial
+  rerun `x23_gqa_spatial_v2` crashed in `RidgeCV`'s SVD at block 1 after four
+  hours and never wrote `x23_results.json`; the corrected probe runs
+  cache-only into `x23_gqa_spatial_h2`. H4 there reproduces +1.74 [+0.90,
+  +2.56] exactly, as expected since H4 uses only c0 and c1.
+  Findings that do NOT invalidate any reported number, with the scoping I
+  verified: the stray `ㄥ` at `src/data/gqa.py:1` was introduced 2026-08-06,
+  after the GQA checkpoint was trained 2026-06-14, so it breaks reproduction
+  only; the loader's CLEVR-vocab-for-GQA bug exposes ten callers but no eval
+  output references a GQA decoder checkpoint, so it is latent; the trained
+  pooled probe fits PCA before CV while the raw-backbone probe fits it inside
+  the fold, but the two tables use different stimuli and labels and are never
+  compared like for like.
+  Findings that DO affect earlier relational claims: the head-selection rule
+  is documented as background→anchor only but implemented as the maximum over
+  background→anchor and candidate→anchor. Recomputed from the saved deltas,
+  the heads that only the undocumented measure selects are 2 of 8 for same-as
+  DINOv2, 1 of 8 for same-as SigLIP, 1 of 8 for spatial DINOv2, 1 of 8 for the
+  edge render, and 3 of 3 for spatial SigLIP. So the same-as causal claim
+  0.972 → 0.744 rests on a set that is 6/8 compliant, and the spatial SigLIP
+  null changes character: under the documented rule NO head meets the
+  criterion, which is a different statement from "the selected heads had no
+  effect". Also the spatial sample shares 2 of its 27 images with the
+  direct marker source, image ids 2400661 and 2407031. Learned-text: the
+  embedding is created lazily on first text encoding while the optimizer is
+  built before any forward, and the saved checkpoint has 61 model tensors
+  against 60 optimizer params with no (82, 768) state and an embedding weight
+  norm of 250.67, the untouched-init value; the loader also omits
+  `text_encoder` when rebuilding, so evaluation reconstructs RoBERTa and
+  `strict=False` drops `steervit._word_embedding.weight` silently. That
+  ablation therefore trained a frozen random embedding and was evaluated as a
+  RoBERTa model. Reconciliation order and which reruns to take is the user's
+  call; nothing above has been rewritten.
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module

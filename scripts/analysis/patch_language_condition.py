@@ -2773,15 +2773,34 @@ def gqa_h2_position_probe(caches, records, grid, groups, n_boot=200, seed=0):
     img = tabs["c0"][1]
     N = len(records)
 
-    def r2_cv(X, y, groups, rng):
-        pred = np.zeros_like(y)
+    alphas = np.logspace(0, 5, 11)
+
+    def image_folds(groups, rng):
         ug = np.unique(groups)
-        folds = np.array_split(rng.permutation(ug), 5)
-        for te_g in folds:
-            te = np.isin(groups, te_g)
+        return [np.isin(groups, te_g) for te_g in np.array_split(rng.permutation(ug), 5)]
+
+    def grouped_alpha(X, y, groups, rng):
+        """Alpha with the lowest image-grouped 5-fold MSE (RidgeCV's built-in selection is
+        leave-one-token-out; tokens of one image share the label, so it would leak)."""
+        err = np.zeros(len(alphas))
+        for te in image_folds(groups, rng):
             if te.all() or not te.any():
                 continue
-            model = make_pipeline(StandardScaler(), RidgeCV(alphas=np.logspace(0, 5, 11)))   # alpha by inner CV on the training fold
+            sc = StandardScaler().fit(X[~te])
+            Xtr, Xte = sc.transform(X[~te]), sc.transform(X[te])
+            for k, a in enumerate(alphas):
+                err[k] += ((Ridge(alpha=a).fit(Xtr, y[~te]).predict(Xte) - y[te]) ** 2).sum()
+        return float(alphas[int(err.argmin())])
+
+    def r2_cv(X, y, groups, rng, alpha=None):
+        """Held-out R² with image-grouped 5-fold CV; alpha chosen per training fold by
+        grouped_alpha unless given (the bootstrap reuses the point-estimate alpha)."""
+        pred = np.zeros_like(y)
+        for te in image_folds(groups, rng):
+            if te.all() or not te.any():
+                continue
+            a = alpha if alpha is not None else grouped_alpha(X[~te], y[~te], groups[~te], np.random.RandomState(1))
+            model = make_pipeline(StandardScaler(), Ridge(alpha=a))
             model.fit(X[~te], y[~te])
             pred[te] = model.predict(X[te])
         return float(r2_score(y, pred))
@@ -2790,12 +2809,20 @@ def gqa_h2_position_probe(caches, records, grid, groups, n_boot=200, seed=0):
     res = {"n_questions": N, "n_images": int(len(np.unique(groups))), "n_tokens": int(len(img)),
            "delta_r2_threshold": X23_H2_DELTA_R2,
            "r2": {"c0": [], "c1": [], "c0_shuffled": [], "c1_shuffled": []}, "delta_r2": [], "delta_r2_shuffled": []}
-    perm = rng.permutation(N)
     y = y_img[img]
-    y_sh = y_img[perm][img]
-    tok_group = np.asarray(groups)[img]                                              # image id per token (CV folds and bootstrap by image)
+    rec_group = np.asarray(groups)                                                   # image id per record
+    uimg = np.unique(rec_group)
+    pos_of_img = {m: k for k, m in enumerate(uimg)}
+    rep_of_img = {m: int(np.nonzero(rec_group == m)[0][0]) for m in uimg}             # one record per image
+    perm_img = rng.permutation(len(uimg))                                            # label shuffle AT IMAGE LEVEL
+    y_sh = np.stack([y_img[rep_of_img[uimg[perm_img[pos_of_img[rec_group[i]]]]]] for i in range(N)])[img]
+    tok_group = rec_group[img]                                                       # image id per token (CV folds and bootstrap by image)
     ug = np.unique(tok_group)
     rows_of = {g: np.nonzero(tok_group == g)[0] for g in ug}
+    # One image draw per bootstrap replicate, shared by every block and both conditions, so
+    # that the per-replicate ΔR² values can be combined across blocks into onset samples.
+    brng = np.random.RandomState(seed + 1)
+    picks = [ug[brng.randint(0, len(ug), len(ug))] for _ in range(n_boot)]
     per_block_boot = []
     for l in range(NUM_LAYERS):
         X = {c: tabs[c][0][:, l, :].astype(np.float32) for c in ("c0", "c1")}
@@ -2803,13 +2830,14 @@ def gqa_h2_position_probe(caches, records, grid, groups, n_boot=200, seed=0):
         r_sh = {c: r2_cv(X[c], y_sh, tok_group, np.random.RandomState(seed)) for c in ("c0", "c1")}
         for c in ("c0", "c1"):
             res["r2"][c].append(r[c]); res["r2"][f"{c}_shuffled"].append(r_sh[c])
+        alpha_l = {c: grouped_alpha(X[c], y, tok_group, np.random.RandomState(1)) for c in ("c0", "c1")}
         boots = []
-        brng = np.random.RandomState(seed + 1 + l)
-        for _ in range(n_boot):
-            pick = ug[brng.randint(0, len(ug), len(ug))]                              # resample images
+        for pick in picks:
             rows = np.concatenate([rows_of[p] for p in pick])
-            g = np.concatenate([np.full(len(rows_of[p]), k) for k, p in enumerate(pick)])
-            rb = {c: r2_cv(X[c][rows], y[rows], g, np.random.RandomState(0)) for c in ("c0", "c1")}
+            # group = the ORIGINAL image id, so every copy of one image stays in one fold
+            g = np.concatenate([np.full(len(rows_of[p]), p) for p in pick])
+            rb = {c: r2_cv(X[c][rows], y[rows], g, np.random.RandomState(0), alpha=alpha_l[c])
+                  for c in ("c0", "c1")}
             boots.append(rb["c1"] - rb["c0"])
         boots = np.array(boots)
         res["delta_r2"].append({"mean": r["c1"] - r["c0"], "lo": float(np.percentile(boots, 2.5)),
