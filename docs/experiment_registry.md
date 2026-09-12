@@ -1006,8 +1006,38 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   reported as behavioural only; spatial interventions use n ≤ 18 per
   counterfactual and are reported with their CIs, no further relaxation
   without a new directory.
-- **Status**: thresholds frozen with this entry; GPU steps 1–4 not started;
-  populations = step 0c.
+- **H2 probe method and its lineage (recorded 2026-09-12 at the user's
+  request)**: the anchor-position probe is a linear decoding probe in the
+  sense of Alain & Bengio 2016 / Belinkov 2022 — a linear read-out from
+  background (b) tokens to the anchor centroid, so that held-out R² can be
+  attributed to the representation rather than to the read-out's own
+  capacity. Ridge regression for a continuous target with the regularisation
+  strength chosen by inner cross-validation and held-out R² reported follows
+  Gurnee & Tegmark 2024 (space/time probes on the residual stream) and the
+  neuroscience encoding/decoding practice (Naselaris et al. 2011, Huth et al.
+  2016); cross-validation grouped by image prevents leakage from correlated
+  tokens of the same picture; the shuffled-label run is the control task of
+  Hewitt & Liang 2019. The CLEVR version (X22 `_ridge_r2`: Ridge alpha = 1,
+  GroupKFold(5) by scene, mean R²) is the simplified form — alpha was not
+  literature-derived; with ~500 scenes per condition it mattered little. On
+  GQA (27 images) a fixed alpha (10) gave negative R² at every block
+  (`x23_gqa_spatial/`, kept), so the GQA version (`gqa_h2_position_probe`,
+  `x23_gqa_spatial_v2/`) selects alpha by RidgeCV on the training fold,
+  adds the shuffled-label control and an image bootstrap (200, refit) for
+  the ΔR² CI; the k_condition rule (ΔR² CI lower > 0.1) is unchanged. The
+  probe is correlational evidence only; causal claims rest on transplant and
+  head ablation.
+- **Results (2026-09-12, JOURNAL same day)**: H1 pass on query attr
+  (+2.21 [+1.83, +2.61], n = 184); H4 pass on spatial (+1.74 [+0.90,
+  +2.56], n = 35); H2 not supported under the fixed-alpha probe
+  (`x23_gqa_spatial/`), RidgeCV rerun pending; transplant k_target None
+  (n = 3 / 12 per counterfactual); H3 rule selects 0 heads, cumulative
+  curve no difference from random up to m = 8; CLEVR-trained model: H1
+  +0.26 [−0.09, +0.64] not supported, referent / background attention 4.0.
+- **Status**: thresholds frozen with this entry; steps 1–4 run 2026-09-12
+  (`x23_gqa_direct/`, `x23_gqa_spatial/` superseded for c2/c3 by
+  `x23_gqa_spatial_v2/` — its H2 still running, `x23_gqa_spatial_v2_causal/`,
+  `x23_clevrmodel_direct/`); populations = step 0c.
 
 ## Part 2 — Design-consistency findings (D1–D11)
 

@@ -22,6 +22,62 @@
 ## Today's Progress
 > [!NOTE] Append entries as work happens. Write so a stranger understands three months later.
 
+- **2026-09-12 — X23 steps 1–4 on the step-0c populations (GQA-trained
+  SigLIP `gqa_siglip_decoder1l_scratch_s42`; CLEVR-trained SigLIP as the
+  transfer model): the query-attr selection contrast and the marker
+  projection reproduce on real images; the spatial interventions are
+  underpowered and the head-selection rule selects nothing; the
+  CLEVR-trained model does not transfer.** Driver `--gqa-run
+  {direct,spatial}` / `--gqa-causal` in `patch_language_condition.py`
+  (60f4c64). Directories `x23_gqa_direct/`, `x23_gqa_spatial/` (first run;
+  its c2/c3 subsets 12/23 ignored `has_c2/has_c3` and its H2 probe used a
+  fixed Ridge alpha = 10 → superseded, kept), `x23_gqa_spatial_v2/`
+  (subsets 10/18, RidgeCV probe; H2 still running at the time of writing),
+  `x23_gqa_spatial_v2_causal/`, `x23_clevrmodel_direct/`. Loader note:
+  `load_any_checkpoint` returns the CLEVR vocabulary for GQA checkpoints;
+  the driver uses `model.vocab` (1,500 GQA answers).
+  (query attr, n = 184 / 148 images) accuracy c1 0.679, c2 0.663 (all
+  answers in vocabulary). Decoder cross-attention per patch ×1e3: referent
+  35.7, other object 2.6, background (b) 3.0, other objects' patches 2.1;
+  referent / background (b) = 106 [37, 243]. (H1 — pass) selection contrast
+  over blocks 5–11 with per-image V: +2.21 [+1.83, +2.61]; global V +5.17
+  [+4.68, +5.64]; onset block 7, referent rises and the other object falls
+  under the clean question relative to the paired question — the same shape
+  as on CLEVR SigLIP. In-sample marker sanity T − D +7.43 [6.57, 8.27].
+  (spatial, n = 35 / 27 images; c2 10, c3 18) accuracy c1 0.571, c2 0.700,
+  c3 0.667. Decoder attention c1 ×1e3: anchor 14.2, target 15.1, third
+  object 5.3, background (b) 2.1; referent / background (b) 11.7 [7.2, 17.3]
+  (first run, same images). (H4 — pass) marker from the query-attr pairs
+  (c1 − c2 referent mean), projection of the spatial c1 − c0 change over
+  blocks 9–11: target − third object +1.74 [+0.90, +2.56]; the anchor also
+  rises at block 11 (+1.9). (H2 observational, first run, alpha = 10) R²
+  negative at every block, ΔR² CI never above 0.1, k_condition None —
+  overfit with 27 images; the RidgeCV rerun is pending (see next entry).
+  (transplant, items with clean and donor answers both correct) anchor
+  swapped from the other-anchor question (n = 12): P(clean answer) 1.00
+  through block 6, 0.92 at blocks 7–11; relation word flipped (n = 3):
+  third-object tokens 0.67 at blocks 7–10, 0.33 at 11, anchor and target
+  1.00; self-control (n = 20) 1.00 everywhere. k_target None (no block
+  reaches a 0.2 drop with CI excluding 0) — the counterfactual subsets are
+  too small for the rule. (H3 on GQA) the X22-H8 rule (|c1 − c0| ≥ 10× the
+  median SA mass onto the anchor) selects **0 heads** of the blocks 5–10
+  cells, so Δ_selected − Δ_random = 0 by construction. Cumulative curve
+  (top-m ranked cells zeroed vs m random, n = 20 clean-correct): m = 1 / 2 /
+  4 / 8 drops 0.00 / 0.05 / 0.05 / 0.15 vs random 0.02 / 0.08 / 0.08 / 0.18
+  (differences −0.02 to −0.03, CIs include 0); m = 16 ranked 0.15 vs random
+  0.47 (−0.32 [−0.46, −0.18]); m = 32 both collapse (0.65 vs 0.72). As on
+  CLEVR, the heads that read the anchor are not needed for the spatial
+  answer; on GQA the c1 − c0 attention change is too weak to select any.
+  (CLEVR-trained model on the query-attr items) 97 of 184 answers are in the
+  CLEVR vocabulary; accuracy 0.136 overall, 0.258 on those 97 (c2 0.120 /
+  0.239). Decoder attention c1 ×1e3: referent 7.1, other object 8.9,
+  background 3.7 — no preference for the referent (ratio 4.0 [2.8, 5.4] vs
+  106 for the GQA-trained model). H1 contrast +0.26 [−0.09, +0.64] — not
+  supported; marker projection identical for target and other object. The
+  selection mechanism learned on CLEVR does not carry over to real images;
+  reported as behavioural + observational only (45 colour-answer items <
+  the 100-item gate for interventions).
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
