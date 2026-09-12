@@ -42,7 +42,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from scipy.stats import spearmanr
-from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.linear_model import LogisticRegression, Ridge, RidgeCV
 from sklearn.metrics import r2_score
 from sklearn.model_selection import GroupKFold, LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
@@ -2602,6 +2602,670 @@ def plot_relational_write_position(res, label, out_path):
     print(f"Saved: {out_path}")
 
 
+# ---------------------------------------------------------------------------
+# X23: the same measurements on GQA (real images). Records come from
+# analysis.gqa_roles (step 0c); conditions are taken per record because spatial
+# records differ in c2 / c3 availability (index_{cond}.npy maps a cache row to
+# its record). Bootstrap CIs resample images (several questions share an image).
+# ---------------------------------------------------------------------------
+
+X23_H1_WINDOW = (5, 11)      # blocks averaged for the H1 selection contrast (inclusive)
+X23_H4_WINDOW = (9, 11)      # blocks averaged for the H4 marker projection
+X23_H2_DELTA_R2 = 0.1        # k_condition = first block whose ΔR² CI lower bound exceeds this
+
+
+def _gqa_has(r, cond):
+    """A record has condition `cond` when the question exists and step 0c did not
+    clear its has_c2 / has_c3 flag (failed counterfactual)."""
+    return cond in r["questions"] and r.get(f"has_{cond}", True)
+
+
+def _group_boot(x, groups, n=1000, seed=0):
+    """Mean of x with a 95 % bootstrap CI that resamples groups (images), not rows."""
+    x, groups = np.asarray(x, dtype=np.float64), np.asarray(groups)
+    ok = np.isfinite(x)
+    x, groups = x[ok], groups[ok]
+    if len(x) == 0:
+        return {"mean": float("nan"), "lo": float("nan"), "hi": float("nan"), "n": 0, "n_groups": 0}
+    ug, inv = np.unique(groups, return_inverse=True)
+    sums, cnts = np.bincount(inv, x), np.bincount(inv).astype(np.float64)
+    rng = np.random.RandomState(seed)
+    m = np.empty(n)
+    for k in range(n):
+        pick = rng.randint(0, len(ug), len(ug))
+        m[k] = sums[pick].sum() / cnts[pick].sum()
+    return {"mean": float(x.mean()), "lo": float(np.percentile(m, 2.5)), "hi": float(np.percentile(m, 97.5)),
+            "n": int(len(x)), "n_groups": int(len(ug))}
+
+
+def _gqa_role_means(cache, records, n_obj):
+    """Per cache row and block: mean normed token of each owner id 1..n_obj and of the
+    background (b) sample (owner 0 in the sparse cache = record['bg_sample'])."""
+    tok, img, own = cache["tok"], cache["tok_img"].astype(int), cache["tok_owner"].astype(int)
+    N = int(img.max()) + 1
+    out = np.full((N, n_obj + 1, NUM_LAYERS, tok.shape[-1]), np.nan, np.float32)
+    for i in range(N):
+        for oid in range(n_obj + 1):
+            sel = (img == i) & (own == oid)
+            if sel.any():
+                out[i, oid] = tok[sel].astype(np.float32).mean(0)
+    return out                                                                      # (N, n_obj+1, 12, D); [:, 0] = background (b)
+
+
+def gqa_h1_selection(caches, records, groups):
+    """H1 on direct records (owner 1 = referent of c1, 2 = referent of c2). V_i = unit(c0
+    referent mean − c0 background (b) mean) per image; contrast = [proj_V(c1) − proj_V(c2)]
+    of the referent minus the same quantity of the other object on its own V. Also the
+    global-V variant of X21-A1 (mean c0 offset over records) as a secondary line."""
+    M = {c: _gqa_role_means(caches[c], records, 2) for c in ("c0", "c1", "c2")}
+    assert M["c0"].shape[0] == M["c1"].shape[0] == M["c2"].shape[0] == len(records), "H1 needs c0 / c1 / c2 on every record"
+    res = {"window": list(X23_H1_WINDOW), "per_block": {}, "window_mean": {}}
+    for name, oid in (("ref", 1), ("nonref", 2)):
+        off0 = M["c0"][:, oid] - M["c0"][:, 0]                                       # (N, 12, D)
+        v_img, v_glob = _unit(off0), _unit(np.nanmean(off0, 0))
+        d = M["c1"][:, oid] - M["c2"][:, oid]                                        # question → this object minus question → the other
+        res["per_block"][name] = [_group_boot((d[:, l] * v_img[:, l]).sum(-1), groups) for l in range(NUM_LAYERS)]
+        res["per_block"][f"{name}_globalV"] = [_group_boot((d[:, l] * v_glob[l]).sum(-1), groups) for l in range(NUM_LAYERS)]
+        res[f"_{name}"] = (d * v_img).sum(-1)
+        res[f"_{name}_globalV"] = (d * v_glob).sum(-1)
+    lo, hi = X23_H1_WINDOW
+    for suffix in ("", "_globalV"):
+        contrast = res[f"_ref{suffix}"] - res[f"_nonref{suffix}"]                     # (N, 12)
+        res["per_block"][f"contrast{suffix}"] = [_group_boot(contrast[:, l], groups) for l in range(NUM_LAYERS)]
+        res["window_mean"][f"contrast{suffix}"] = _group_boot(contrast[:, lo:hi + 1].mean(1), groups)
+        res["window_mean"][f"ref{suffix}"] = _group_boot(res[f"_ref{suffix}"][:, lo:hi + 1].mean(1), groups)
+        res["window_mean"][f"nonref{suffix}"] = _group_boot(res[f"_nonref{suffix}"][:, lo:hi + 1].mean(1), groups)
+    for k in [k for k in res if k.startswith("_")]:
+        del res[k]
+    return res
+
+
+def gqa_decoder_attention_summary(out_dir, records, owners, groups, role_names):
+    """Decoder cross-attention (head mean, first answer token) per patch, by group:
+    each role, background (b) = record bg_sample, background (a) = other annotated
+    objects. Ratios referent / background (b) per token with image-bootstrap CIs."""
+    res = {}
+    for cond in ("c1", "c2", "c3"):
+        f = out_dir / f"decoder_attn_{cond}.npy"
+        if not f.exists():
+            continue
+        w = np.load(f).astype(np.float32)                                            # (N_sub, P)
+        idx = np.load(out_dir / f"index_{cond}.npy")
+        per = {g: [] for g in list(role_names.values()) + ["bg_b", "bg_a"]}
+        for row, i in enumerate(idx):
+            ow, r = owners[i], records[i]
+            bg_b = np.zeros_like(ow, bool); bg_b[r["bg_sample"]] = True
+            for oid, g in role_names.items():
+                sel = ow == oid
+                per[g].append(w[row][sel].mean() if sel.any() else np.nan)
+            per["bg_b"].append(w[row][bg_b].mean() if bg_b.any() else np.nan)
+            sel_a = (ow == 0) & ~bg_b
+            per["bg_a"].append(w[row][sel_a].mean() if sel_a.any() else np.nan)
+        g_sub = groups[idx]
+        res[cond] = {"per_token_mass": {g: _group_boot(v, g_sub) for g, v in per.items()}}
+        # answer object of this condition: direct c1 → T, c2 → D; spatial c1 / c3 → T, c2 → D
+        ref = "D" if cond == "c2" else "T"
+        ratio = np.array(per[ref]) / np.array(per["bg_b"])
+        res[cond]["answer_object"] = ref
+        res[cond]["ratio_referent_over_bg_b"] = _group_boot(ratio, g_sub)
+        print(f"decoder attention {cond}: per token ×1e3 " + " ".join(
+            f"{g} {q['mean'] * 1e3:.2f}" for g, q in res[cond]["per_token_mass"].items())
+              + f" | referent / background (b) {res[cond]['ratio_referent_over_bg_b']['mean']:.1f} "
+                f"[{res[cond]['ratio_referent_over_bg_b']['lo']:.1f}, {res[cond]['ratio_referent_over_bg_b']['hi']:.1f}]")
+    return res
+
+
+def gqa_h4_marker(caches, records, groups, direct_dir):
+    """H4: single-hop referent marker = mean over direct pairs of (c1 − c2) raw referent
+    mean (direct cache, object 0); projection of each role's raw mean change c1 − c0 onto
+    the unit marker; target − third object averaged over blocks X23_H4_WINDOW."""
+    rom1 = np.load(direct_dir / "feats_c1.npz")["raw_obj_mean"][:, 0].astype(np.float32)
+    rom2 = np.load(direct_dir / "feats_c2.npz")["raw_obj_mean"][:, 0].astype(np.float32)
+    marker = (rom1 - rom2).mean(0)
+    u = _unit(marker)
+    rom = {c: caches[c]["raw_obj_mean"].astype(np.float32) for c in ("c0", "c1")}
+    rbg = {c: caches[c]["raw_bg_mean"].astype(np.float32) for c in ("c0", "c1")}
+    ar = np.arange(len(records))
+    res = {"marker_source": str(direct_dir), "marker_n_pairs": int(len(rom1)), "window": list(X23_H4_WINDOW),
+           "marker_norm_by_block": np.linalg.norm(marker, axis=-1).tolist(), "projection": {}, "window_mean": {}}
+    proj = {}
+    for role in ROLES + ("bg",):
+        if role == "bg":
+            d = rbg["c1"] - rbg["c0"]
+        else:
+            idx = _role_index(records, role)
+            d = rom["c1"][ar, idx] - rom["c0"][ar, idx]
+        proj[role] = (d * u).sum(-1)                                                  # (N, 12)
+        res["projection"][role] = [_group_boot(proj[role][:, l], groups) for l in range(NUM_LAYERS)]
+    lo, hi = X23_H4_WINDOW
+    for role in ROLES + ("bg",):
+        res["window_mean"][role] = _group_boot(proj[role][:, lo:hi + 1].mean(1), groups)
+    res["window_mean"]["T_minus_D"] = _group_boot((proj["T"] - proj["D"])[:, lo:hi + 1].mean(1), groups)
+    res["window_mean"]["T_minus_A"] = _group_boot((proj["T"] - proj["A"])[:, lo:hi + 1].mean(1), groups)
+    res["per_block"] = {"T_minus_D": [_group_boot((proj["T"] - proj["D"])[:, l], groups) for l in range(NUM_LAYERS)]}
+    for role in ROLES + ("bg",):
+        print(f"H4 marker proj {role:<3} " + " ".join(f"{q['mean']:+.1f}" for q in res["projection"][role]))
+    q = res["window_mean"]["T_minus_D"]
+    print(f"H4 target − third object, blocks {lo}–{hi}: {q['mean']:+.2f} [{q['lo']:+.2f}, {q['hi']:+.2f}] "
+          f"(n={q['n']} questions, {q['n_groups']} images)")
+    return res
+
+
+def gqa_h2_position_probe(caches, records, grid, groups, n_boot=200, seed=0):
+    """H2 (spatial, observational): ridge from each background (b) token to the anchor's
+    centroid (row, col in grid units) with image-grouped 5-fold CV; R² per block under
+    c0 and c1, ΔR² = R²(c1) − R²(c0) with an image-bootstrap CI (refit per resample);
+    label-shuffle control (anchor centroids permuted across images, same permutation
+    for both conditions). k_condition = first block with ΔR² CI lower > X23_H2_DELTA_R2."""
+    A = _role_index(records, "A")
+    y_img = np.array([records[i]["centroids_row_col"][A[i]] for i in range(len(records))], np.float32) / grid
+    tabs = {}
+    for c in ("c0", "c1"):
+        cc = caches[c]
+        sel = cc["tok_owner"].astype(int) == 0
+        tabs[c] = (cc["tok"][sel], cc["tok_img"].astype(int)[sel])
+    assert np.array_equal(tabs["c0"][1], tabs["c1"][1]), "background token tables differ between c0 and c1"
+    img = tabs["c0"][1]
+    N = len(records)
+
+    def r2_cv(X, y, groups, rng):
+        pred = np.zeros_like(y)
+        ug = np.unique(groups)
+        folds = np.array_split(rng.permutation(ug), 5)
+        for te_g in folds:
+            te = np.isin(groups, te_g)
+            if te.all() or not te.any():
+                continue
+            model = make_pipeline(StandardScaler(), RidgeCV(alphas=np.logspace(0, 5, 11)))   # alpha by inner CV on the training fold
+            model.fit(X[~te], y[~te])
+            pred[te] = model.predict(X[te])
+        return float(r2_score(y, pred))
+
+    rng = np.random.RandomState(seed)
+    res = {"n_questions": N, "n_images": int(len(np.unique(groups))), "n_tokens": int(len(img)),
+           "delta_r2_threshold": X23_H2_DELTA_R2,
+           "r2": {"c0": [], "c1": [], "c0_shuffled": [], "c1_shuffled": []}, "delta_r2": [], "delta_r2_shuffled": []}
+    perm = rng.permutation(N)
+    y = y_img[img]
+    y_sh = y_img[perm][img]
+    tok_group = np.asarray(groups)[img]                                              # image id per token (CV folds and bootstrap by image)
+    ug = np.unique(tok_group)
+    rows_of = {g: np.nonzero(tok_group == g)[0] for g in ug}
+    per_block_boot = []
+    for l in range(NUM_LAYERS):
+        X = {c: tabs[c][0][:, l, :].astype(np.float32) for c in ("c0", "c1")}
+        r = {c: r2_cv(X[c], y, tok_group, np.random.RandomState(seed)) for c in ("c0", "c1")}
+        r_sh = {c: r2_cv(X[c], y_sh, tok_group, np.random.RandomState(seed)) for c in ("c0", "c1")}
+        for c in ("c0", "c1"):
+            res["r2"][c].append(r[c]); res["r2"][f"{c}_shuffled"].append(r_sh[c])
+        boots = []
+        brng = np.random.RandomState(seed + 1 + l)
+        for _ in range(n_boot):
+            pick = ug[brng.randint(0, len(ug), len(ug))]                              # resample images
+            rows = np.concatenate([rows_of[p] for p in pick])
+            g = np.concatenate([np.full(len(rows_of[p]), k) for k, p in enumerate(pick)])
+            rb = {c: r2_cv(X[c][rows], y[rows], g, np.random.RandomState(0)) for c in ("c0", "c1")}
+            boots.append(rb["c1"] - rb["c0"])
+        boots = np.array(boots)
+        res["delta_r2"].append({"mean": r["c1"] - r["c0"], "lo": float(np.percentile(boots, 2.5)),
+                                "hi": float(np.percentile(boots, 97.5)), "n": N})
+        res["delta_r2_shuffled"].append(r_sh["c1"] - r_sh["c0"])
+        per_block_boot.append(boots)
+        print(f"H2 block {l:2d}: R² c0 {r['c0']:+.3f} c1 {r['c1']:+.3f} ΔR² {r['c1'] - r['c0']:+.3f} "
+              f"[{res['delta_r2'][-1]['lo']:+.3f}, {res['delta_r2'][-1]['hi']:+.3f}] | shuffled ΔR² {r_sh['c1'] - r_sh['c0']:+.3f}",
+              flush=True)
+    k = next((l for l, q in enumerate(res["delta_r2"]) if q["lo"] > X23_H2_DELTA_R2), None)
+    res["k_condition"] = k
+    boot_k = [next((l for l in range(NUM_LAYERS) if per_block_boot[l][b] > X23_H2_DELTA_R2), None) for b in range(n_boot)]
+    res["k_condition_bootstrap"] = {"none": int(sum(v is None for v in boot_k)),
+                                    "hist": {str(v): int(sum(w == v for w in boot_k)) for v in sorted({v for v in boot_k if v is not None})}}
+    print(f"H2 k_condition (first block with ΔR² CI lower > {X23_H2_DELTA_R2}): {k}; bootstrap: {res['k_condition_bootstrap']}")
+    return res
+
+
+def plot_gqa_h1(res, label, out_path):
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    x = range(NUM_LAYERS)
+    for ax, suffix, ttl in ((axes[0], "", "V per image (primary)"), (axes[1], "_globalV", "global V (secondary)")):
+        for key, col, lab in ((f"ref{suffix}", CLUSTER_RGB["target"], "referent of the clean question"),
+                              (f"nonref{suffix}", CLUSTER_RGB["distractor"], "referent of the paired question"),
+                              (f"contrast{suffix}", "k", "contrast (referent − other)")):
+            d = res["per_block"][key]
+            m = [q["mean"] for q in d]; lo = [q["lo"] for q in d]; hi = [q["hi"] for q in d]
+            ax.plot(x, m, "-", color=col, marker="o", markersize=3, label=lab)
+            ax.fill_between(x, lo, hi, color=col, alpha=0.12, linewidth=0)
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.axvspan(res["window"][0] - 0.5, res["window"][1] + 0.5, color="0.9", zorder=0)
+        ax.set_xlabel("block"); ax.set_ylabel("Δ projection onto V\n(clean − paired question)")
+        w = res["window_mean"][f"contrast{suffix}"]
+        ax.set_title(f"{ttl}; blocks {res['window'][0]}–{res['window'][1]} contrast {w['mean']:+.2f} [{w['lo']:+.2f}, {w['hi']:+.2f}]",
+                     fontsize=9)
+        ax.legend(fontsize=7)
+    fig.suptitle(f"{label} — X23 H1 on GQA direct questions: selection contrast on the same object "
+                 f"(n={res['window_mean']['contrast']['n']} questions, {res['window_mean']['contrast']['n_groups']} images)", fontsize=9)
+    fig.tight_layout(); fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight"); plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_gqa_h4(res, label, out_path):
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    x = range(NUM_LAYERS)
+    ax = axes[0]
+    for role in ROLES + ("bg",):
+        d = res["projection"][role]
+        col = ROLE_RGB[role] if role in ROLE_RGB else "0.5"
+        ax.plot(x, [q["mean"] for q in d], "-", color=col, marker="o", markersize=3,
+                label=ROLE_LABEL.get(role, "background (a + b)"))
+        ax.fill_between(x, [q["lo"] for q in d], [q["hi"] for q in d], color=col, alpha=0.12, linewidth=0)
+    ax.axhline(0, color="k", linewidth=0.6); ax.axvspan(res["window"][0] - 0.5, res["window"][1] + 0.5, color="0.9", zorder=0)
+    ax.set_xlabel("block"); ax.set_ylabel("projection onto the referent marker\n(question − no question)")
+    ax.legend(fontsize=6); ax.set_title("per role", fontsize=9)
+    ax = axes[1]
+    d = res["per_block"]["T_minus_D"]
+    ax.plot(x, [q["mean"] for q in d], "-", color="k", marker="o", markersize=3)
+    ax.fill_between(x, [q["lo"] for q in d], [q["hi"] for q in d], color="k", alpha=0.12, linewidth=0)
+    ax.axhline(0, color="k", linewidth=0.6); ax.axvspan(res["window"][0] - 0.5, res["window"][1] + 0.5, color="0.9", zorder=0)
+    w = res["window_mean"]["T_minus_D"]
+    ax.set_title(f"target − third object; blocks {res['window'][0]}–{res['window'][1]}: {w['mean']:+.2f} [{w['lo']:+.2f}, {w['hi']:+.2f}]", fontsize=9)
+    ax.set_xlabel("block")
+    fig.suptitle(f"{label} — X23 H4 on GQA spatial questions: marker from {res['marker_n_pairs']} direct pairs "
+                 f"(n={w['n']} questions, {w['n_groups']} images)", fontsize=9)
+    fig.tight_layout(); fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight"); plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def plot_gqa_h2(res, label, out_path):
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    x = range(NUM_LAYERS)
+    ax = axes[0]
+    for c, ls in (("c0", ":"), ("c1", "-")):
+        ax.plot(x, res["r2"][c], ls, color="k", marker="o", markersize=3, label=f"{c}: {'no question' if c == 'c0' else 'clean question'}")
+        ax.plot(x, res["r2"][f"{c}_shuffled"], ls, color="0.6", marker="x", markersize=3, label=f"{c}, anchor positions shuffled")
+    ax.set_ylabel("cross-validated R²\n(anchor centroid from background (b) tokens)"); ax.set_xlabel("block"); ax.legend(fontsize=7)
+    ax = axes[1]
+    d = res["delta_r2"]
+    ax.plot(x, [q["mean"] for q in d], "-", color="k", marker="o", markersize=3, label="ΔR² = R²(c1) − R²(c0)")
+    ax.fill_between(x, [q["lo"] for q in d], [q["hi"] for q in d], color="k", alpha=0.12, linewidth=0)
+    ax.plot(x, res["delta_r2_shuffled"], "--", color="0.6", marker="x", markersize=3, label="shuffled control")
+    ax.axhline(res["delta_r2_threshold"], color="r", linewidth=0.6, label=f"threshold {res['delta_r2_threshold']}")
+    ax.axhline(0, color="k", linewidth=0.6); ax.set_xlabel("block"); ax.legend(fontsize=7)
+    ax.set_title(f"k_condition = {res['k_condition']}", fontsize=9)
+    fig.suptitle(f"{label} — X23 H2 (observational) on GQA spatial questions: anchor position readable from background "
+                 f"(n={res['n_questions']} questions, {res['n_tokens']} tokens)", fontsize=9)
+    fig.tight_layout(); fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight"); plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+@torch.no_grad()
+def gqa_baseline_pass(out_dir, args, state, records, images, owners, conds):
+    """Decoder answer, margin, top-3 logits per condition (stored into the records) and
+    the head-mean decoder cross-attention over patches (decoder_attn_{cond}.npy, rows =
+    index_{cond}.npy). Records whose answer is not in the model vocabulary are scored
+    as wrong and flagged (CLEVR-trained model on GQA)."""
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    prefix = trunk.num_prefix_tokens
+    vocab, inv = model.vocab, {v: k for k, v in model.vocab.items()}
+    bs = args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images])
+    bos = lambda b: torch.full((b, 1), vocab["<bos>"], dtype=torch.long, device=device)
+    acc = {}
+    for cond in conds:
+        idx = [i for i, r in enumerate(records) if cond == "c0" or _gqa_has(r, cond)]
+        np.save(out_dir / f"index_{cond}.npy", np.array(idx))
+        preds, attn = [], []
+        L_all = []
+        for s in range(0, len(idx), bs):
+            sub = idx[s:s + bs]
+            qs = None if cond == "c0" else [records[i]["questions"][cond] for i in sub]
+            feats = steervit.forward(imgs_t[sub].to(device), qs)
+            with DecoderAttention(model.decoder) as da:
+                lg = model.decoder(bos(len(sub)), feats[:, prefix:, :])[:, 0, :].float()
+            w = da.weights[0][:, :, 0, :].mean(1)                                     # (B, P) head mean
+            attn.append(w.cpu().numpy().astype(np.float16))
+            preds.append(lg.argmax(-1).cpu().numpy()); L_all.append(lg.cpu().numpy())
+        preds, L = np.concatenate(preds), np.concatenate(L_all)
+        np.save(out_dir / f"decoder_attn_{cond}.npy", np.concatenate(attn))
+        ok = []
+        for row, i in enumerate(idx):
+            r = records[i]
+            r[f"pred_{cond}"] = inv.get(int(preds[row]), "?")
+            top = np.argsort(-L[row])[:3]
+            r[f"logits_top3_{cond}"] = [[inv.get(int(j), "?"), float(L[row, j])] for j in top]
+            if cond != "c0":
+                a = r["answers"][cond]
+                r[f"answer_in_vocab_{cond}"] = a in vocab
+                if a in vocab:
+                    other = np.delete(L[row], vocab[a])
+                    r[f"margin_{cond}"] = float(L[row, vocab[a]] - other.max())
+                    ok.append(r[f"pred_{cond}"] == a)
+                else:
+                    r[f"margin_{cond}"] = float("nan"); ok.append(False)
+        if cond != "c0":
+            in_v = np.array([records[i].get(f"answer_in_vocab_{cond}", False) for i in idx])
+            ok = np.array(ok)
+            acc[cond] = {"n": len(idx), "n_answer_in_vocab": int(in_v.sum()), "accuracy": float(ok.mean()),
+                         "accuracy_answer_in_vocab": float(ok[in_v].mean()) if in_v.any() else float("nan")}
+            print(f"baseline {cond}: n {len(idx)}, answers in vocab {int(in_v.sum())}, accuracy {ok.mean():.3f} "
+                  f"(over answerable items {acc[cond]['accuracy_answer_in_vocab']:.3f})")
+    gen = model.generate(imgs_t[:min(8, len(records))].to(device), [records[i]["questions"]["c1"] for i in range(min(8, len(records)))])
+    print(f"generate() vs first-token argmax on 8 items: {gen} | {[records[i]['pred_c1'] for i in range(min(8, len(records)))]}")
+    return acc
+
+
+def run_gqa(args, out_dir, label):
+    """X23 step 1 for one record set (--gqa-records-dir, from step 0c): per-condition
+    sparse caches, baseline decode with decoder attention, then the observational
+    analyses H1 (direct) / H2, H4 (spatial). --replot skips the GPU and reuses the caches."""
+    from PIL import Image
+    mode = args.gqa_run
+    rd = Path(args.gqa_records_dir)
+    rec_file = out_dir / "relational_records.json"
+    with open(rec_file if args.replot else rd / "relational_records.json") as f:
+        records = json.load(f)
+    owners = list(np.load(rd / "owner.npy"))
+    assert len(owners) == len(records)
+    n_obj = 2 if mode == "direct" else 3
+    conds = ["c0", "c1", "c2"] if mode == "direct" else ["c0", "c1", "c2", "c3"]
+    groups = np.array([r["image_id"] for r in records])
+    print(f"X23 {mode}: {len(records)} questions / {len(np.unique(groups))} images from {rd}")
+    state = {}
+    if not args.replot:
+        images = [Image.open(Path(args.gqa_root) / "images" / r["filename"]).convert("RGB") for r in records]
+        np.save(out_dir / "owner.npy", np.stack(owners))
+        for cond in conds:
+            idx = [i for i, r in enumerate(records) if cond == "c0" or _gqa_has(r, cond)]
+            if not idx:
+                print(f"{cond}: no record has this condition; skipped"); continue
+            extract_condition_sparse(out_dir, cond, [images[i] for i in idx], [owners[i] for i in idx],
+                                     [records[i] for i in idx], args, state, n_obj=n_obj)
+        ensure_model(state, args)
+        acc = gqa_baseline_pass(out_dir, args, state, records, images, owners,
+                                [c for c in conds if c == "c0" or any(_gqa_has(r, c) for r in records)])
+        with open(rec_file, "w") as f:
+            json.dump(records, f, indent=1)
+        with open(out_dir / "baseline_accuracy.json", "w") as f:
+            json.dump(acc, f, indent=1)
+    caches = {c: load_sparse(out_dir, c) for c in conds if (out_dir / f"feats_{c}.npz").exists()}
+    results = {"mode": mode, "n_questions": len(records), "n_images": int(len(np.unique(groups))),
+               "records_dir": str(rd), "checkpoint": args.checkpoint}
+    with open(out_dir / "baseline_accuracy.json") as f:
+        results["baseline_accuracy"] = json.load(f)
+    role_names = {1: "T", 2: "D"} if mode == "direct" else {1: "A", 2: "T", 3: "D"}
+    results["decoder_attention"] = gqa_decoder_attention_summary(out_dir, records, owners, groups, role_names)
+    if mode == "direct":
+        res = gqa_h1_selection(caches, records, groups)
+        w = res["window_mean"]
+        print(f"H1 contrast blocks {res['window'][0]}–{res['window'][1]}: V per image {w['contrast']['mean']:+.3f} "
+              f"[{w['contrast']['lo']:+.3f}, {w['contrast']['hi']:+.3f}]; global V {w['contrast_globalV']['mean']:+.3f} "
+              f"[{w['contrast_globalV']['lo']:+.3f}, {w['contrast_globalV']['hi']:+.3f}] (n={w['contrast']['n']}, images {w['contrast']['n_groups']})")
+        results["h1"] = res
+        plot_gqa_h1(res, label, out_dir / "h1_selection_contrast.png")
+        results["h4_direct_sanity"] = gqa_h4_marker(caches, records, groups, out_dir)      # in-sample, sanity only
+    else:
+        if args.gqa_direct_dir:
+            res = gqa_h4_marker(caches, records, groups, Path(args.gqa_direct_dir))
+            results["h4"] = res
+            plot_gqa_h4(res, label, out_dir / "h4_marker_projection.png")
+        else:
+            print("H4 skipped: --gqa-direct-dir not given")
+        res = gqa_h2_position_probe(caches, records, args.grid, groups, n_boot=args.gqa_h2_boot, seed=args.seed)
+        results["h2_observational"] = res
+        plot_gqa_h2(res, label, out_dir / "h2_anchor_position_probe.png")
+    with open(out_dir / "x23_results.json", "w") as f:
+        json.dump(results, f, indent=1)
+    print(f"Saved: {out_dir / 'x23_results.json'}")
+
+
+X23_KTARGET_DROP = 0.2        # k_target = first block where P(clean answer) drops by ≥ this with CI excluding 0
+X23_CUMULATIVE_M = (1, 2, 4, 8, 16, 32)
+
+
+@torch.no_grad()
+def gqa_sa_capture(out_dir, args, state, records, images, owners):
+    """sa_attn_{c0,c1}.npz over all records in the --relational-v2 format (slots
+    anchor / answer object / remaining object / background) for the H3 head selection."""
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    imgs_t = torch.stack([tf(im) for im in images])
+    owner_t = torch.from_numpy(np.stack(owners))
+    N, bs = len(records), args.batch_size
+    for cond in ("c0", "c1"):
+        if (out_dir / f"sa_attn_{cond}.npz").exists():
+            print(f"exists, not recomputed: {out_dir / f'sa_attn_{cond}.npz'}"); continue
+        mass_all, bg_all = [], []
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            qs = None if cond == "c0" else [records[i]["questions"][cond] for i in range(s, e)]
+            ims = imgs_t[s:e].to(device)
+            with SAAttnCapture(trunk) as cap:
+                logits = first_token_logits(model, steervit, ims, qs)
+                roles = torch.full(owner_t[s:e].shape, -1, dtype=torch.long)
+                for bi, i in enumerate(range(s, e)):
+                    for k, obj in enumerate(sa_role_slots(records[i], "c1")):
+                        roles[bi][owner_t[i] == obj + 1] = k
+                mass, bg = cap.reduce(roles.to(device), anchor_role=0)
+            if s == 0:
+                plain = first_token_logits(model, steervit, ims, qs)
+                assert torch.equal(plain.argmax(-1), logits.argmax(-1)), f"{cond}: argmax with SA capture differs"
+            perm = [1, 2, 3, 0]
+            mass_all.append(mass[:, :, :, perm][:, :, :, :, perm].cpu().numpy().astype(np.float16))
+            bg_all.append(bg.cpu().numpy().astype(np.float16))
+        np.savez(out_dir / f"sa_attn_{cond}.npz", sa_mass=np.concatenate(mass_all), sa_bg_from_anchor=np.concatenate(bg_all),
+                 role_slots=np.array([sa_role_slots(r, "c1") for r in records], dtype=np.int8),
+                 slots=np.array("0 = anchor, 1 = answer object, 2 = remaining object, 3 = background"))
+        print(f"Saved: {out_dir / f'sa_attn_{cond}.npz'}")
+
+
+@torch.no_grad()
+def gqa_transplant(out_dir, args, state, records, images, owners, groups):
+    """Token transplant per block: the clean run (c1) receives one patch group from a
+    donor run (c2: same anchor, opposite relation; c3: same target, other anchor;
+    c1 itself as self-control) on the items that have the donor question and that
+    the model answers correctly under both. P(clean answer) / P(donor answer) with
+    image-bootstrap CIs; k_target from donor c2, group T."""
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    prefix = trunk.num_prefix_tokens
+    vocab = model.vocab
+    imgs_t = torch.stack([tf(im) for im in images])
+    owner_t = torch.from_numpy(np.stack(owners))
+    bs = args.batch_size
+    role_idx = {role: _role_index(records, role) for role in ROLES}
+    donors = [c for c in ("c2", "c3") if any(_gqa_has(r, c) for r in records)] + ["c1"]
+    rows = []
+    per_item = {}
+    for d in donors:
+        idx = [i for i, r in enumerate(records) if _gqa_has(r, d) and r[f"pred_c1"] == r["answers"]["c1"]
+               and r[f"pred_{d}"] == r["answers"][d] and r["answers"]["c1"] in vocab and r["answers"][d] in vocab]
+        print(f"transplant donor {d}: {len(idx)} items with the donor question and both answers correct")
+        if not idx:
+            continue
+        pred = {(g, l): np.full(len(idx), -1) for g in ROLES + ("bg",) for l in range(NUM_LAYERS)}
+        for s in range(0, len(idx), bs):
+            sub = idx[s:s + bs]
+            ims = imgs_t[sub].to(device)
+            ow = owner_t[sub].to(device)
+            with BlockCapture(trunk) as cap:
+                steervit.forward(ims, [records[i]["questions"][d] for i in sub])
+            donor_out = cap.out
+            masks = {"bg": ow == 0}
+            for role in ROLES:
+                masks[role] = ow == torch.from_numpy(role_idx[role][sub] + 1).to(device)[:, None]
+            qs1 = [records[i]["questions"]["c1"] for i in sub]
+            for g in ROLES + ("bg",):
+                for l in range(NUM_LAYERS):
+                    with TokenSwapper(trunk, l, donor_out[l], masks[g]):
+                        p = first_token_logits(model, steervit, ims, qs1).argmax(-1).cpu().numpy()
+                    pred[(g, l)][s:s + len(sub)] = p
+            print(f"  donor {d}: {s + len(sub)}/{len(idx)}", flush=True)
+        clean_id = np.array([vocab[records[i]["answers"]["c1"]] for i in idx])
+        donor_id = np.array([vocab[records[i]["answers"][d]] for i in idx])
+        g_sub = groups[idx]
+        for g in ROLES + ("bg",):
+            for l in range(NUM_LAYERS):
+                p = pred[(g, l)]
+                rows.append({"donor": d, "group": g, "layer": l, "n": len(idx),
+                             "p_clean": _group_boot(p == clean_id, g_sub), "p_donor": _group_boot(p == donor_id, g_sub)})
+                per_item[(d, g, l)] = (p == clean_id).astype(float)
+        if d == "c1":
+            assert all(rows[-1 - k]["p_clean"]["mean"] == 1.0 for k in range(NUM_LAYERS * 4)), "self-control must reproduce the clean run"
+    k_target = None
+    if ("c2", "T", 0) in per_item:
+        for l in range(NUM_LAYERS):
+            q = [r for r in rows if r["donor"] == "c2" and r["group"] == "T" and r["layer"] == l][0]["p_clean"]
+            if 1.0 - q["mean"] >= X23_KTARGET_DROP and q["hi"] < 1.0:
+                k_target = l; break
+    res = {"rows": rows, "donors": donors, "k_target": k_target, "k_target_rule": f"donor c2, group T: 1 − P(clean) ≥ {X23_KTARGET_DROP} and CI of P(clean) excludes 1"}
+    for d in donors:
+        for g in ROLES + ("bg",):
+            line = [r for r in rows if r["donor"] == d and r["group"] == g]
+            if line:
+                print(f"transplant {d} → {g:<3} P(clean) " + " ".join(f"{r['p_clean']['mean']:.2f}" for r in line) + f"  (n={line[0]['n']})")
+    print(f"k_target = {k_target}")
+    with open(out_dir / "transplant.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_gqa_transplant(res, out_dir / "transplant.png", args.model_label)
+    return res
+
+
+def plot_gqa_transplant(res, out_path, label):
+    donors = [d for d in res["donors"] if d != "c1"]
+    fig, axes = plt.subplots(1, max(1, len(donors)), figsize=(5.5 * max(1, len(donors)), 4.2), squeeze=False)
+    x = range(NUM_LAYERS)
+    for ax, d in zip(axes[0], donors):
+        for g in ROLES + ("bg",):
+            line = [r for r in res["rows"] if r["donor"] == d and r["group"] == g]
+            if not line:
+                continue
+            col = ROLE_RGB[g] if g in ROLE_RGB else "0.5"
+            ax.plot(x, [r["p_clean"]["mean"] for r in line], "-", color=col, marker="o", markersize=3,
+                    label=f"{ROLE_LABEL.get(g, 'background')} replaced")
+            ax.fill_between(x, [r["p_clean"]["lo"] for r in line], [r["p_clean"]["hi"] for r in line], color=col, alpha=0.12, linewidth=0)
+        n = line[0]["n"] if line else 0
+        ax.set_ylim(-0.02, 1.02); ax.set_xlabel("block of the replacement"); ax.set_ylabel("P(clean answer)")
+        ax.set_title(f"donor {d} ({'opposite relation, same anchor' if d == 'c2' else 'same target, other anchor'}), n={n}", fontsize=9)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — X23 token transplant on GQA spatial questions (k_target = {res['k_target']})", fontsize=9)
+    fig.tight_layout(); fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight"); plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+@torch.no_grad()
+def gqa_head_ablation(out_dir, args, state, records, images, owners, groups):
+    """H3 on GQA spatial: heads selected by the X22-H8 rule from sa_attn_{c0,c1}.npz,
+    zeroed; accuracy on clean-correct items vs three disjoint random sets of the same
+    size; cumulative ablation m = 1, 2, 4, 8, 16, 32 along the same ranking vs matched
+    random sets. Δ = accuracy(none) − accuracy(set); paired image-bootstrap CIs."""
+    from analysis.patching_utils import HeadAblator
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    vocab = model.vocab
+    N, bs = len(records), args.batch_size
+    imgs_t = torch.stack([tf(im) for im in images])
+    q1 = [r["questions"]["c1"] for r in records]
+    ans = np.array([vocab.get(r["answers"]["c1"], -1) for r in records])
+    selected, info, ranking = select_h8_heads(out_dir, np.stack(owners), N, return_ranking=True)
+    n_heads = trunk.blocks[0].attn.num_heads
+    all_cells = [(l, h) for l in range(NUM_LAYERS) for h in range(n_heads)]
+
+    def random_set(exclude, m, seed):
+        pool = [c for c in all_cells if c not in exclude]
+        return [pool[k] for k in np.random.RandomState(seed).choice(len(pool), m, replace=False)]
+
+    sets = {"none": [], "selected": selected}
+    for s in range(3):
+        sets[f"random_seed{s}"] = random_set(set(selected), len(selected), s) if selected else []
+    for m in X23_CUMULATIVE_M:
+        top = ranking[:m]
+        sets[f"cum_{m}"] = top
+        for s in range(3):
+            sets[f"cum_{m}_random_seed{s}"] = random_set(set(top), m, 100 + 10 * m + s)
+    ok = {}
+    for name, heads in sets.items():
+        preds = []
+        with HeadAblator(steervit, [("sa", l, h) for l, h in heads], mode="zero"):
+            for s in range(0, N, bs):
+                preds.append(first_token_logits(model, steervit, imgs_t[s:s + bs].to(device), q1[s:s + bs]).argmax(-1).cpu().numpy())
+        ok[name] = np.concatenate(preds) == ans
+        print(f"  ablation set {name:<24} ({len(heads):2d} heads): accuracy {ok[name].mean():.3f}", flush=True)
+    clean = ok["none"]
+    rec_ok = np.array([r["pred_c1"] == r["answers"]["c1"] for r in records])
+    assert (rec_ok == clean).all(), "empty head set must reproduce the recorded clean-run answers"
+    sel_ok = clean
+    g = groups[sel_ok]
+
+    def drop(name):
+        return (clean.astype(float) - ok[name].astype(float))[sel_ok]
+
+    res = {"n_questions": N, "n_clean_correct": int(sel_ok.sum()), "selection": info, "ranking": [list(c) for c in ranking],
+           "sets": {k: [list(c) for c in v] for k, v in sets.items()},
+           "accuracy": {k: float(v.mean()) for k, v in ok.items()},
+           "drop": {k: _group_boot(drop(k), g) for k in sets}, "contrast": {}, "cumulative": []}
+    rnd = np.mean([drop(f"random_seed{s}") for s in range(3)], 0)
+    res["contrast"]["selected_minus_random"] = _group_boot(drop("selected") - rnd, g)
+    for m in X23_CUMULATIVE_M:
+        rnd_m = np.mean([drop(f"cum_{m}_random_seed{s}") for s in range(3)], 0)
+        res["cumulative"].append({"m": m, "drop_ranked": _group_boot(drop(f"cum_{m}"), g),
+                                  "drop_random": _group_boot(rnd_m, g), "contrast": _group_boot(drop(f"cum_{m}") - rnd_m, g)})
+    c = res["contrast"]["selected_minus_random"]
+    print(f"H3 (GQA spatial): {len(selected)} selected heads; Δ_selected {res['drop']['selected']['mean']:.3f}, "
+          f"Δ_random {np.mean([res['drop'][f'random_seed{s}']['mean'] for s in range(3)]):.3f}, "
+          f"difference {c['mean']:+.3f} [{c['lo']:+.3f}, {c['hi']:+.3f}] (n={c['n']} clean-correct)")
+    for row in res["cumulative"]:
+        print(f"  cumulative m={row['m']:2d}: ranked drop {row['drop_ranked']['mean']:.3f}  random {row['drop_random']['mean']:.3f}  "
+              f"difference {row['contrast']['mean']:+.3f} [{row['contrast']['lo']:+.3f}, {row['contrast']['hi']:+.3f}]")
+    with open(out_dir / "head_ablation.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_gqa_head_ablation(res, out_dir / "head_ablation.png", args.model_label)
+    return res
+
+
+def plot_gqa_head_ablation(res, out_path, label):
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+    ax = axes[0]
+    names = ["none", "selected", "random_seed0", "random_seed1", "random_seed2"]
+    ax.bar(range(len(names)), [res["accuracy"][n] for n in names], color=["0.3", "#d62728", "#1f77b4", "#1f77b4", "#1f77b4"])
+    ax.set_xticks(range(len(names))); ax.set_xticklabels([f"{n}\n({len(res['sets'][n])} heads)" for n in names], fontsize=7)
+    ax.set_ylim(0, 1.02); ax.set_ylabel("accuracy, clean question (all items)")
+    c = res["contrast"]["selected_minus_random"]
+    ax.set_title(f"rule-selected vs random: Δ difference {c['mean']:+.2f} [{c['lo']:+.2f}, {c['hi']:+.2f}]", fontsize=9)
+    ax = axes[1]
+    ms = [r["m"] for r in res["cumulative"]]
+    for key, col, lab in (("drop_ranked", "#d62728", "ranked heads"), ("drop_random", "#1f77b4", "matched random (mean of 3)")):
+        ax.plot(ms, [r[key]["mean"] for r in res["cumulative"]], "-", color=col, marker="o", markersize=3, label=lab)
+        ax.fill_between(ms, [r[key]["lo"] for r in res["cumulative"]], [r[key]["hi"] for r in res["cumulative"]], color=col, alpha=0.12, linewidth=0)
+    ax.set_xscale("log", base=2); ax.set_xticks(ms); ax.set_xticklabels([str(m) for m in ms])
+    ax.set_xlabel("heads zeroed (cumulative along the ranking)"); ax.set_ylabel("accuracy drop on clean-correct items")
+    ax.legend(fontsize=7); ax.set_title("cumulative ablation", fontsize=9)
+    fig.suptitle(f"{label} — X23 H3 on GQA spatial questions: self-attention heads zeroed "
+                 f"(n={res['n_clean_correct']} clean-correct of {res['n_questions']})", fontsize=9)
+    fig.tight_layout(); fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight"); plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_gqa_causal(args, out_dir, label):
+    """X23 steps 2–3 on a finished --gqa-run directory (--cache-dir): token transplant
+    (k_target), and for spatial the SA-attention capture + H3 head ablation with the
+    cumulative curve. Writes into a new --out-dir; the caches stay untouched."""
+    from PIL import Image
+    cache_dir = Path(args.cache_dir)
+    with open(cache_dir / "relational_records.json") as f:
+        records = json.load(f)
+    owners = list(np.load(cache_dir / "owner.npy"))
+    images = [Image.open(Path(args.gqa_root) / "images" / r["filename"]).convert("RGB") for r in records]
+    groups = np.array([r["image_id"] for r in records])
+    mode = records[0]["mode"]
+    print(f"X23 causal ({mode}): {len(records)} questions from {cache_dir}")
+    state = ensure_model({}, args)
+    with open(out_dir / "relational_records.json", "w") as f:
+        json.dump(records, f, indent=1)
+    gqa_transplant(out_dir, args, state, records, images, owners, groups)
+    if mode == "spatial":
+        gqa_sa_capture(out_dir, args, state, records, images, owners)
+        gqa_head_ablation(out_dir, args, state, records, images, owners, groups)
+
+
 def run_relational(args, out_dir, label):
     mode = args.relational
     entries = load_entries(args.three_dir)
@@ -3293,7 +3957,7 @@ def plot_h7_posembed(res, label, out_path):
 
 # ---- H8: SA head ablation ----------------------------------------------------------
 
-def select_h8_heads(cache_dir, owners, n_scenes):
+def select_h8_heads(cache_dir, owners, n_scenes, return_ranking=False):
     """Per (block, head) c1 − c0 change of (i) background-query mass on the anchor keys
     (sa_bg_from_anchor averaged over background patches) and (ii) candidate→anchor mass
     (mean of T→A and D→A from sa_mass). Rule: blocks H8_BLOCK_RANGE, |Δ| ≥ H8_RATIO ×
@@ -3326,6 +3990,11 @@ def select_h8_heads(cache_dir, owners, n_scenes):
             "median_abs_delta": {k: float(np.median(np.abs(v))) for k, v in delta.items()}}
     print(f"H8 selected {len(selected)} of {len(cells)} cells meeting the rule: "
           + " ".join(f"({l},{h},{cells[(l, h)]:.0f}x)" for l, h in selected))
+    if return_ranking:
+        # every cell of the eligible blocks ranked by the larger of the two ratios (for cumulative ablation)
+        score = {(l, h): max(float(ratio[n][l, h]) for n in ratio)
+                 for l in range(H8_BLOCK_RANGE[0], H8_BLOCK_RANGE[1] + 1) for h in range(next(iter(ratio.values())).shape[1])}
+        return selected, info, sorted(score, key=lambda c: -score[c])
     return selected, info
 
 
@@ -4478,6 +5147,16 @@ def main():
     ap.add_argument("--gqa-geometry", default="strict", choices=["strict", "relaxed"],
                     help="box-geometry preset for the untagged records (both presets are always written)")
     ap.add_argument("--gqa-audit-n", type=int, default=60, help="items on the blind audit page (0 = none)")
+    ap.add_argument("--gqa-run", default=None, choices=["direct", "spatial"],
+                    help="X23 step 1: caches + baseline + observational H1 / H2 / H4 on the records of "
+                         "--gqa-records-dir (new --out-dir; --replot reuses the caches)")
+    ap.add_argument("--gqa-records-dir", default=None, help="step-0c directory (relational_records.json, owner.npy)")
+    ap.add_argument("--gqa-direct-dir", default=None,
+                    help="--gqa-run spatial: finished --gqa-run direct output dir whose c1/c2 caches define the H4 marker")
+    ap.add_argument("--gqa-h2-boot", type=int, default=200, help="bootstrap resamples for the H2 ΔR² CI")
+    ap.add_argument("--gqa-causal", action="store_true",
+                    help="X23 steps 2–3 on a finished --gqa-run directory given as --cache-dir: token transplant "
+                         "(k_target) and, for spatial, SA capture + H3 head ablation with the cumulative curve (new --out-dir)")
     ap.add_argument("--three-dir", default="data/clevr_three_object_v2")
     ap.add_argument("--directions-dir", default="outputs/analysis/patch_language_condition",
                     help="--relational: directory whose n1/ cache gives the colour directions u")
@@ -4489,7 +5168,7 @@ def main():
     apply_style()
     out_dir = Path(args.out_dir)
     assert out_dir.resolve() != Path(args.x19_dir).resolve(), "refusing to write into the X19 directory"
-    if (args.relational or args.mirror or args.relational_probes) and not args.replot:
+    if (args.relational or args.mirror or args.relational_probes or args.gqa_run or args.gqa_causal) and not args.replot:
         assert not (out_dir.exists() and any(p.name != "log_stdout.txt" for p in out_dir.iterdir())), \
             f"--relational/--mirror need a new --out-dir (non-empty: {out_dir}); use --replot to regenerate figures"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -4504,6 +5183,14 @@ def main():
     if args.gqa_filter:
         from analysis.gqa_roles import run_filter
         run_filter(args, out_dir)
+        return
+    if args.gqa_run:
+        assert args.gqa_records_dir, "--gqa-run needs --gqa-records-dir"
+        run_gqa(args, out_dir, label)
+        return
+    if args.gqa_causal:
+        assert args.cache_dir, "--gqa-causal needs --cache-dir (a finished --gqa-run directory)"
+        run_gqa_causal(args, out_dir, label)
         return
     if args.relational_probes:
         assert args.cache_dir or args.replot, "--relational-probes needs --cache-dir"
