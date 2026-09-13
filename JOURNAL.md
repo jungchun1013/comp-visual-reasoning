@@ -376,6 +376,50 @@ optimizer state 是否含 `(82, 768)` 對應狀態）仍未執行，待訓練結
 0.9095。剩 epoch 8–15，預估 12:30 前後結束；最終值與 `docs/paper_artifacts.md`
 第 25／54／172 行的改寫都等該時點。
 
+### 2026-09-13 — 真實影像上的選取起始層比 CLEVR 晚兩個 block（更正我先前的口頭說法）
+
+我在對話中說過 GQA 上的起始 block 7「和 CLEVR 一致」。這是錯的，而且方向相反：CLEVR
+上同一個估計量的起始層是 **block 5**，GQA 是 **block 7**。JOURNAL 既有條目寫的是
+「the same shape as on CLEVR SigLIP」（形狀相同），那句話本身正確，不需更動；錯的只有
+我口頭加上的「同一層」。
+
+比較用的是同一個估計量：每張影像自己的 no-question 物件方向 `v_img`，把 c1 − c2 的
+物件均值差投影上去（GQA 版 `gqa_h1_selection`，`patch_language_condition.py:2660`；
+CLEVR 版 `delta.ref_imgdir`，同檔 :446）。逐 block 的值（bootstrap CI 排除 0 才算起始）：
+
+| 模型 / 資料 | b3 | b4 | b5 | b6 | b7 | 起始 |
+|---|---|---|---|---|---|---|
+| CLEVR SigLIP on CLEVR | +0.43 | +0.56 | **+11.74** | +13.98 | +25.55 | b5（b3–4 有極小前緣） |
+| CLEVR DINOv2 on CLEVR | −0.13 | −0.23 | **+1.50** | +3.04 | +6.50 | b5 |
+| GQA SigLIP on GQA | +0.00 | +0.03 | −0.01 | −0.01 | **+0.79** | b7 |
+
+來源：`outputs/analysis/patch_language_condition/siglip/partA_metrics.json`、同目錄上層的
+`partA_metrics.json`、`x23_gqa_direct/x23_results.json`。
+
+兩項限制要隨這個結論一起帶：跨資料集的**量值不可比**（CLEVR 的 contrast 在 23–50,
+GQA 在 1.5–7.5,因為刺激乾淨程度差一個量級),可比的只有起始 block;CLEVR SigLIP 在
+block 3–4 有 CI 排除 0 的前緣,但只有 block 5 值的約 2%,所以可辯護的陳述是「起始在
+block 5」,不是 block 3。
+
+含義:機制的形狀在真實影像上重現,但網路要多花兩個 block 才鎖定指涉物。這是可報告的
+新結果,不是雜訊。
+
+### 2026-09-13 — GQA 驗證上站
+
+新腳本 `scripts/analysis/plot_gqa_schematic.py`（CPU,不需模型）產生說明用示意圖
+`outputs/analysis/patch_language_condition/x23_schematic/gqa_findings_schematic.png`。
+七個面板中 b/c/d/e 的數值全部從結果 JSON 讀出,只有 a 的方框與 g 的箭頭是示意;之所以
+新開檔案而非擴充既有腳本,是因為既有每支腳本都只畫單一量測序列,沒有畫整合示意圖的。
+
+網站新增區段「Real-image validation: referent selection on photographs」,插在
+「Overall thread and gaps to publication」之前,英文,沿用既有 `setting`／`claim`
+標記。`index.src.html` 先備份為 `index.src.html.bak-2026-09-13` 再插入,`build.py`
+重建為 15.8 MB／46 張內嵌圖,線上頁面已確認含該區段（HTTP 200）。
+
+圖 g 原本寫有「兩邊出現在同一個深度」,在上站前因為查證不成立而移除,改為只陳述
+「只有訓練分布不同」。上站的版本不含該斷言。
+
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
