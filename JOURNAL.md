@@ -346,6 +346,36 @@ optimizer state 是否含 `(82, 768)` 對應狀態）仍未執行，待訓練結
 關係軸的座標，而 `_r2` 以 lstsq 在同一批資料上計算，沒有 held-out。上節的方向更正與
 「非泛化分數」的判斷都成立。
 
+### 2026-09-13 — 上節第 2 項待確認已結案：新 run 的詞嵌入確實在更新
+
+腳本 `/home/jungchun/.claude/jobs/4060016c/tmp/new_embed_check.py`（唯讀，與
+`old_embed_check.py` 同法，對象換成重訓 run）。訓練仍在進行，這裡查的是已落地的
+`epoch_4.pt` 與 `best.pt`／`last.pt`（皆為 epoch 7），不需等到最後一個 epoch。
+
+三項在舊 run 指向「從未更新」的訊號，在新 run 全部反轉：
+
+| 訊號 | 舊 run | 新 run |
+|---|---|---|
+| optimizer parameter 數 vs model tensor 數 | 60 vs 61 | 61 vs 61 |
+| optimizer state 含 `(82, 768)` | 無 | 有（epoch_4 與 last 皆有） |
+| 跨 epoch 是否逐元素相同 | 五個 checkpoint 完全相同，maxdiff 0.000e+00 | epoch_4 vs epoch_7 不同，maxdiff 4.824e-01 |
+| 張量 norm | 五個都是 250.6721 | 250.67（初始）→ 206.67（ep4）→ 180.87（ep7） |
+| 其餘列 std | 1.00504（等於初始化） | 0.72519 |
+
+`best.pt` 與 `last.pt` 逐元素相同是預期的：兩者都是 epoch 7，該 epoch 同時是當時的
+最佳。padding row 仍為 0，符合 `padding_idx=0` 的設定。
+
+因此 `src/model/checkpoint_io.py` 與 `scripts/train.py` 的兩處修正（在 optimizer
+建構前先建 word embedding；`load_state_dict` 遇到 unexpected keys 時報錯而非靜默丟棄）
+確實解決了原問題，而非只是讓訓練看起來有進展。上節兩項待確認至此全部結案。
+
+**訓練現況（進行中，不是結論）。** 12:51 時在 epoch 8 的第 9,900 / 10,937 步，開始後
+14.3 小時。每 epoch 約 1.64 小時（`epoch_4.pt` 18:49、epoch 7 的 best 23:44，三個 epoch
+4 小時 55 分）。validation accuracy 逐 epoch 新高：0.4220 / 0.5514 / 0.6894 / 0.7368 /
+0.7577 / 0.7679 / 0.7764 / 0.7830（epoch 0–7），八個 epoch 無停滯。RoBERTa 版對照
+0.9095。剩 epoch 8–15，預估 12:30 前後結束；最終值與 `docs/paper_artifacts.md`
+第 25／54／172 行的改寫都等該時點。
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
