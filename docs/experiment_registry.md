@@ -508,7 +508,18 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   referent at blocks 5–8 (−5 to −8) occurs only when the referring word is
   a shape word (n=223: −7.7/−8.1/−12.9 at 5–7; size/material referring
   words: ≈0 to +4) — it belongs to matching the referring word, not to the
-  unasked attribute. Reading: the model does both things — the asked
+  unasked attribute. **Correction 2026-09-13 (X24 A3; the stratification was
+  not implemented in code when the sentence was written — recomputed from
+  `labels.referent_words`, `attr_directions_v2/partA_attr_directions.json`
+  `by_ref_word`):** the referent's raw shape dip at blocks 5–7 is present for
+  every referring-word class (shape n=223: −7.8/−6.6/−12.1; material n=42:
+  −5.1/−3.9/−6.0; size n=59: −6.3/−6.1/−8.6). What is specific to shape
+  referring words is the NON-referent: its shape projection stays ≈0 at 5–7
+  (−0.0/+1.5/+0.8) whereas under material/size words it dips like the referent
+  (−6.0/−5.9/−8.9; −6.3/−6.9/−9.2). The "≈0 to +4" row was the shape-word
+  non-referent, not the size/material referent. After unit-normalisation the
+  three strata are indistinguishable at blocks 9–11 (−0.42 / −0.45 / −0.46).
+  Reading: the model does both things — the asked
   attribute is amplified on every object by any question (Song et al.'s
   amplification, not selective), and from block 9 the selection is
   expressed as removing the asked attribute from the non-referent; the

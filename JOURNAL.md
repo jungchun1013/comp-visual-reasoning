@@ -420,6 +420,48 @@ block 5」,不是 block 3。
 「只有訓練分布不同」。上站的版本不含該斷言。
 
 
+### 2026-09-13 — 後續實驗 proposal 核准;屬性分析加 gain 控制後重跑六組,結論站住但三處要改寫
+
+使用者核准 `docs/mechanism_followup_design.md`(A 修補 / B1 依賴 / B2 GQA 注入 / B3 GQA 屬性分解 / C1 待定),
+預測與反證先寫進 registry X24 再動手(commit e6b4c84)。
+
+**A1/A2/A3 做完(純 CPU,與訓練並行)。**`attr_direction_analysis(norm_std)` 把每個物件均值單位化後再投影;
+新增 `gain`(投影向量的 norm)、`qvu_*`(同一物件被問屬性的變化減未問屬性的變化)、`by_ref_word`(指涉詞分層);
+`*_other` 標為 deprecated(二值屬性 V_other = −V_own,恆等式)。輸出在每個 run 的 `attr_directions_v2/`,
+舊檔未動。迴歸檢查:六組(DINOv2 colour、SigLIP、MAE、shape、material、size)未歸一化的 v2 JSON 與 2026-08 的
+`partA_attr_directions.json` 逐值相同(0 個差異)。
+
+**gain 確實存在。**DINOv2 target 的 `obj_mean` norm 在 c1 比 c0 大:b8 80.5 vs 69.4、b11 48.5 vs 41.9(約 +16%);
+SigLIP 在 c2 的 b11 51.1 vs 37.1(+38%)。所以 2026-08 的 raw 數字含有整體放大的成分。
+
+**歸一化後(數值是 cosine 位移):**
+- DINOv2 問顏色:b8 refer-it +0.13 / refer-other +0.13 / refer-neither +0.15(仍無差別);b11 referent +0.15、
+  non-referent −0.08 [−0.098, −0.071](低於無問題基線)。「放大非選擇性、移除才帶指涉」成立,不是 gain 假象。
+- SigLIP:non-referent 從 b7 就低於基線(−0.12)到 b11 −0.22 [−0.227, −0.209];referent +0.20。
+- MAE:什麼都沒有。referent +0.10、non-referent +0.05,全程無移除。**raw 裡 b7–9 的 −3 左右的下陷是 gain
+  造成的**(c1 的 norm 比 c0 小),歸一化後變成 +0.04。先前說 MAE「只有 marker 沒有放大」要改成「沒有這套機制」。
+- 問 shape / material / size(DINOv2):non-referent 的被問屬性在 b11 分別 −0.42 / −0.20 / −0.12(CI 都不含 0),
+  referent 分別 −0.11 / +0.02 / −0.02。**移除四種屬性都有;referent 端的「放大」只有顏色有。**
+- 未被問的 shape 方向在任何問題下、兩個物件一起掉到約 −0.42(colour/material/size 問題皆然)。這是問題本身
+  造成的一般效應,與指涉無關;所以 attribute-specific 的是「指涉對比」(referent − non-referent),不是單一
+  物件的投影變化。
+
+**A3 推翻 registry 的一句話。**X21 那句「referent 在 b5–8 的 shape dip 只在指涉詞是 shape 詞時出現」錯了:
+raw 空間裡三類指涉詞的 referent 都有這個 dip(shape −7.8/−6.6/−12.1;material −5.1/−3.9/−6.0;size −6.3/−6.1/−8.6);
+shape 詞特有的是 **non-referent** 的 shape 在 b5–7 保持 ≈0,而 material/size 詞下它也跟著掉。原句的「≈0 到 +4」
+那一行是 shape 詞的 non-referent,不是 size/material 的 referent。已在 registry 原句後加更正註記,原文保留。
+
+**B1、B2 程式寫好、未跑。**`--intervene-spec`(GCA 寫入遮罩 / marker 方向投影掉,aggregate-only cache,
+行為讀出,commit d9cc737)、`--gqa-inject`(GQA marker 注入,2-fold cross-fit,commit 84a9b7a)。GPU 被
+learned-text 重訓佔著(epoch 10/16),所以用 `b1_driver.py`(job tmp)等訓練程序結束後依序跑:先 B2(< 20 分),
+再 DINOv2 17 格、SigLIP 17 格、MAE 2 格。driver 日誌 `outputs/analysis/patch_language_condition/log_b1_driver.txt`。
+**B1 角色拆分的 mask 以物件身分定義(target / distractor / bg),不以指涉狀態定義**,因為量測對象始終是 target。
+
+GQA 同物件換屬性的可行性(B3 次測試):184 題裡 36 題的 T 在題庫另有 plain select→query 的不同屬性問句,
+扣掉 18 題問左右位置剩約 30,其中 colour↔material 19。夠做 paired 統計,不夠下結論。
+
+A4 三項(fold-local PCA、GQA 結果檔登記統計量、spatial marker 重疊 cross-fit)與 C1 仍等使用者決定。
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
