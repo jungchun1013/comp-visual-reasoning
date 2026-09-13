@@ -307,7 +307,11 @@ def ensure_model(state, args):
     return state
 
 
-def extract_condition_sparse(sub_dir, cond, images, owners, labels, args, state, n_obj=2):
+def extract_condition_sparse(sub_dir, cond, images, owners, labels, args, state, n_obj=2,
+                             hooks_fn=None, save_tokens=True):
+    """`hooks_fn(s, e, cond)` -> context managers (trunk hooks) entered around the forward of
+    batch [s, e) — the intervened extraction of the dependency test.  `save_tokens=False`
+    keeps only the per-object / background aggregates (no `tok*`, no `gca_write*`)."""
     npz = sub_dir / f"feats_{cond}.npz"
     if npz.exists():
         print(f"Cached features exist, not re-extracting: {npz}")
@@ -322,21 +326,28 @@ def extract_condition_sparse(sub_dir, cond, images, owners, labels, args, state,
                            "gca_write_img", "gca_write_pos", "gca_write_owner",
                            "gca_write_norm", "gca_attn_ref", "gca_attn_special")}
     bs = args.batch_size
+    from contextlib import ExitStack
     for s in range(0, len(images), bs):
         e = min(s + bs, len(images))
         batch = torch.stack([tf(im) for im in images[s:e]]).to(device)
-        out = ext.run(batch, None if questions is None else questions[s:e],
-                      None if words is None else words[s:e])
+        with ExitStack() as st:
+            for h in (hooks_fn(s, e, cond) if hooks_fn else []):
+                st.enter_context(h)
+            out = ext.run(batch, None if questions is None else questions[s:e],
+                          None if words is None else words[s:e])
         raw, normed = out["raw"].cpu().numpy(), out["normed"].cpu().numpy()
+        if not save_tokens:
+            out.pop("write", None)
         for bi in range(e - s):
             i = s + bi
             ow = owners[i]
             bg = np.array(labels[i]["bg_sample"], dtype=int)
             keep = np.concatenate([np.nonzero(ow > 0)[0], bg])
-            acc["tok"].append(normed[bi][:, keep, :].transpose(1, 0, 2).astype(np.float16))
-            acc["tok_img"].append(np.full(len(keep), i, dtype=np.int16))
-            acc["tok_pos"].append(keep.astype(np.int16))
-            acc["tok_owner"].append(ow[keep].astype(np.int8))
+            if save_tokens:
+                acc["tok"].append(normed[bi][:, keep, :].transpose(1, 0, 2).astype(np.float16))
+                acc["tok_img"].append(np.full(len(keep), i, dtype=np.int16))
+                acc["tok_pos"].append(keep.astype(np.int16))
+                acc["tok_owner"].append(ow[keep].astype(np.int8))
             om = np.zeros((n_obj, NUM_LAYERS, normed.shape[-1]), np.float32)
             rom = np.zeros_like(om)
             for oid in range(1, n_obj + 1):
@@ -415,9 +426,12 @@ def offsets_from_cache(c, norm_std=False):
     return om - bm[:, None]
 
 
-def part_a(caches, labels, gca_layers, norm_std=False):
+def selection_contrast(caches, labels, norm_std=False):
+    """The obj_mean/bg_mean-only opening of `part_a`: reference directions from c0, the
+    per-condition projections and the referent − non-referent contrasts (`ref`, `nonref`,
+    `*_imgdir`, `base_*`).  Split out so it also runs on the aggregate-only caches of the
+    intervened extractions (dependency test), which carry no `tok*` arrays."""
     conds = [k for k in caches if k != "c0"]
-    c0 = caches["c0"]
     N = len(labels)
     has_d = np.array([rec["n_distractor_patches"] > 0 for rec in labels])
     off = {k: offsets_from_cache(caches[k], norm_std) for k in caches}
@@ -460,6 +474,14 @@ def part_a(caches, labels, gca_layers, norm_std=False):
             _boot((proj(cond, 1, l, V[l]) - proj("c0", 1, l, V[l]))[has_d]) for l in range(NUM_LAYERS)]
     metrics["offset_norm_ref"] = [float(np.linalg.norm(off["c0"][:, 0, l], axis=-1).mean())
                                   for l in range(NUM_LAYERS)]
+    return metrics, off, V, v_img, has_d
+
+
+def part_a(caches, labels, gca_layers, norm_std=False):
+    conds = [k for k in caches if k != "c0"]
+    c0 = caches["c0"]
+    N = len(labels)
+    metrics, off, V, v_img, has_d = selection_contrast(caches, labels, norm_std)
 
     # per-patch change d = h(c) − h(c0), split by owner
     own = c0["tok_owner"]
@@ -863,6 +885,141 @@ def first_token_logits(model, steervit, images, questions):
     patches = feats[:, prefix:, :]
     bos = torch.full((images.shape[0], 1), model.vocab["<bos>"], dtype=torch.long, device=images.device)
     return model.decoder(bos, patches)[:, 0, :]
+
+
+# ---------------------------------------------------------------------------
+# Dependency test (registry X24 B1): re-extract the 2-object caches with an intervention
+# active in the visual stream, then rerun the attribute-direction and selection-contrast
+# analyses on the intervened caches.  Spec grammar:
+#   none | gcamask:1,3,5[:all|target|distractor|bg] | project:7:marker|random[:seed]
+# Role masks are by object identity (the measured object is always the target: referent
+# under c1, non-referent under c2).  The marker basis is cross-fit by image (2 folds by
+# pair_index parity) so no image is projected with a direction estimated on itself.
+# ---------------------------------------------------------------------------
+
+def intervene_dir_name(spec):
+    return "n2_int_" + spec.replace(":", "_").replace(",", "-")
+
+
+def crossfit_marker(cache_c1, cache_c2, folds):
+    """Per fold k: unit marker (12, D) from the images NOT in fold k (raw c1 − c2 target mean)."""
+    d = (cache_c1["raw_obj_mean"][:, 0].astype(np.float32)
+         - cache_c2["raw_obj_mean"][:, 0].astype(np.float32))
+    return {int(k): _unit(d[folds != k].mean(0)) for k in np.unique(folds)}
+
+
+def intervene_hooks_fn(out_dir, args, state, owners_n2, labels_n2, spec):
+    """Build `hooks_fn(s, e, cond)` for `extract_condition_sparse` from a spec; None for "none"."""
+    trunk, device = state["steervit"].vision_model.trunk, state["device"]
+    parts = spec.split(":")
+    kind = parts[0]
+    own_all = np.stack(owners_n2)
+    P = own_all.shape[1]
+    folds = np.array([rec["pair_index"] % 2 for rec in labels_n2])
+    if kind == "none":
+        return None
+    if kind == "gcamask":
+        layers = [int(l) for l in parts[1].split(",")]
+        assert all(getattr(trunk.blocks[l], "gated_cross_attn", None) is not None for l in layers), \
+            f"gcamask layers must be GCA layers, got {layers}"
+        role = parts[2] if len(parts) > 2 else "all"
+        oid = {"all": None, "target": 1, "distractor": 2, "bg": 0}[role]
+
+        def hooks_fn(s, e, cond):
+            ow = torch.from_numpy(own_all[s:e]).to(device)
+            m = torch.ones_like(ow, dtype=torch.bool) if oid is None else (ow == oid)
+            return [GCAWriteMasker(trunk, l, m) for l in layers]
+        return hooks_fn
+    if kind == "project":
+        layer, what = int(parts[1]), parts[2]
+        if what == "marker":
+            mk = crossfit_marker(load_sparse(out_dir / "n2", "c1"), load_sparse(out_dir / "n2", "c2"), folds)
+            basis = {k: v[layer] for k, v in mk.items()}
+        elif what == "random":
+            seed = int(parts[3]) if len(parts) > 3 else args.seed
+            D = load_sparse(out_dir / "n2", "c0")["obj_mean"].shape[-1]
+            r = _unit(np.random.default_rng(seed).standard_normal(D).astype(np.float32))
+            basis = {int(k): r for k in np.unique(folds)}
+        else:
+            raise ValueError(spec)
+        basis_t = {k: torch.from_numpy(np.ascontiguousarray(b[None])).to(device) for k, b in basis.items()}
+
+        def hooks_fn(s, e, cond):
+            f = torch.from_numpy(folds[s:e]).to(device)
+            return [SubspaceProjector(trunk, layer, b, (f == k)[:, None].expand(e - s, P))
+                    for k, b in basis_t.items()]
+        return hooks_fn
+    raise ValueError(spec)
+
+
+@torch.no_grad()
+def intervened_behaviour(state, images, labels, args, hooks_fn):
+    """Answer behaviour under the same hooks: accuracy, P(correct), P(the other object's
+    value), logit margin, for c1 / c2 / c3.  Images whose two objects share the queried
+    value are excluded (the two answers coincide)."""
+    from contextlib import ExitStack
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    N, bs = len(labels), args.batch_size
+    ans_t = np.array([model.vocab[r["target"][QUERIED]] for r in labels])
+    ans_d = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels])
+    valid = ans_t != ans_d
+    out = {"n": int(valid.sum())}
+    for cond in ("c1", "c2", "c3"):
+        qs = [r["questions"][cond] for r in labels]
+        correct = ans_d if cond == "c2" else ans_t
+        other = ans_t if cond == "c2" else ans_d
+        preds, p_c, p_o, marg = [], [], [], []
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            ims = torch.stack([tf(im) for im in images[s:e]]).to(device)
+            with ExitStack() as st:
+                for h in (hooks_fn(s, e, cond) if hooks_fn else []):
+                    st.enter_context(h)
+                lg = first_token_logits(model, steervit, ims, qs[s:e]).float()
+            pr = lg.softmax(-1).cpu().numpy()
+            lg = lg.cpu().numpy()
+            idx = np.arange(e - s)
+            preds.append(lg.argmax(-1))
+            p_c.append(pr[idx, correct[s:e]])
+            p_o.append(pr[idx, other[s:e]])
+            lg2 = lg.copy()
+            lg2[idx, correct[s:e]] = -np.inf
+            marg.append(lg[idx, correct[s:e]] - lg2.max(-1))
+        preds, p_c, p_o, marg = (np.concatenate(x) for x in (preds, p_c, p_o, marg))
+        out[cond] = {"accuracy": _boot((preds == correct)[valid].astype(np.float64)),
+                     "p_correct": _boot(p_c[valid]), "p_other_object": _boot(p_o[valid]),
+                     "margin": _boot(marg[valid]), "pred": preds.tolist()}
+        print(f"  behaviour {cond}: acc {out[cond]['accuracy']['mean']:.3f} "
+              f"P(other object) {out[cond]['p_other_object']['mean']:.3f} margin {out[cond]['margin']['mean']:.2f}")
+    return out
+
+
+def run_intervened(out_dir, args, state, images_n2, owners_n2, labels_n2, labels_n1, spec):
+    ensure_model(state, args)
+    new_dir = out_dir / intervene_dir_name(spec)
+    new_dir.mkdir(exist_ok=True)
+    print(f"\n=== intervention {spec} -> {new_dir}")
+    hooks_fn = intervene_hooks_fn(out_dir, args, state, owners_n2, labels_n2, spec)
+    for cond in CONDITIONS_N2:
+        extract_condition_sparse(new_dir, cond, images_n2, owners_n2, labels_n2, args, state,
+                                 hooks_fn=hooks_fn, save_tokens=False)
+    if not (new_dir / "behaviour.json").exists():
+        beh = intervened_behaviour(state, images_n2, labels_n2, args, hooks_fn)
+        with open(new_dir / "behaviour.json", "w") as f:
+            json.dump(beh, f, indent=1)
+    caches = {c: load_sparse(new_dir, c) for c in CONDITIONS_N2}
+    V = attribute_directions(load_sparse(out_dir / "n1", "c0"), labels_n1)
+    for tag, norm_std in (("", False), ("_normstd", True)):
+        res = attr_direction_analysis(caches, labels_n2, V, norm_std)
+        with open(new_dir / f"partA_attr_directions{tag}.json", "w") as f:
+            json.dump(res, f, indent=1)
+        sc = selection_contrast(caches, labels_n2, norm_std)[0]
+        with open(new_dir / f"selection_contrast{tag}.json", "w") as f:
+            json.dump(sc, f, indent=1)
+        for key, src in ((f"nonrefvs0_target_{QUERIED}_own", res), (f"refvs0_target_{QUERIED}_own", res),
+                         ("ref_imgdir", sc), ("ref", sc)):
+            print(f"  {spec} {tag or 'raw':8s} {key:28s} "
+                  + " ".join(f"{q['mean']:+.2f}" for q in src["delta"][key]))
 
 
 # ---------------------------------------------------------------------------
@@ -5197,6 +5354,9 @@ def main():
     ap.add_argument("--hue-thresh", type=float, default=0.17)
     ap.add_argument("--alphas", default="0.5,1,2")
     ap.add_argument("--intervene-layers", default=",".join(str(l) for l in range(NUM_LAYERS)))
+    ap.add_argument("--intervene-spec", action="append", default=None,
+                    help="dependency test (X24 B1), repeatable: none | gcamask:1,3,5[:all|target|distractor|bg]"
+                         " | project:7:marker|random[:seed]; caches go to <out-dir>/n2_int_<spec>/")
     ap.add_argument("--readout-probe", action="store_true",
                     help="Part D: mean-pool / attention / oracle-position readouts on no-question tokens")
     ap.add_argument("--probe-layers", default=",".join(str(l) for l in GCA_LAYERS))
@@ -5328,6 +5488,10 @@ def main():
             for cond in conds[name]:
                 extract_condition_sparse(out_dir / name, cond, images[name], owners[name],
                                          labels[name], args, state)
+        if args.intervene_spec:
+            for spec in args.intervene_spec:
+                run_intervened(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"], spec)
+            return
         if args.head_combos:
             ensure_model(state, args)
             cache_n1 = load_sparse(out_dir / "n1", "c0")
