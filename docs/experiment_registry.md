@@ -1239,3 +1239,46 @@ split is hard-coded today).
 **Rules.** Controls fixed above; marker always cross-fit by image; claims graded
 correlational (A, B3) vs causal (B1, B2); no hypothesis edited after results; design
 changes get a new directory, old directories stay.
+
+
+#### X24 Results (2026-09-13; all cells reported; JOURNAL 2026-09-13 has the full tables)
+
+**A (CPU).** Un-normalised v2 reproduces the 2026-08 JSON value-for-value in all six runs.
+Gain is real (DINOv2 target norm c1 vs c0 +16 % at b8–11; SigLIP c2 +38 % at b11).
+Normalised: DINOv2 colour b8 +0.13 / +0.13 / +0.15 (non-selective), b11 referent +0.15 vs
+non-referent −0.08 [−0.098, −0.071] — PASS; SigLIP non-referent −0.12 at b7 → −0.22 at
+b11 — PASS; MAE +0.10 / +0.05, no removal (raw b7–9 dip was gain) — no signature;
+shape / material / size queried: non-referent −0.42 / −0.20 / −0.12 at b11, referent
+−0.11 / +0.02 / −0.02 (removal for all four attributes, referent enhancement only for
+colour). `qvu_*` is dominated by a general shape drop (≈ −0.42 on both objects under any
+question), so attribute specificity holds for the referential contrast, not for a single
+object's projection. X21 referring-word sentence corrected (see note there).
+
+**B2 (GPU, 1.5 min) `x23_gqa_direct_inject/`.** 125 clean items / 107 images, marker
+2-fold cross-fit. +marker on the third object: ΔP(its value) b7 α1 +0.032 [+0.008,
++0.063], b7 α2 +0.040, b9 α1 +0.032, b9 α2 +0.064 [+0.024, +0.105]; random same-norm
+directions ≈ 0; paired marker − random CI excludes 0 in all four cells (+0.029 / +0.035 /
++0.027 / +0.056) — registered criterion PASS. −marker on the referent: acc 1.0 → 0.688
+(b9 α2); both: 0.536. **Background control not separated**: +marker on background b9
+α2 +0.040 [+0.008, +0.076], acc 0.736. Claim allowed: the direction is causally
+effective on natural images; not allowed: object-specific role marker.
+
+**B1 (GPU) `n2_int_<spec>/`, figure `n2_int_summary/dependency_test.png`.** Non-referent
+normalised queried-attribute projection at b11 (no intervention DINOv2 −0.084, SigLIP
+−0.218). Marker direction projected out before the removal onset: DINOv2 @b8 −0.004
+(gone), @b7 −0.028; SigLIP @b7 −0.043, @b8 −0.099; five random directions unchanged in
+both — H-dep PASS by the registered criterion (≥ 50 % shrink, CI excludes the unblocked
+value, random controls flat). GCA masking: {1,3,5} all patches DINOv2 −0.047 (44 %,
+partial), SigLIP +0.084 (gone, reversed); {1,3,5,7} gone in both (acc 0.07 / 0.25);
+{9,11} late control DINOv2 +0.058 (reversed, acc 0.50) vs SigLIP −0.169 (intact, acc
+0.99). Role split {1,3,5}: DINOv2 redundant (target / distractor / bg alone all intact);
+SigLIP target-only kills it (+0.003) with acc 0.997. Timing control @b10: DINOv2 −0.023,
+acc 0.52; SigLIP −0.128, acc 0.997. MAE: no removal (+0.054), masking {1,3,5} leaves the
+projection (+0.043) but drops acc 0.997 → 0.892.
+Reading: same dependency on the marker direction, different implementation (DINOv2:
+executed by GCA 9/11 reading the marker, early writes redundant; SigLIP: done by b7 via
+target-patch writes, late blocks unnecessary). Two dissociations to report: SigLIP
+target-only mask and @b10 projection remove the signature without harming accuracy.
+
+**Not run / pending user.** B3 (GQA attribute pool), A4, C1, the attribute-restoration
+intervention (Codex contribution 2), Sup-ViT as a fourth backbone.
