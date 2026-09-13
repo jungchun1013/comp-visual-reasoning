@@ -778,6 +778,69 @@ def attr_direction_analysis(caches_n2, labels_n2, V, norm_std=False):
     return res
 
 
+def plot_dependency_test(out_dir, label, gca_layers):
+    """X24 B1 figure from the n2_int_<spec>/ directories: the unit-normalised projection of
+    the non-referent's queried attribute (c2 − c0) per block under each intervention.
+    Three panels: GCA-write dose + late control, role split, marker-direction projection
+    (random directions averaged over seeds).  c1 accuracy in the legend."""
+    key = f"nonrefvs0_target_{QUERIED}_own"
+
+    def load(spec):
+        d = out_dir / intervene_dir_name(spec)
+        try:
+            a = json.loads((d / "partA_attr_directions_normstd.json").read_text())["delta"][key]
+            acc = json.loads((d / "behaviour.json").read_text())["c1"]["accuracy"]["mean"]
+        except FileNotFoundError:
+            return None
+        return (np.array([q["mean"] for q in a]), np.array([q["lo"] for q in a]),
+                np.array([q["hi"] for q in a]), acc)
+
+    panels = [
+        ("GCA write removed on all patches", [
+            ("none", "no intervention"), ("gcamask:1", "GCA block 1"), ("gcamask:1,3", "GCA blocks 1, 3"),
+            ("gcamask:1,3,5", "GCA blocks 1, 3, 5"), ("gcamask:1,3,5,7", "GCA blocks 1, 3, 5, 7"),
+            ("gcamask:9,11", "GCA blocks 9, 11 (late control)")]),
+        ("GCA blocks 1, 3, 5 removed on one patch group", [
+            ("none", "no intervention"), ("gcamask:1,3,5", "all patches"), ("gcamask:1,3,5:target", "target patches"),
+            ("gcamask:1,3,5:distractor", "distractor patches"), ("gcamask:1,3,5:bg", "background patches")]),
+        ("marker direction projected out (rank 1)", [
+            ("none", "no intervention"), ("project:7:marker", "marker at block 7"),
+            ("project:8:marker", "marker at block 8"), ("project:10:marker", "marker at block 10 (timing control)"),
+            ("random", "random direction at block 7 (mean of 5 seeds)")]),
+    ]
+    colors = plt.get_cmap("tab10").colors
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.2), sharey=True)
+    x = np.arange(NUM_LAYERS)
+    for ax, (title, items) in zip(axes, panels):
+        for k, (spec, lab) in enumerate(items):
+            if spec == "random":
+                rs = [r for r in (load(f"project:7:random:{s}") for s in range(5)) if r is not None]
+                if not rs:
+                    continue
+                m, lo, hi = (np.mean([r[i] for r in rs], 0) for i in range(3))
+                acc = float(np.mean([r[3] for r in rs]))
+            else:
+                r = load(spec)
+                if r is None:
+                    continue
+                m, lo, hi, acc = r
+            ax.plot(x, m, "-", color=colors[k], marker="o", markersize=3, label=f"{lab} (acc {acc:.2f})")
+            ax.fill_between(x, lo, hi, color=colors[k], alpha=0.12, linewidth=0)
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.set_title(title, fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6.5)
+    axes[0].set_ylabel(f"non-referent: own {QUERIED} projection, question − no question (unit-normalised)", fontsize=8)
+    fig.suptitle(f"{label} — dependency test: does the late removal of the non-referent survive when early "
+                 f"selection is blocked?", fontsize=10)
+    fig.tight_layout()
+    out = out_dir / "n2_int_summary"
+    out.mkdir(exist_ok=True)
+    fig.savefig(out / "dependency_test.png", dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out / 'dependency_test.png'}")
+
+
 def plot_attr_directions(res, label, out_path, gca_layers):
     fig, axes = plt.subplots(1, 3, figsize=(16, 4))
     x = range(NUM_LAYERS)
@@ -5491,6 +5554,8 @@ def main():
     ap.add_argument("--x19-dir", default="outputs/analysis/patch_pca_cluster")
     ap.add_argument("--masks-only", action="store_true")
     ap.add_argument("--replot", action="store_true")
+    ap.add_argument("--intervene-plot", action="store_true",
+                    help="X24 B1: figure from the finished n2_int_<spec>/ dirs of --out-dir (CPU)")
     ap.add_argument("--attr-directions", action="store_true",
                     help="only: attribute-specific direction projections (new files)")
     ap.add_argument("--rsa-template", action="store_true",
@@ -5720,6 +5785,9 @@ def main():
         with open(out_dir / "readout_probe.json", "w") as f:
             json.dump(res, f, indent=1)
         plot_readout_probe(res, label, out_dir / "readout_probe.png")
+        return
+    if args.intervene_plot:
+        plot_dependency_test(out_dir, label, gca_layers)
         return
     if args.attr_directions:
         V = attribute_directions(cache_n1, labels["n1"])
