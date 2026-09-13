@@ -963,7 +963,9 @@ def intervened_behaviour(state, images, labels, args, hooks_fn):
     ans_t = np.array([model.vocab[r["target"][QUERIED]] for r in labels])
     ans_d = np.array([model.vocab[r["distractors"][0][QUERIED]] for r in labels])
     valid = ans_t != ans_d
-    out = {"n": int(valid.sum())}
+    out = {"n": int(valid.sum()),
+           "c3_note": "c3 is the non-referring question ('What colour is the object?') with no defined "
+                      "answer: 'accuracy' = P(target's value), 'p_other_object' = P(distractor's value)"}
     for cond in ("c1", "c2", "c3"):
         qs = [r["questions"][cond] for r in labels]
         correct = ans_d if cond == "c2" else ans_t

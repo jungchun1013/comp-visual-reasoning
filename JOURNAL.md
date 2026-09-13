@@ -462,6 +462,26 @@ GQA 同物件換屬性的可行性(B3 次測試):184 題裡 36 題的 T 在題�
 
 A4 三項(fold-local PCA、GQA 結果檔登記統計量、spatial marker 重疊 cross-fit)與 C1 仍等使用者決定。
 
+### 2026-09-13 — learned-text 重訓收斂 0.8044;GQA marker 注入:方向有因果效力,但背景對照沒分開
+
+**learned-text 重訓結束**(`clevr_dinov2_learned_text_decoder1l_v2_s42`,16 epoch):best val 0.8044、最後 epoch 0.8041,
+epoch 10 後已平;count 0.732、compare_integer 0.617。對照 RoBERTa 版 0.9095 差 10.5 點。取代
+`docs/paper_artifacts.md` 的 0.2456(凍結隨機嵌入的量測失敗)。paper_artifacts 三行尚未改,等使用者。
+
+**GQA marker 注入(registry X24 B2)跑完,1.5 分鐘,`x23_gqa_direct_inject/`。**184 題兩值皆在詞表且不同;乾淨答對
+125 題 / 107 張。marker 2-fold cross-fit by image(兩折各 86 / 98 題),norm b7 1.1、b9 1.9、b11 20。
+P(答成另一物件的值)的變化(image bootstrap CI):+marker 加在另一物件 b7 α1 +0.032 [+0.008, +0.063]、
+b7 α2 +0.040、b9 α1 +0.032、b9 α2 +0.064 [+0.024, +0.105];同 norm 隨機方向五個 seed 都 ≈ 0(0 到 +0.024);
+paired 差 marker − 隨機 四格 CI 都不含 0(+0.029 / +0.035 / +0.027 / +0.056 [+0.020, +0.093])。從 referent 減
+marker:b9 α2 準確率 1.0 → 0.688;加減同做 → 0.536、15.2% 改答另一物件。登記的通過條件(CI 不含 0 且超過隨機)四格
+都過。**但 marker 加在背景 patch 的效果幾乎一樣大**:b9 α2 +0.040 [+0.008, +0.076]、準確率 0.736(對比加在另一
+物件 +0.064、0.824)。所以能主張「這個方向因果有效、不是相關」,不能主張「它是物件專屬的角色標記」。可能原因:
+GQA 模型的 decoder 從背景讀答案,背景被寫入 marker 直接擾動讀出。
+
+**依賴實驗(B1)DINOv2 起跑 13:20。**無介入基線格 `n2_int_none/` 與既有 n2 cache 逐值相同(selection contrast、
+歸一化屬性序列全部一致),行為 c1 / c2 0.994;c3 是非指涉問句("What color is the object?"),沒有正確答案,
+模型兩物件各答一半(0.488 / 0.515)——behaviour.json 的 c3 欄要照此讀,已加註記。
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
