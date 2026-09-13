@@ -656,14 +656,41 @@ def attribute_directions(cache_n1, labels_n1, space="normed"):
     return V
 
 
-def attr_direction_analysis(caches_n2, labels_n2, V):
+def _ref_word_class(word):
+    """Attribute family of a referring word ("cube" -> shape, "metal" -> material);
+    "thing"/"object"/"the" -> "none"."""
+    for attr, values in ATTR_VALUES.items():
+        if word in values:
+            return attr
+    return "none"
+
+
+def attr_direction_analysis(caches_n2, labels_n2, V, norm_std=False):
+    """`norm_std=True`: every object mean is unit-normalised before projection, so a
+    uniform gain on the whole object vector (h -> a*h scales every projection by a)
+    cannot pass for attribute-specific amplification.  This is the control `part_a`
+    already has; it cannot be applied after the fact because the saved `offset_norm`
+    belongs to the offset vector, not to `obj_mean`.  `gain` records the norms that
+    the raw projections are confounded with."""
     N = len(labels_n2)
     has_d = np.array([rec["n_distractor_patches"] > 0 for rec in labels_n2])
-    res = {"n_images": N, "n_with_distractor": int(has_d.sum()), "proj": {}, "delta": {}}
+    contrast_attr = "shape" if QUERIED != "shape" else "color"
+    res = {"n_images": N, "n_with_distractor": int(has_d.sum()), "norm_std": bool(norm_std),
+           "queried": QUERIED, "contrast_attr": contrast_attr, "proj": {}, "delta": {}, "gain": {},
+           "by_ref_word": {},
+           "deprecated": {"*_other": "own-vs-other is an algebraic identity, not a test: for a binary "
+                          "attribute V_other = -V_own exactly (both are unit(mean_v - grand mean) of two "
+                          "values), and for k values the other-value directions are constrained to sum "
+                          "against V_own. Use *vs0_* (own value vs the no-question baseline) and qvu_* "
+                          "(queried-attribute change minus unqueried-attribute change of the same object)."}}
 
     def proj(cond, oid, attr, value_of):
-        """Per image projection onto V[attr][own value] and mean over the other values."""
+        """Per image projection onto V[attr][own value] and mean over the other values;
+        also the per-image norm of the projected object mean (the gain)."""
         om = caches_n2[cond]["obj_mean"][:, oid].astype(np.float32)   # (N, 12, D)
+        gain = np.linalg.norm(om, axis=-1)
+        if norm_std:
+            om = _unit(om)
         own = np.full((N, NUM_LAYERS), np.nan, np.float32)
         other = np.full((N, NUM_LAYERS), np.nan, np.float32)
         for i in range(N):
@@ -673,35 +700,59 @@ def attr_direction_analysis(caches_n2, labels_n2, V):
             own[i] = (om[i] * V[attr][v]).sum(-1)
             others = [V[attr][u] for u in V[attr] if u != v]
             other[i] = np.mean([(om[i] * u).sum(-1) for u in others], 0)
-        return own, other
+        return own, other, gain
 
     P = {}
     for cond in caches_n2:
         for oid, name, key in ((0, "target", "target"), (1, "distractor", "distractors")):
+            valid = np.ones(N, bool) if oid == 0 else has_d
             for attr in dict.fromkeys(["color", "shape", QUERIED]):
                 value_of = (lambda i, a=attr: labels_n2[i]["target"][a]) if oid == 0 else \
                            (lambda i, a=attr: labels_n2[i]["distractors"][0][a])
-                own, other = proj(cond, oid, attr, value_of)
-                valid = np.ones(N, bool) if oid == 0 else has_d
+                own, other, gain = proj(cond, oid, attr, value_of)
                 P[(cond, name, attr)] = (own, other, valid)
                 res["proj"][f"{cond}_{name}_{attr}"] = {
                     "own": [_boot(own[valid, l]) for l in range(NUM_LAYERS)],
                     "other": [_boot(other[valid, l]) for l in range(NUM_LAYERS)]}
-    # referent − non-referent contrasts, per attribute, own vs other value
-    for attr in dict.fromkeys(["color", "shape", QUERIED]):
-        for what, k in (("own", 0), ("other", 1)):
-            t1, t2 = P[("c1", "target", attr)], P[("c2", "target", attr)]
-            d1, d2 = P[("c1", "distractor", attr)], P[("c2", "distractor", attr)]
-            v = t1[2] & d1[2]
-            res["delta"][f"ref_target_{attr}_{what}"] = [_boot((t1[k] - t2[k])[v, l]) for l in range(NUM_LAYERS)]
-            res["delta"][f"nonref_distractor_{attr}_{what}"] = [_boot((d1[k] - d2[k])[v, l]) for l in range(NUM_LAYERS)]
-            if "c0" in caches_n2:
-                t0, d0 = P[("c0", "target", attr)], P[("c0", "distractor", attr)]
-                res["delta"][f"refvs0_target_{attr}_{what}"] = [_boot((t1[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
-                res["delta"][f"nonrefvs0_target_{attr}_{what}"] = [_boot((t2[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
-                if "c3" in caches_n2:
-                    t3 = P[("c3", "target", attr)]
-                    res["delta"][f"c3vs0_target_{attr}_{what}"] = [_boot((t3[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+            res["gain"][f"{cond}_{name}"] = [_boot(gain[valid, l]) for l in range(NUM_LAYERS)]
+
+    def contrasts(sel, whats=(("own", 0), ("other", 1))):
+        """Referent − non-referent contrasts over the image subset `sel`, per attribute."""
+        out = {}
+        for attr in dict.fromkeys(["color", "shape", QUERIED]):
+            for what, k in whats:
+                t1, t2 = P[("c1", "target", attr)], P[("c2", "target", attr)]
+                d1, d2 = P[("c1", "distractor", attr)], P[("c2", "distractor", attr)]
+                v = t1[2] & d1[2] & sel
+                out[f"ref_target_{attr}_{what}"] = [_boot((t1[k] - t2[k])[v, l]) for l in range(NUM_LAYERS)]
+                out[f"nonref_distractor_{attr}_{what}"] = [_boot((d1[k] - d2[k])[v, l]) for l in range(NUM_LAYERS)]
+                if "c0" in caches_n2:
+                    t0, d0 = P[("c0", "target", attr)], P[("c0", "distractor", attr)]
+                    out[f"refvs0_target_{attr}_{what}"] = [_boot((t1[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+                    out[f"nonrefvs0_target_{attr}_{what}"] = [_boot((t2[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+                    if "c3" in caches_n2:
+                        t3 = P[("c3", "target", attr)]
+                        out[f"c3vs0_target_{attr}_{what}"] = [_boot((t3[k] - t0[k])[v, l]) for l in range(NUM_LAYERS)]
+        # queried-attribute change minus unqueried-attribute change of the SAME object: the
+        # attribute-specific part of what the question does (a uniform gain cancels here too)
+        if "c0" in caches_n2 and contrast_attr != QUERIED:
+            q0, q1, q2 = (P[(c, "target", QUERIED)][0] for c in ("c0", "c1", "c2"))
+            u0, u1, u2 = (P[(c, "target", contrast_attr)][0] for c in ("c0", "c1", "c2"))
+            dq0, dq1 = (P[(c, "distractor", QUERIED)][0] for c in ("c0", "c1"))
+            du0, du1 = (P[(c, "distractor", contrast_attr)][0] for c in ("c0", "c1"))
+            v = P[("c1", "target", QUERIED)][2] & P[("c1", "distractor", QUERIED)][2] & sel
+            out["qvu_refvs0_target"] = [_boot(((q1 - q0) - (u1 - u0))[v, l]) for l in range(NUM_LAYERS)]
+            out["qvu_nonrefvs0_target"] = [_boot(((q2 - q0) - (u2 - u0))[v, l]) for l in range(NUM_LAYERS)]
+            out["qvu_c1vs0_distractor"] = [_boot(((dq1 - dq0) - (du1 - du0))[v, l]) for l in range(NUM_LAYERS)]
+        return out
+
+    res["delta"] = contrasts(np.ones(N, bool))
+    # stratify by the attribute family of the c1 referring word (registry: shape-word
+    # referents show an extra shape-direction dip at blocks 5–8)
+    cls = np.array([_ref_word_class(rec["referent_words"]["c1"]) for rec in labels_n2])
+    for c in sorted(set(cls)):
+        sel = cls == c
+        res["by_ref_word"][c] = {"n": int(sel.sum()), "delta": contrasts(sel, whats=(("own", 0),))}
     return res
 
 
@@ -5327,17 +5378,28 @@ def main():
     if args.attr_directions:
         V = attribute_directions(cache_n1, labels["n1"])
         print("directions per attribute: " + ", ".join(f"{a}: {sorted(V[a])}" for a in V))
-        res = attr_direction_analysis(caches_n2, labels["n2"], V)
-        for key in (f"ref_target_{QUERIED}_own", f"refvs0_target_{QUERIED}_own", f"nonrefvs0_target_{QUERIED}_own",
-                    "ref_target_color_own", "ref_target_color_other", "ref_target_shape_own",
-                    "nonref_distractor_color_own", "nonref_distractor_shape_own",
-                    "refvs0_target_color_own", "refvs0_target_shape_own",
-                    "nonrefvs0_target_color_own", "nonrefvs0_target_shape_own", "c3vs0_target_color_own"):
-            if key in res["delta"]:
-                print(f"{key:<30} " + " ".join(f"{q['mean']:+.2f}" for q in res["delta"][key]))
-        with open(out_dir / "partA_attr_directions.json", "w") as f:
-            json.dump(res, f, indent=1)
-        plot_attr_directions(res, label, out_dir / "attr_directions.png", gca_layers)
+        # v2 (2026-09-13): raw + unit-normalised variants, gain series, qvu_* statistics and
+        # referring-word strata; written to a sub-directory so the 2026-08 files stay untouched
+        v2_dir = out_dir / "attr_directions_v2"
+        v2_dir.mkdir(exist_ok=True)
+        for tag, norm_std in (("", False), ("_normstd", True)):
+            res = attr_direction_analysis(caches_n2, labels["n2"], V, norm_std)
+            print(f"\n--- attr directions{tag} (norm_std={norm_std}) ---")
+            for key in (f"ref_target_{QUERIED}_own", f"refvs0_target_{QUERIED}_own", f"nonrefvs0_target_{QUERIED}_own",
+                        "ref_target_color_own", "ref_target_color_other", "ref_target_shape_own",
+                        "nonref_distractor_color_own", "nonref_distractor_shape_own",
+                        "refvs0_target_color_own", "refvs0_target_shape_own",
+                        "nonrefvs0_target_color_own", "nonrefvs0_target_shape_own", "c3vs0_target_color_own",
+                        "qvu_refvs0_target", "qvu_nonrefvs0_target", "qvu_c1vs0_distractor"):
+                if key in res["delta"]:
+                    print(f"{key:<30} " + " ".join(f"{q['mean']:+.2f}" for q in res["delta"][key]))
+            for k, g in res["gain"].items():
+                print(f"gain {k:<25} " + " ".join(f"{q['mean']:7.2f}" for q in g))
+            print("ref-word strata n: " + ", ".join(f"{c}={s['n']}" for c, s in res["by_ref_word"].items()))
+            with open(v2_dir / f"partA_attr_directions{tag}.json", "w") as f:
+                json.dump(res, f, indent=1)
+            plot_attr_directions(res, label + (" — unit-normalised object means" if norm_std else ""),
+                                 v2_dir / f"attr_directions{tag}.png", gca_layers)
         return
     if args.rsa_template:
         res = rsa_template(caches_n2, labels["n2"], args.grid)

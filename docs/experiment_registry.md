@@ -1150,3 +1150,81 @@ one bounded check when CoGenT numbers are finalized for camera-ready.
 3. Targeted-mode A/B patching to match C's population (D4) — check main script's support first.
 4. Verify the two CLEVR roots are identical copies (D7).
 5. Figure-caption rule: every figure states model variant (D1) + n (D6).
+
+
+### X24. Selection → removal dependency, GQA marker injection, GQA attribute decomposition — pre-registered
+
+Design document: `docs/mechanism_followup_design.md` (2026-09-13). Registered before the
+first GPU job. Everything below is a prediction; results are reported for every cell
+with n and image-bootstrap CI, whichever way they come out.
+
+**Why.** Three gaps in the selection → removal account: (a) the attribute-direction
+projections (`partA_attr_directions.json`, six dirs) have no gain control and their
+own-vs-other statistic is an algebraic identity (−1.000 for binary attributes); (b) the
+block-5 selection onset and the block-9 (DINOv2) / block-7 (SigLIP) removal onset give
+an *order* but no *dependency*; (c) GQA has no causal evidence (transplant n=3, zero
+qualifying heads) and no attribute decomposition.
+
+**A. Repairs (CPU, no new data).**
+- A1 `attr_direction_analysis(..., norm_std)`: unit-normalised object means; `gain` series
+  saved. Output `attr_directions_v2/partA_attr_directions{,_normstd}.json` next to each
+  existing run; the un-normalised variant must reproduce the 2026-08 JSON value-for-value.
+  Prediction: after normalisation refer-it / refer-other / refer-neither stay
+  indistinguishable through block 8 and the non-referent stays below the no-question
+  baseline from block 9 (DINOv2) / 7 (SigLIP). Falsifier: normalised removal ≈ 0.
+- A2 `*_other` keys marked deprecated; new statistics `own_vs_c0` (existing `*vs0_*`) and
+  `qvu_*` = Δ(queried-attribute own-value) − Δ(unqueried-attribute own-value) of the same
+  object. Prediction: `qvu_nonrefvs0_target` < 0 from the removal onset; `qvu_refvs0_target`
+  ≈ 0 through block 8.
+- A3 referring-word strata (`labels.json: referent_words.c1` → attribute family) with n per
+  stratum, replacing the unimplemented n=223/59/42 sentence at X21.
+- A4 fold-local PCA for the trained pooled probe; registered statistics written into the GQA
+  result files; marker cross-fit by image for the two overlapping spatial images.
+
+**B1. Dependency (GPU, CLEVR n2, 324 images × c0–c3).**
+H-dep: the block ≥ 9 attribute removal from the non-referent depends on the selection
+established by block 5.
+- Intervention 1, `GCAWriteMasker`: mask GCA layers {1}, {1,3}, {1,3,5}, {1,3,5,7} on all
+  patches (dose); {1,3,5} on target patches only / distractor only / background only
+  (role split by object identity: the measured object is always the target, which is the
+  referent under c1 and the non-referent under c2); {9,11} as late control.
+- Intervention 2, `SubspaceProjector`: project out the marker direction (n2 c1−c2 target
+  `raw_obj_mean`, 2-fold cross-fit by image) at block 7 or 8; controls: same-norm random
+  unit vector × 5 seeds; same basis at block 10 (timing control).
+- Statistics: A1/A2 normalised series, selection contrast (`delta.ref_imgdir`), accuracy,
+  P(answer = non-referent value), margin.
+- Pass: `nonrefvs0_*_own` (normalised) at blocks 9–11 shrinks ≥ 50 % toward 0 with CI
+  excluding the unblocked value while the block 5–8 selection contrast vanishes and the
+  random controls do not move. Falsifier (parallel paths): selection contrast gone,
+  removal within the unblocked CI. Partial: report dose-response, no binary call.
+- DINOv2 primary; SigLIP same grid; MAE baseline + {1,3,5} only (negative control).
+- Caches: `n2_int_<spec>/` (aggregates only if disk is a concern).
+
+**B2. GQA marker injection (GPU, small).**
+H-inj: the GQA selection marker is causally effective, not merely correlated.
+- 184 query-attr records, filtered to D's queried value ∈ answer vocabulary and ≠ T's value
+  (n reported). Marker as `gqa_h4_marker`, 2-fold cross-fit by image. `ResidualAdder` at
+  block 7 or 9, alpha ∈ {1, 2}; +marker on D's patches, −marker on T's patches.
+- Controls: same-norm random direction × 5 seeds; marker on background patches; alpha = 0.
+- Pass: ΔP(D's value) > 0 and Δaccuracy < 0 with CI excluding 0 and exceeding the random
+  control. Falsifier: indistinguishable from random.
+- Output `x23_gqa_direct_inject/`. Only causal claim permitted on GQA.
+
+**B3. GQA attribute decomposition.**
+- Object pool: GQA val scene-graph objects with a colour attribute, ≥ 4 patches, from images
+  outside the 184 records; ≥ 30 objects per value, ≥ 8 values; one c0 extraction
+  (`gqa_attr_pool/`, aggregates only). Directions as `attribute_directions`.
+- Projection of the 184 records' T and D (c0/c1/c2) onto own colour value, normalised;
+  statistics as A2, blocks 7–11. Prediction: CLEVR pattern (non-selective amplification,
+  non-referent below baseline from block 9); "selection without removal" is reportable.
+- Secondary: 36 records whose T has a second plain select→query question about another
+  attribute (19 colour↔material); paired projection difference, CI only, no headline claim.
+
+**Not run.** Spatial population expansion (35 q / 27 images stays "not decidable");
+compositional factorial (future work); CLEVR SigLIP cumulative ablation curve.
+**User decision.** GQA dev-split retrain (~36 h GPU; needs a `data.dev_fraction` option,
+split is hard-coded today).
+
+**Rules.** Controls fixed above; marker always cross-fit by image; claims graded
+correlational (A, B3) vs causal (B1, B2); no hypothesis edited after results; design
+changes get a new directory, old directories stay.
