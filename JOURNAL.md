@@ -7,7 +7,7 @@
 - [ ] [main flow] Confirm EXPERIMENT.md objective with user (initialized 2026-07-05 from the user's v2 outline)
 - [ ] [paper] E1c s42/s43/s44 replication DONE for Table 1 backbone matrix + s43 for the 4-cell ablation table (08-13, tables in paper_artifacts.md §8.1) — Sup-ViT s44 flagged as a high-variance outlier (0.8078 vs 0.8655/0.8826); user still to pick footnote-vs-table-mean camera-ready treatment
 - [ ] [paper] R4: transfusion baseline has no checkpoint — retrain or drop from baseline table? (user decision)
-- [ ] [paper] learned_text paper cell (24.6) is protocol-dependent: training-log final-ep 0.2456 vs independent eval protocol 0.197 (last.pt) / 0.207 (best.pt ep2); windowed train-loop acc 0.4667 is a third number. User decides camera-ready treatment (footnote or renumber). Artifacts: `outputs/analysis/generalization/clevr_dinov2_learned_text_decoder1l{,_lastep}_s42.json`
+- [ ] [paper] learned-text ablation requires revalidation after checkpoint-reconstruction and optimizer-initialization fixes (`7f2d8e4`); retraining run `clevr_dinov2_learned_text_decoder1l_v2_s42` was started on 2026-09-12. Do not treat the old 24.6 result as merely a best/last reporting choice. Reconcile metric provenance and verify the final validation and embedding optimizer state; see the dated learned-text entry below (Codex editorial update, 2026-09-12).
 - [ ] [paper] Baseline implementations GATED ON USER GO: OpenFlamingo-9B zero-shot mechanism analysis (priority 1), T5-vs-RoBERTa capacity axis (+CLOSURE). Designs pre-registered in docs/paper_v2_outline.md; survey in experiment_registry.md X14. (PixArt-Σ un-gated by user 2026-07-06 — probe/CA-map running.)
 - [x] [plot] E5 failure-mode figures from the landed JSONs (§7) — done 07-10 (`failure_modes.py --replot all`, 4 models)
 - [ ] [plot] CoGenT alpha-sweep curve from `cogent_zeroshot/zeroshot_alpha_sweep.json` (R2 evidence)
@@ -207,68 +207,144 @@
   0.85 at block 5 and 0.98 at block 7 with one, stays a CLEVR-only claim for
   now. It cannot yet be said to extend to natural images.
 
-- **2026-09-12 — head selection redone under the rule the design actually
-  registers (background patch → anchor SA mass only). The same-as causal
-  result survives on both backbones with almost the same numbers; the spatial
-  SigLIP cell changes character, because under the registered rule NO head
-  meets the criterion at all.** New flag `--h8-measure {both,background}`,
-  default `both` so the 2026-09-07/08 runs stay reproducible; new dirs
-  `relational_*/h8_head_ablation_bgrule/`, old dirs untouched. User request
-  2026-09-12.
-  Selections, registered rule versus what the earlier runs used:
+### 2026-09-12 — 依登記的 attention-head 選擇規則重跑五組消融
 
-  | run | registered rule | earlier rule |
-  |---|---|---|
-  | same-as DINOv2 | 8 of 10 cells: (8,5) (10,0) (9,7) (10,8) (8,6) (9,2) (7,7) (8,11) | 8 of 14: same but (7,2) (7,10) instead of (7,7) (8,11) |
-  | same-as SigLIP | 8 of 14: (5,6) (6,2) (5,9) (6,9) (5,1) (6,11) (6,4) (5,11) | 8 of 16: same but (5,5) instead of (5,11) |
-  | spatial DINOv2 | 8 of 12: (8,5) (7,7) (8,6) (9,7) (7,3) (10,0) (8,11) (7,11) | 8 of 13: same but (7,2) (7,10) instead of (8,11) (7,11) |
-  | spatial SigLIP | **0 of 0** | 3 of 3: (5,5) (5,6) (5,4) |
-  | spatial edge render | 8 of 12: identical to spatial DINOv2 | 8 of 13: (7,2) instead of (8,11) |
+> 原實驗與初稿：Claude（相關紀錄 commit `51ccaef`）。文字整理、術語與程式／結果核對：**Codex，2026-09-12**。本次只修訂文件，沒有重跑實驗或修改結果檔。
 
-  Ablation outcomes under the registered rule, with the earlier value in
-  brackets: same-as DINOv2 accuracy 0.972 → **0.732** [0.744], random sets
-  0.954 / 0.914, and the errors go to the third object, P(D) 0.18, not to the
-  anchor, P(A) 0.00. Same-as SigLIP 0.977 → **0.628** [0.611], random 0.975 /
-  0.966, P(D) 0.35. Spatial DINOv2 1.000 → **0.998** [0.998], random 0.998 /
-  0.964. Spatial edge render 1.000 → 1.000.
-  Write-position R² for spatial DINOv2, predicting absolute anchor position at
-  block 11 from the c1 − c2 readout: 0.360 with no ablation, 0.072 with the
-  selected heads zeroed, 0.502 and 0.464 with the two random sets. Edge render
-  on the same quantity: 0.344, 0.064, 0.495. NOTE, unexplained: the random sets
-  land ABOVE the unablated value rather than near it, so this comparison is not
-  yet a clean control and must not be carried into a conclusion until that is
-  understood. The earlier run reported 0.36 → 0.03 for the selected set.
-  **Interpretation changes in exactly one place.** The same-as claim does not
-  depend on the undocumented second statistic and can be reported with the
-  registered rule, citing the earlier selection as a sensitivity check. For
-  spatial SigLIP the earlier sentence "zeroing the selected heads leaves
-  accuracy unchanged" must not be used: under the registered rule none of the
-  144 cells of blocks 5–10 reaches 10× the median, so there is no testable
-  head set on that model, which is a different statement from a measured null.
-  **Correction 2026-09-12, my own overclaim, flagged by Codex.** I first wrote
-  that only the attribute-match task has heads meeting the registered
-  criterion. That is false: spatial DINOv2 has 12 qualifying cells and the
-  edge render 12. The accurate statement is backbone-specific. On SigLIP the
-  same rule finds qualifying heads for same-as, 14 cells, and none for
-  spatial. On DINOv2 it finds them for both, 10 and 12 cells, but only the
-  same-as ablation damages the answer. Failing to find a head set and finding
-  one whose removal does nothing are different outcomes and must be reported
-  as such per relation type and per backbone.
+**問題與結論。** 先前選 heads 時多使用了一項未登記的統計量；本次只使用登記的「背景 patches 對參照物體的注意力」重新選擇。Same-as 任務在兩個 backbone 上仍受所選 heads 消融明顯影響。Spatial DINOv2 有符合條件的 heads，但消融後答案幾乎不變；spatial SigLIP 則沒有符合條件的 heads，不能將它報告為一次有效的消融陰性結果。
 
-- **2026-09-12 — learned-text ablation repaired and retraining.** Fixes in
-  commit 7f2d8e4, verified on the old checkpoint: the loader now forwards
-  `text_encoder` and builds the word embedding before `load_state_dict`, so a
-  learned-text checkpoint reconstructs as learned with embedding (82, 768) and
-  weights equal to the file instead of coming back as RoBERTa; saved tensors
-  with no destination now raise instead of being dropped by `strict=False`;
-  `train.py` builds the embedding before the optimizer is constructed, with an
-  assertion that it is trainable. Retraining as
-  `clevr_dinov2_learned_text_decoder1l_v2_s42`, 16 epochs, started 10:35, the
-  2026-06 directory preserved. Trainable parameters now 25,939,493. Early
-  signal worth checking at the end: training accuracy reached 0.49 by step 200
-  of epoch 0, whereas the old run's recorded figures were 0.2456 final and
-  0.4667 windowed train accuracy, consistent with the old embedding having
-  been frozen at its random initialisation.
+#### 術語與實際測量
+
+| 舊用語／縮寫 | 本紀錄使用的明確定義 |
+|---|---|
+| cell | 在 head selection 中指一個 `(block, head)` 組合；在五組結果比較中應稱「實驗設定」，避免混用。編號沿用程式的零起算索引。 |
+| anchor / A | 問題中用來建立關係的參照物體。例如「與紅色物體同形狀的物體」中的紅色物體。 |
+| target / T；distractor / D | 原始問題的正確答案物體；場景中另一個不符合該關係的物體。 |
+| same-as | 屬性比對任務：找出與參照物體共享指定屬性的物體，再回答其被詢問的屬性。 |
+| background → anchor SA mass | 自注意力中，背景 patches 作為 queries，對參照物體 keys 分配的注意力權重總和，再對背景 patches 與場景取平均。箭頭指注意力查詢方向；value 資訊流向背景表徵。 |
+| candidate → anchor | T 與 D 作為 queries，對 A 的注意力量取平均。這是舊選擇規則額外使用的統計量。 |
+| c0 / c1 / c2 | c0：無問題；c1：原始關係問題；c2：對照問題。Same-as 的 c2 更換參照物體，spatial 的 c2 改用相反關係詞。不要只寫 clean／corrupted 而不交代改了什麼。 |
+| zero / ablate | 將所選自注意力 heads 的輸出設為零，測量答案與其他統計量的變化。 |
+| result survives | 使用修正後選擇規則，原本的定性結論仍有支持；不表示數字完全相同或完整機制已被證明。 |
+| measured null / no qualifying head | 前者：確實消融了非空集合，未觀察到答案明顯變化；後者：規則沒有選出可測 heads。兩者必須分開。 |
+
+#### 選擇規則與可重現性
+
+- 對每個 head 計算上述背景注意力量的 `Δ = c1 − c0`。
+- 以全部 12 blocks × 12 heads（144 組）的 `|Δ|` 中位數為基準；只在 blocks 5–10 中挑選比值至少為 10 的 heads。**候選範圍為 6 × 12 = 72 組，144 是計算中位數的範圍。** 舊文「blocks 5–10 的 144 個 cell」不正確。
+- 達門檻者按比值排序，最多選 8 個消融。因此「8 of 10」是「10 個達標、消融其中排名前 8 個」。
+- 舊規則使用背景與候選物體兩項比值的最大值；新規則只使用背景統計量（`--h8-measure background`）。預設值仍為 `both`，用於重現舊結果；重跑新規則必須明確指定 flag。
+- 兩組隨機對照各取相同數目的 heads，與所選集合及彼此不重疊。程式從全部 blocks 抽樣，**不是按所選 heads 的層分布配對**；目前只有兩組，不能視為完整的隨機消融分布。
+
+#### 答案準確率：全部受測場景
+
+| 任務／backbone | 場景數 | 達標 heads | 實際消融 | 不消融 | 消融所選 heads | 隨機 seed 0 | 隨機 seed 1 | 舊規則消融值 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| same-as DINOv2 | 652 | 10 | 8 | 0.972 | 0.732 | 0.954 | 0.914 | 0.744 |
+| same-as SigLIP | 650 | 14 | 8 | 0.977 | 0.628 | 0.975 | 0.966 | 0.611 |
+| spatial DINOv2 | 494 | 12 | 8 | 1.000 | 0.998 | 0.998 | 0.964 | 0.998 |
+| spatial DINOv2，edge-render 資料 | 495 | 12 | 8 | 1.000 | 1.000 | 0.994 | 0.982 | 未在此摘要列出 |
+| spatial SigLIP | 478 | 0 | 0 | 1.000 | 不適用 | 不適用 | 不適用 | 舊規則曾選出 3 個 heads |
+
+Spatial SigLIP 的 JSON 仍有 `selected` 與 random rows，數值均為 1.000，但這些集合全是空集合；它們只重現不消融的結果，不能當作對 heads 的因果測試。
+
+Same-as 所選集合造成 DINOv2 約 **24.1 個百分點**、SigLIP 約 **34.9 個百分點**的下降。DINOv2 隨機對照下降約 1.8／5.8 個百分點；SigLIP 約 0.15／1.08 個百分點。不要將兩個 backbone 都概括為「隨機只掉 2–6 個百分點」。
+
+#### 消融後回答了哪個物體的屬性？
+
+`P(A)`／`P(D)` 是**原本答對的場景中**，干預後答案等於 A／D 被詢問屬性值的比例；不是 softmax 機率，也不是只在錯誤樣本中計算。
+
+| Same-as 模型 | 原本答對的場景數 | 消融後回答 A 屬性值 | 消融後回答 D 屬性值 |
+|---|---:|---:|---:|
+| DINOv2 | 634 | 0.0032 | 0.1767 |
+| SigLIP | 635 | 0.0000 | 0.3528 |
+
+這支持「回答 D 的屬性值比回答 A 更常見」。它不表示所有新增錯誤都指向 D，也不能單靠答案值宣稱模型內部已選定某個物體。舊文 DINOv2 `P(A)=0.00` 是四捨五入，並非完全沒有。
+
+#### 空間分布的 R²：修正被寫反的回歸方向
+
+舊文把 `write-position R²` 說成「從表徵預測 anchor 的絕對位置」，與程式不符。
+
+實際測量：每個背景 patch 的 GCA 更新向量範數為 `||GCA output − input||`；以原始／相反關係問題的範數差 `c1 − c2` 作為**應變數 y**，以沿關係軸、依原始關係方向加正負號的 patch 絕對座標作為**自變數 X**。表中為 block 11 的 `oriented/diff_c1_c2/absolute`。因此應稱「**patch 座標對 GCA 更新量差異的解釋度**」。
+
+| Spatial DINOv2 資料 | 不消融 | 所選 heads 消融 | 隨機 seed 0 | 隨機 seed 1 |
+|---|---:|---:|---:|---:|
+| 原資料 | 0.360 | 0.072 | 0.502 | 0.464 |
+| edge-render 資料 | 0.344 | 0.064 | 0.495 | 0.465 |
+
+`_r2` 在跨場景合併的背景 patches 上擬合並計算同一資料的 R²，沒有 held-out 評估；這不是 anchor-position decoding 的泛化分數。所選消融降低這種座標關聯，但答案幾乎不變；隨機消融反而提高關聯，其原因尚未釐清。這些觀測不能直接證明 anchor 位置傳播被破壞，也不足以支持 H8 原本的完整機制預測。
+
+#### 支持的解讀與來源
+
+- **支持：**在目前資料與干預條件下，依背景注意力變化選出的 heads 對 same-as 答案有較大的因果影響，且大於兩組已測隨機對照。
+- **區分 backbone：**SigLIP 在 same-as 找到 14 個達標 heads、spatial 找不到；DINOv2 兩種任務都找得到，只有 same-as 所選消融明顯影響答案。不能概括為「只有屬性比對存在達標 heads」。
+- **不支持：**由此認定 spatial 沒有機制、一定採分散式計算，或 same-as 的完整比較演算法已被定位。
+- 新結果根目錄為 `outputs/analysis/patch_language_condition/`，五個子目錄分別為 `relational_same_v2`、`relational_same_v2_siglip`、`relational_spatial_v2`、`relational_spatial_edge`、`relational_spatial_v2_siglip`，各讀取 `h8_head_ablation_bgrule/results.json`。完整 head 排名與索引保存在 JSON；舊輸出未改動。
+- 定義核對：`scripts/analysis/patch_language_condition.py` 的 `select_h8_heads`、`run_h8_head_ablation`、`RelationalRun.summary`、`GCAWriteCapture`、`write_position_r2`、`_r2`。上述更正基於程式和已保存 JSON，不是新增實驗。
+
+### 2026-09-12 — learned-text：程式修正完成；重訓結果尚待確認
+
+> 原執行紀錄：Claude。文字與證據狀態整理：**Codex，2026-09-12**。以下進度是當時紀錄，非本次重新檢查的即時訓練狀態。
+
+**原本要測什麼？** 以從頭學習的詞嵌入取代 RoBERTa，檢驗模型對預訓練文字表徵的依賴。Embedding 若未加入 optimizer，這個實驗就不能被解讀為已正常訓練的 learned-text ablation。
+
+**已記錄完成的修正（`7f2d8e4`）：**
+
+| 問題 | 修正與已有檢查 |
+|---|---|
+| Checkpoint 重建漏傳 `text_encoder`，可能錯用 RoBERTa | Loader 傳入正確設定，先建立詞嵌入再載入權重。Claude 記錄已用舊 checkpoint 驗證重建為 learned-text，embedding 形狀 `(82, 768)` 且權重與檔案一致。 |
+| 無對應參數的 saved tensors 被靜默忽略 | 改為遇到這類不匹配時報錯。 |
+| Embedding 在 optimizer 建立後才初始化 | 改為先建立 embedding，再建立 optimizer，並檢查其可訓練性；Claude 回報新 run 已確認 embedding 納入 optimizer。 |
+
+**重訓設定與階段性觀察：**
+
+- Run：`clevr_dinov2_learned_text_decoder1l_v2_s42`；16 epochs；紀錄開始時間為 2026-09-12 10:35。舊的 2026-06 結果目錄保留。
+- 可訓練參數：25,939,493。這個總數本身不能替代 optimizer membership／state 的檢查。
+- 原 journal 記錄 epoch 0、step 200 的 training accuracy 約 0.49；使用者轉貼的稍後回報為 step 400 約 0.59。後者在此標為**對話回報，未在本次核對訓練 log**。
+- 舊 run 的 0.2456 是記錄中的最終 validation accuracy；0.4667 曾被不同文件標成 best validation 或 windowed training accuracy，來源標籤仍需核對。不能把新 run 的早期 training accuracy 與這些數值當作同一指標直接比較。
+- 約 26 小時是當時的工時估計，不是已完成證據，也不代表目前剩餘時間。
+
+**尚待完成／不能提前宣稱：**
+
+1. 完成新 run 的訓練與一致協定的最終 validation，才能更新論文 ablation 結果。
+2. 核對新 checkpoint 的 optimizer state 是否包含 `(82, 768)` embedding 的對應狀態，並確認參數實際更新；這驗證的是新 run。
+3. 「舊 run 的 embedding 一直停在隨機初始化」應以舊 optimizer／checkpoint／初始化與更新證據判定。新 run 表現較好只能作為旁證，不能單獨證實舊 run 的訓練歷史。
+
+因此此階段應寫成：**重建與 optimizer 初始化路徑已修正並有初步檢查；新訓練已啟動，最終 ablation 結論待結果確認。** 不能再把舊結果的問題僅描述成 final／best epoch 的數字選擇。
+
+### 2026-09-13 — 上節第 3 項待確認已結案：舊 run 的詞嵌入從未更新
+
+上節要求用舊 checkpoint 本身的證據判定，而不是用新 run 的表現旁證。已照此執行，腳本
+`/home/jungchun/.claude/jobs/4060016c/tmp/old_embed_check.py`，唯讀。
+
+在舊 run `clevr_dinov2_learned_text_decoder1l_s42` 自己的五個 checkpoint 之間比較
+`steervit._word_embedding.weight`：epoch_4、epoch_9、epoch_14、best（epoch 2）、last
+（epoch 15）**逐元素完全相同**，相鄰兩兩的最大絕對差皆為 `0.000e+00`。五個 checkpoint
+都是 61 個 model tensor 對 60 個 optimizer parameter。該張量的統計量即未經更新的
+`nn.Embedding` 初始化：padding row 全為 0，其餘列 mean +0.00236、std 1.00504。
+
+三項證據方向一致且互相獨立（跨 epoch 不變、optimizer 參數數量短少、統計量等於初始化），
+因此可以判定：名為 learned-text 的該次 ablation 訓練了 16 epochs，其詞嵌入始終停在隨機
+初始化。昨天用 weight norm 250.67 做的間接推論由此被直接測量取代。
+
+**對論文欄位的後果。** `docs/paper_artifacts.md:25` 把該 run 描述為
+「learned text embeddings replace RoBERTa」，第 54 行記錄 val 0.2456（final）、0.4667
+（best），並註明 run 有退化。這兩處描述的都不是一個已訓練的詞嵌入，欄位需重寫或以新 run
+取代。
+
+**新 run 的階段性數字（尚未完成，不得作為最終結論）。**
+`clevr_dinov2_learned_text_decoder1l_v2_s42` 於 13.5 小時後進入第 8 epoch。記錄中的
+validation accuracy 新高依序為 epoch 5 的 0.7679、epoch 6 的 0.7764、epoch 7 的 0.7830，
+仍在上升。RoBERTa 版對照 `clevr_dinov2_decoder1l_scratch_s42` 為 0.9095
+（`docs/results_tables.md:20`）。若最終值維持此量級，原記錄約 66 個百分點的差距是
+量測失效造成的，實際差距約 13 個百分點且仍在縮小。上節第 2 項（新 checkpoint 的
+optimizer state 是否含 `(82, 768)` 對應狀態）仍未執行，待訓練結束後一併檢查。
+
+**另一處我寫反的方向，在此確認上節的更正正確。** 我先前把 write-position R² 說成
+「從表徵預測 anchor 絕對位置」。回查 `scripts/analysis/patch_language_condition.py:2542`
+的 docstring 與 `_r2`（:2534）：應變數是 GCA write norm 的 c1 − c2 差，自變數是 patch 沿
+關係軸的座標，而 `_r2` 以 lstsq 在同一批資料上計算，沒有 held-out。上節的方向更正與
+「非泛化分數」的判斷都成立。
 
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`

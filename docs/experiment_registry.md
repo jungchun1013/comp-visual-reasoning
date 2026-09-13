@@ -18,7 +18,7 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
 - **Motivation**: all three pieces (pretrained ViT, pretrained text encoder, CA) necessary.
 - **Hypothesis**: removing any collapses accuracy toward priors.
 - **Status**: ✅ 49.4 / 52.8 / 24.6 / 90.1 all provenance-matched.
-- **Inconsistency**: D2 — learned_text degrades after ep2 (best 46.7 → final 24.6); paper reports final. E1b's best.pt-based breakdown for this run will NOT match the table (fix queued, see D2).
+- **Current qualification (Codex edit, 2026-09-12):** learned-text has checkpoint-reconstruction and optimizer-initialization defects addressed in `7f2d8e4`; corrected retraining was started as `clevr_dinov2_learned_text_decoder1l_v2_s42`. Historical 24.6/46.7 labels and independent evaluations require provenance reconciliation, not merely a best-versus-last choice. Final corrected validation is pending in the dated record; see JOURNAL's learned-text entry. Historical entries below are retained as history, not validation of the old ablation.
 
 ### X3. Gate framing (R2)
 - **Motivation**: user-decided demotion — gate = design choice enabling an analyzable mechanism handle, not a performance claim.
@@ -888,24 +888,44 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
     patching: GCA L5H4, L11H8, L9H8, SA 8:0). Ablation leaves the absolute
     field, lowers relative R² and dissociation accuracy; disjoint random
     heads do not. Fail: no head meets the rule, or both fields collapse.
-    **Rule clarification and rerun (2026-09-12).** The 09-07/08 runs selected
-    on the maximum of two statistics, background → anchor and candidate →
-    anchor, while this entry and the GQA design register only the first. Reran
-    all five cells with the registered statistic into
-    `relational_*/h8_head_ablation_bgrule/` (flag `--h8-measure background`;
-    default stays `both` so the recorded runs remain reproducible). Same-as
-    survives unchanged: DINOv2 0.972 → 0.732 (was 0.744), SigLIP 0.977 →
-    0.628 (was 0.611), random sets 0.91–0.98. Spatial DINOv2 and the edge
-    render keep accuracy at 0.998 / 1.000. Spatial SigLIP selects **0 heads**
-    under the registered rule, so its earlier "null" is a no-qualifying-head
-    outcome, not a measured null; report it that way. The relation-type
-    contrast is backbone-specific: SigLIP yields qualifying heads for same-as
-    (14 cells) and none for spatial, while DINOv2 yields both (10 and 12) and
-    only the same-as ablation damages the answer. The block-11
-    absolute-position R² (0.360 none / 0.072 selected / 0.502 random on
-    spatial DINOv2) is NOT yet a usable control, because the random sets
-    exceed the unablated value for reasons not established (JOURNAL
-    2026-09-12).
+    **2026-09-12 rerun; edited by Codex from Claude's record.** The earlier
+    runs used the maximum of background-query→anchor-key and
+    candidate-query→anchor-key attention-change ratios. The rerun uses only
+    the registered background statistic (`--h8-measure background`); the
+    default remains `both` for reproducing older runs. New artifacts are
+    `outputs/analysis/patch_language_condition/relational_*/h8_head_ablation_bgrule/results.json`.
+
+    Selection normalizes |c1−c0| by its median over all 144 block/head
+    combinations, then considers the 72 heads in blocks 5–10, ranks those
+    reaching 10× the median, and ablates at most eight. “Cell” previously
+    meant either a head or an experimental setting; use those explicit terms.
+
+    | Task / backbone | Qualifying / ablated heads | Baseline accuracy | Selected ablation | Random seed 0 / 1 |
+    |---|---:|---:|---:|---:|
+    | same-as DINOv2 | 10 / 8 | 0.972 | 0.732 | 0.954 / 0.914 |
+    | same-as SigLIP | 14 / 8 | 0.977 | 0.628 | 0.975 / 0.966 |
+    | spatial DINOv2 | 12 / 8 | 1.000 | 0.998 | 0.998 / 0.964 |
+    | spatial DINOv2, edge-render data | 12 / 8 | 1.000 | 1.000 | 0.994 / 0.982 |
+    | spatial SigLIP | 0 / 0 | 1.000 | Not applicable | Not applicable |
+
+    Same-as remains sensitive to the selected ablation on both backbones
+    (earlier selected accuracies: 0.744 / 0.611). Random sets have equal head
+    counts but are sampled across all blocks, not matched by layer; only two
+    random sets were tested. Spatial SigLIP's saved selected/random rows use
+    empty sets and therefore are not head-ablation evidence. The relation
+    contrast is backbone-specific: DINOv2 has qualifying heads for both tasks,
+    whereas SigLIP has them only for same-as under this rule.
+
+    **Measurement correction:** `write_position_r2` regresses background-patch
+    GCA update-norm differences (c1−c2) on patch coordinates, not anchor
+    coordinates on activations. Its block-11 absolute-coordinate R² is
+    0.360 / 0.072 / 0.502 / 0.464 (none / selected / random 0 / random 1)
+    for spatial DINOv2, and 0.344 / 0.064 / 0.495 / 0.465 for edge-render
+    data. These are in-sample spatial fits, not held-out position-decoding
+    scores. Random ablation increases the fit for unexplained reasons.
+    Report the observations; they do not establish anchor-position broadcast
+    or the full original H8 hypothesis. Definitions, sample counts, answer-role
+    denominators and interpretation limits are in JOURNAL's 2026-09-12 rerun entry.
   - H9 generality: the ordering results (H1, H2, H5(i), transplant windows)
     replicate on SigLIP and seed 43; numbers are not required to match.
 - **Controls fixed**: c0 no-question; transplant self-control (1.00);
