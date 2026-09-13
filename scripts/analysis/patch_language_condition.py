@@ -3485,10 +3485,8 @@ def plot_gqa_head_ablation(res, out_path, label):
     print(f"Saved: {out_path}")
 
 
-def run_gqa_causal(args, out_dir, label):
-    """X23 steps 2–3 on a finished --gqa-run directory (--cache-dir): token transplant
-    (k_target), and for spatial the SA-attention capture + H3 head ablation with the
-    cumulative curve. Writes into a new --out-dir; the caches stay untouched."""
+def _gqa_causal_inputs(args):
+    """Records, owner maps, images and image groups of a finished --gqa-run directory."""
     from PIL import Image
     cache_dir = Path(args.cache_dir)
     with open(cache_dir / "relational_records.json") as f:
@@ -3496,6 +3494,181 @@ def run_gqa_causal(args, out_dir, label):
     owners = list(np.load(cache_dir / "owner.npy"))
     images = [Image.open(Path(args.gqa_root) / "images" / r["filename"]).convert("RGB") for r in records]
     groups = np.array([r["image_id"] for r in records])
+    return cache_dir, records, owners, images, groups
+
+
+@torch.no_grad()
+def gqa_marker_injection(out_dir, args, state, records, images, owners, groups, cache_dir):
+    """X24 B2: is the GQA selection marker causally effective?  Marker = mean over the
+    query-attr records of the referent's raw (c1 − c2) mean change, estimated 2-fold
+    cross-fit by image (no record is steered with a marker estimated on its own image).
+    Under the clean question c1, `ResidualAdder` adds alpha·marker to the third object's
+    (D) patches, subtracts it from the referent's (T), both (swap), adds it to the
+    background, or adds a same-norm random direction to D (5 seeds).  Items: D's value
+    (= the c2 answer) and T's value both in the vocabulary and different, clean answer
+    correct.  Statistics per block/alpha/variant, image-bootstrap CIs."""
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk = steervit.vision_model.trunk
+    vocab = model.vocab
+    t_idx, d_idx = _role_index(records, "T"), _role_index(records, "D")
+    ar = np.arange(len(records))
+    rom1 = np.load(cache_dir / "feats_c1.npz")["raw_obj_mean"].astype(np.float32)[ar, t_idx]   # (N,12,D)
+    rom2 = np.load(cache_dir / "feats_c2.npz")["raw_obj_mean"].astype(np.float32)[ar, t_idx]
+    folds = np.array([int(g) % 2 for g in groups])
+    marker = {k: (rom1 - rom2)[folds != k].mean(0) for k in (0, 1)}                           # (12,D) per fold
+    for k in (0, 1):
+        print(f"marker fold {k} (from {int((folds != k).sum())} records) norm by block: "
+              + " ".join(f"{v:.1f}" for v in np.linalg.norm(marker[k], axis=-1)))
+    cand = [i for i, r in enumerate(records)
+            if r["answers"]["c1"] in vocab and r["answers"]["c2"] in vocab
+            and r["answers"]["c1"] != r["answers"]["c2"]]
+    print(f"candidates: {len(cand)} of {len(records)} (both values in vocab and different)")
+
+    def build(sel):
+        nonlocal idx, imgs_t, owner_t, qs, t_id, d_id, t_mask_id, d_mask_id, f_sub, g_sub
+        idx = list(sel)
+        imgs_t = torch.stack([tf(images[i]) for i in idx])
+        owner_t = torch.from_numpy(np.stack([owners[i] for i in idx]))
+        qs = [records[i]["questions"]["c1"] for i in idx]
+        t_id = np.array([vocab[records[i]["answers"]["c1"]] for i in idx])
+        d_id = np.array([vocab[records[i]["answers"]["c2"]] for i in idx])
+        t_mask_id = torch.from_numpy(t_idx[idx] + 1)
+        d_mask_id = torch.from_numpy(d_idx[idx] + 1)
+        f_sub = folds[idx]
+        g_sub = groups[idx]
+
+    idx = imgs_t = owner_t = qs = t_id = d_id = t_mask_id = d_mask_id = f_sub = g_sub = None
+    build(cand)
+    layers = [int(l) for l in (args.inject_layers.split(","))]
+    alphas = [float(a) for a in args.marker_alphas.split(",")]
+    n_rand = 5
+    rng = np.random.default_rng(args.seed)
+    rand_dirs = _unit(rng.standard_normal((n_rand, rom1.shape[-1])).astype(np.float32))
+    bs = args.batch_size
+
+    def run(layer, alpha, variant, seed=None):
+        preds, p_d, marg = [], [], []
+        for s in range(0, len(idx), bs):
+            e = min(s + bs, len(idx))
+            ims, ow = imgs_t[s:e].to(device), owner_t[s:e].to(device)
+            if variant.startswith("random"):
+                base = np.stack([rand_dirs[seed] * np.linalg.norm(marker[f][layer]) for f in f_sub[s:e]])
+            else:
+                base = np.stack([marker[f][layer] for f in f_sub[s:e]])
+            delta = torch.from_numpy(base).to(device)
+            m_t = ow == t_mask_id[s:e].to(device)[:, None]
+            m_d = ow == d_mask_id[s:e].to(device)[:, None]
+            m_bg = ow == 0
+            adders = []
+            if variant in ("marker_to_D", "swap", "random_to_D"):
+                adders.append(ResidualAdder(trunk, layer, delta, m_d, alpha))
+            if variant in ("marker_minus_T", "swap"):
+                adders.append(ResidualAdder(trunk, layer, delta, m_t, -alpha))
+            if variant == "marker_to_bg":
+                adders.append(ResidualAdder(trunk, layer, delta, m_bg, alpha))
+            from contextlib import ExitStack
+            with ExitStack() as st:
+                for a in adders:
+                    st.enter_context(a)
+                lg = first_token_logits(model, steervit, ims, qs[s:e]).float()
+            pr = lg.softmax(-1).cpu().numpy()
+            lg = lg.cpu().numpy()
+            ii = np.arange(e - s)
+            preds.append(lg.argmax(-1))
+            p_d.append(pr[ii, d_id[s:e]])
+            lg2 = lg.copy()
+            lg2[ii, t_id[s:e]] = -np.inf
+            marg.append(lg[ii, t_id[s:e]] - lg2.max(-1))
+        preds, p_d, marg = (np.concatenate(x) for x in (preds, p_d, marg))
+        return {"acc": (preds == t_id).astype(float), "pick_D": (preds == d_id).astype(float),
+                "p_D": p_d, "margin": marg}
+
+    base = run(layers[0], 0.0, "marker_to_D")                  # alpha = 0: the clean run
+    build([i for i, ok in zip(idx, base["acc"] == 1.0) if ok])
+    print(f"injection items: {len(idx)} (clean answer correct), {len(np.unique(g_sub))} images")
+    base = run(layers[0], 0.0, "marker_to_D")
+    assert base["acc"].mean() == 1.0, "alpha=0 self-control must reproduce the clean answers"
+    rows, per_item = [], {}
+    variants = ["marker_to_D", "marker_minus_T", "swap", "marker_to_bg"]
+    for layer in layers:
+        for alpha in alphas:
+            for var in variants + [f"random_to_D:{s}" for s in range(n_rand)]:
+                seed = int(var.split(":")[1]) if var.startswith("random") else None
+                r = run(layer, alpha, "random_to_D" if seed is not None else var, seed)
+                per_item[(layer, alpha, var)] = r
+                rows.append({"layer": layer, "alpha": alpha, "variant": var, "n": len(idx),
+                             **{k: _group_boot(v, g_sub) for k, v in r.items()}})
+            # paired contrast: marker_to_D minus the mean over the random directions
+            rnd = np.mean([per_item[(layer, alpha, f"random_to_D:{s}")]["pick_D"] for s in range(n_rand)], 0)
+            rnd_p = np.mean([per_item[(layer, alpha, f"random_to_D:{s}")]["p_D"] for s in range(n_rand)], 0)
+            mk = per_item[(layer, alpha, "marker_to_D")]
+            rows.append({"layer": layer, "alpha": alpha, "variant": "marker_to_D minus random_to_D", "n": len(idx),
+                         "pick_D": _group_boot(mk["pick_D"] - rnd, g_sub), "p_D": _group_boot(mk["p_D"] - rnd_p, g_sub)})
+            for row in rows[-(len(variants) + n_rand + 1):]:
+                print(f"  L{layer} a={alpha:g} {row['variant']:<32} acc {row.get('acc', {}).get('mean', float('nan')):.3f} "
+                      f"pick_D {row['pick_D']['mean']:+.3f} [{row['pick_D']['lo']:+.3f}, {row['pick_D']['hi']:+.3f}] "
+                      f"P(D) {row['p_D']['mean']:+.3f}")
+    res = {"n_items": len(idx), "n_images": int(len(np.unique(g_sub))), "layers": layers, "alphas": alphas,
+           "n_random": n_rand, "marker_fold_sizes": [int((folds != k).sum()) for k in (0, 1)],
+           "marker_norm_by_block": {k: np.linalg.norm(marker[k], axis=-1).tolist() for k in (0, 1)},
+           "item_records": [records[i]["question_id"] for i in idx], "rows": rows}
+    with open(out_dir / "marker_injection.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_gqa_marker_injection(res, out_dir / "marker_injection.png")
+    return res
+
+
+def plot_gqa_marker_injection(res, out_path):
+    _t10 = plt.get_cmap("tab10").colors
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6))
+    for ax, key, ttl in ((axes[0], "pick_D", "P(answer = third object's value)"),
+                         (axes[1], "acc", "accuracy (clean answer)")):
+        x = 0
+        ticks, labels = [], []
+        for layer in res["layers"]:
+            for alpha in res["alphas"]:
+                for var, col in (("marker_to_D", _t10[3]), ("marker_minus_T", _t10[1]), ("swap", _t10[4]),
+                                 ("marker_to_bg", _t10[7])):
+                    rows = [r for r in res["rows"] if r["layer"] == layer and r["alpha"] == alpha and r["variant"] == var]
+                    if rows and key in rows[0]:
+                        q = rows[0][key]
+                        ax.bar(x, q["mean"], color=col, width=0.8)
+                        ax.errorbar(x, q["mean"], yerr=[[q["mean"] - q["lo"]], [q["hi"] - q["mean"]]], color="k", lw=0.8)
+                        x += 1
+                rnd = [r for r in res["rows"] if r["layer"] == layer and r["alpha"] == alpha and r["variant"].startswith("random_to_D")]
+                if rnd and key in rnd[0]:
+                    m = np.mean([r[key]["mean"] for r in rnd])
+                    ax.bar(x, m, color="0.7", width=0.8)
+                    x += 1
+                ticks.append(x - 3)
+                labels.append(f"block {layer}, α={alpha:g}")
+                x += 1
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.set_title(ttl, fontsize=10)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (_t10[3], _t10[1], _t10[4], _t10[7], "0.7")]
+    axes[0].legend(handles, ["+marker on D", "−marker on T", "both", "+marker on background", "+random on D (mean of 5)"], fontsize=7)
+    fig.suptitle(f"GQA marker injection — {res['n_items']} query-attr questions, {res['n_images']} images; marker 2-fold cross-fit by image", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_gqa_inject(args, out_dir, label):
+    """X24 B2 on a finished --gqa-run direct directory (--cache-dir)."""
+    cache_dir, records, owners, images, groups = _gqa_causal_inputs(args)
+    assert records[0]["mode"] == "direct", "marker injection is defined on the query-attr (direct) records"
+    print(f"X24 B2 marker injection: {len(records)} questions from {cache_dir}")
+    state = ensure_model({}, args)
+    gqa_marker_injection(out_dir, args, state, records, images, owners, groups, cache_dir)
+
+
+def run_gqa_causal(args, out_dir, label):
+    """X23 steps 2–3 on a finished --gqa-run directory (--cache-dir): token transplant
+    (k_target), and for spatial the SA-attention capture + H3 head ablation with the
+    cumulative curve. Writes into a new --out-dir; the caches stay untouched."""
+    cache_dir, records, owners, images, groups = _gqa_causal_inputs(args)
     mode = records[0]["mode"]
     print(f"X23 causal ({mode}): {len(records)} questions from {cache_dir}")
     state = ensure_model({}, args)
@@ -5410,6 +5583,9 @@ def main():
     ap.add_argument("--gqa-direct-dir", default=None,
                     help="--gqa-run spatial: finished --gqa-run direct output dir whose c1/c2 caches define the H4 marker")
     ap.add_argument("--gqa-h2-boot", type=int, default=200, help="bootstrap resamples for the H2 ΔR² CI")
+    ap.add_argument("--gqa-inject", action="store_true",
+                    help="X24 B2: marker injection on a finished --gqa-run direct directory (--cache-dir)")
+    ap.add_argument("--inject-layers", default="7,9", help="--gqa-inject: blocks at which the marker is added")
     ap.add_argument("--gqa-causal", action="store_true",
                     help="X23 steps 2–3 on a finished --gqa-run directory given as --cache-dir: token transplant "
                          "(k_target) and, for spatial, SA capture + H3 head ablation with the cumulative curve (new --out-dir)")
@@ -5443,6 +5619,10 @@ def main():
     if args.gqa_run:
         assert args.gqa_records_dir, "--gqa-run needs --gqa-records-dir"
         run_gqa(args, out_dir, label)
+        return
+    if args.gqa_inject:
+        assert args.cache_dir, "--gqa-inject needs --cache-dir (a finished --gqa-run direct directory)"
+        run_gqa_inject(args, out_dir, label)
         return
     if args.gqa_causal:
         assert args.cache_dir, "--gqa-causal needs --cache-dir (a finished --gqa-run directory)"
