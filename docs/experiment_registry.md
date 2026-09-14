@@ -1435,3 +1435,44 @@ SigLIP 0.96 / 0.94 / 0.94 / 0.93 / 0.94; MAE 0.98 / 0.96 / 0.96 / 0.95 / 0.96 �
 carry with its b9–11 removal. GQA checkpoint: best.pt = last.pt = epoch 17 (val 0.6358), so
 val-based selection changed nothing; a dev-split retrain (C1) cannot undo the exploration of
 val and is not recommended.
+
+
+#### X24 A4 + Sup-ViT results (2026-09-14; user go "照你的建議做" on the ordered plan)
+
+**A4-3 H4 marker cross-fit (validity fix, CPU).** `--gqa-h4-crossfit`: the two spatial records
+whose images are among the 184 direct pairs (2400661: 1 pair, 2407031: 2 pairs) are projected
+on a marker estimated without those pairs. target − third object, blocks 9–11: +1.74 [+0.91,
++2.56] (n = 35 questions, 27 images), previously +1.74 [+0.90, +2.56]. File
+`x23_gqa_spatial_h2/h4_marker_crossfit.{json,png}`. Conclusion unchanged.
+
+**A4-2 registered endpoints.** `x23_registered_endpoints.json` (`--gqa-summary`) collects
+H1 (ref +1.174 [+0.872, +1.490]; contrast +2.21), H2 (ΔR² per block, k_condition = none),
+H3 (selected − random drop 0.00 [0.00, 0.00] on 20 clean-correct spatial items; cumulative
+curve), H4 (+1.74) and its cross-fit, B2, R2, each with its source path. Nothing recomputed.
+
+**A4-1 fold-local PCA (X18 pooled probe, `linear_probe_single.py`).** PCA(50) is now fitted
+inside each of the 5 folds. DINOv2, 1-object set (blocks 1/3/5/7/9/11), no-question colour:
+0.972 / 0.984 / 0.980 / 0.984 / 0.956 / 0.914 (was 0.964 / 0.918 at 9 / 11); largest change
+in any matched cell 0.036 (shape, block 1). No reported comparison changes. Outputs in
+`outputs/analysis/linear_probe_v2/<model>/single_object/`; the two-object set has no
+`scenes.json` and was never run through this script (the earlier "noca 0.356" note came from
+t-SNE features), so it is not rerun. Other backbones (no-question colour, blocks 1/3/5/7/9/11, fold-local PCA): SigLIP 0.992 / 1.000 / 1.000 / 1.000 / 1.000 / 1.000; MAE 0.998 / 0.986 / 0.986 / 0.980 / 0.978 / 0.952; Sup-ViT 0.998 / 1.000 / 1.000 / 1.000 / 1.000 / 0.998 — all within 0.01 of the earlier values.
+
+**Sup-ViT as fourth backbone (`clevr_sup_decoder1l_scratch_s42`, `vit_base_patch16_384`,
+grid 24, `outputs/analysis/patch_language_condition/sup/`).** Hypothesis registered in the
+2026-09-14 Q&A: if MAE's missing removal reflects its pretraining objective, the supervised
+backbone (discriminative, like DINOv2 / SigLIP) should show removal and late referent
+enhancement. Result (unit-normalised own-colour projection vs no question, 324 images):
+non-referent b5–11 −0.133 / −0.072 / −0.129 / −0.094 / −0.116 / −0.108 / **−0.124 [−0.136,
+−0.111]**; referent −0.116 / −0.061 / −0.061 / +0.052 / +0.038 / +0.061 / **+0.105 [+0.095,
++0.115]** — both objects fall at blocks 5–7, the referent recovers from block 8, the
+non-referent stays below baseline. Selection contrast (ref_imgdir) +10.5 at b5 rising to
++36.3 at b11 (largest of the four backbones); gain c1/c0 at b8–11 1.03 / 1.07 / 1.00 / 0.97
+(no gain); 2-object accuracy c1 / c2 1.000 / 1.000. Direction usability (held-out colour
+classification, b7–11): 1.00 / 0.99 / 0.95 / 0.89 / 0.87. Summary across backbones at b11
+(referent / non-referent): DINOv2 +0.15 / −0.08, SigLIP +0.20 / −0.22, Sup-ViT +0.11 / −0.12,
+MAE +0.10 / +0.05. The three discriminatively pretrained backbones show the pattern, the
+reconstruction-pretrained one does not — consistent with the pretraining-objective reading;
+one model per objective, so it is a consistency, not a test of the objective. Sup-ViT differs
+from the others in timing: the removal is present from block 5 (SigLIP 7, DINOv2 11 in raw
+units) and the referent is initially reduced too.

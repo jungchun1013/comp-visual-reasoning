@@ -568,6 +568,40 @@ referent 的增強從 b8 起。未被問屬性的 non-referent 沒有下降(+0.0
 `DISCUSSION_FRAMING_CODEX_2026-09-12.md` 加第 16 節(X24 因果結果、§14.2 MAE marker 句為 gain 假象、八點 framing 補充)、
 `PAPER_FRAMING_AND_ABSTRACT_CODEX_2026-09-13.md` 加英文 addendum,都另署名、原文不動。
 
+### 2026-09-14 — Codex 六問回答後的執行:H4 cross-fit 不改結論、登記端點集中、fold-local PCA 只動 ≤ 0.04、Sup-ViT 有移除
+
+使用者批准我提的順序(「照你的建議做」)。全部在 07:18–09:50 之間完成;C1 依建議不做。
+
+**H4 marker cross-fit(唯一會改已報告數字的修正)。** spatial 27 張裡 2 張(2400661、2407031)也在 184 題 direct pair 裡;
+這兩張改用排除自己 pair 的 marker 投影。target − third object(b9–11)= +1.74 [+0.91, +2.56],原值 [+0.90, +2.56]。
+`x23_gqa_spatial_h2/h4_marker_crossfit.{json,png}`。
+
+**登記端點集中檔** `x23_registered_endpoints.json`(`--gqa-summary`):H1 ref +1.174 [+0.872, +1.490]、H2 ΔR²(k_condition 無)、
+H3 selected − random 0.00 [0.00, 0.00](20 題乾淨答對)、H4 +1.74 與 cross-fit、B2、R2,各附來源路徑。沒有重算。
+
+**fold-local PCA(X18 pooled probe,`linear_probe_single.py`)。** PCA(50) 改在每個 fold 內擬合。DINOv2 1 物件集無問題顏色
+b1/3/5/7/9/11:0.972 / 0.984 / 0.980 / 0.984 / 0.956 / 0.914(原 b9/11 0.964 / 0.918);所有對得上的格子最大差 0.036。
+沒有任何已報告的比較改變。輸出 `outputs/analysis/linear_probe_v2/`。2 物件集沒有 `scenes.json`,這個腳本從沒跑過它,不重算。
+其他三個 backbone 的無問題顏色(b1/3/5/7/9/11,fold 內 PCA):SigLIP 0.992 / 1.000 / 1.000 / 1.000 / 1.000 / 1.000;MAE 0.998 / 0.986 / 0.986 / 0.980 / 0.978 / 0.952;Sup-ViT 0.998 / 1.000 / 1.000 / 1.000 / 1.000 / 0.998,與原值差都在 0.01 內。
+
+**Sup-ViT(第四個 backbone,`clevr_sup_decoder1l_scratch_s42`,grid 24,`.../sup/`)。** 要區分的假說:MAE 沒有移除是不是預訓練目標
+(重建 vs 判別式)的事。預測:監督式 backbone 應該有移除與後段 referent 增強。
+
+| b11,歸一化自身顏色投影(相對無問題) | referent | non-referent | 選取對比 b11 | acc c1 / c2 |
+|---|---|---|---|---|
+| DINOv2 | +0.15 | −0.08 | +6.3 | 0.994 |
+| SigLIP | +0.20 | −0.22 | +22.2 | 1.000 |
+| **Sup-ViT** | **+0.105 [+0.095, +0.115]** | **−0.124 [−0.136, −0.111]** | **+36.3** | **1.000** |
+| MAE | +0.10 | +0.05 | +0.5 | 0.997 |
+
+Sup-ViT 有移除、有後段 referent 增強、沒有 gain(c1/c0 0.97–1.07)。時序不同:b5–7 兩個物件都先降(referent −0.116、non-referent −0.133),
+referent 從 b8 回升,non-referent 一路留在基線下;選取對比從 b5 就是四個 backbone 裡最大的。三個判別式預訓練的 backbone 都有這個型態,
+重建式的沒有——與「預訓練目標」的讀法一致;但每種目標只有一個模型,這是一致性,不是對目標的檢定。方向可用性(held-out 顏色分類 b7–11)
+1.00 / 0.99 / 0.95 / 0.89 / 0.87,量測不是問題。
+
+**登記的口徑修正(registry X25 clarification)**已在前一條 commit;Codex 六問的回答在對話中,重點:X25 的零只在 SigLIP 有解釋力、
+舊置換與新加回不矛盾(舊向量一半在減 A,且 DINOv2 b11 加背景子集也翻 52%)、GQA best.pt = 最後 epoch 所以 C1 不做。
+
 - **2026-09-11 — X23 step 0: GQA real-image populations built (CPU), thresholds
   frozen; no GPU job yet.** Design doc `docs/gqa_relational_experiment_design.md`
   (v5 after the user's ten-point review), registry X23. New module
