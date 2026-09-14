@@ -1358,3 +1358,51 @@ Code: `run_gqa_attr`, flag `--gqa-attr` with `--cache-dir` = `x23_gqa_direct`; o
 
 Registration rules as in X24: all cells reported; no design change after seeing results
 (changes → new directory).
+
+
+#### X25 Results (2026-09-13 23:28–23:55; all cells reported; JOURNAL 2026-09-13 has the tables)
+
+**R1 Restoration — falsifier outcome in all three backbones.** Dose `s_l` (raw units, target under
+c2 − c0 on its own colour direction), b7–11: DINOv2 +0.19 / +0.55 / −0.11 / −0.92 / −5.13 (removal
+concentrated at b11; raw object norm ≈ 53); SigLIP −1.09 / −1.82 / −2.53 / −3.81 / −7.87 (norm ≈ 47);
+MAE +0.98 / +0.72 / +0.65 / +0.39 / −0.16 (norm ≈ 134, no removal). Clean items 322 / 324 / 323.
+Adding `alpha·|s_l|·V_raw[Ad]` to the non-referent's patches at any single block 7–11 or jointly at
+9–11, alpha 1 / 2 / 4: ΔP(non-referent's colour) = 0.000 with CI width < 0.001, flip rate 0.000,
+accuracy 1.000, in every cell of every backbone; another colour on the same patches: identical
+zeros; five random directions: zeros; paired own − random: zeros. **The same vector on the
+referent's patches is efficacious**: SigLIP b9 α4 ΔP(that colour) +0.54 [+0.50, +0.58], flip 0.55;
+b10 α4 +0.58, flip 0.61; joint 9–11 α2 +0.69 [+0.64, +0.73], flip 0.71; DINOv2 only b8 α4 +0.15
+[+0.12, +0.19], flip 0.14 (its decoder reads background tokens, X24); MAE ≈ 0 everywhere (dose ≈ 0).
+Background: SigLIP joint 9–11 α4 +0.50 [+0.46, +0.55], α2 +0.10; DINOv2 ≤ +0.003. c2 sanity
+accuracy 1.000 everywhere. **Registered reading**: H-rest fails and the falsifier holds for
+SigLIP (dose efficacious on the referent, zero on the non-referent) — the non-referent's late
+queried-attribute content at the magnitude actually removed does not govern the answer; the
+removal is a signature of the mechanism, not the behavioural cause of ignoring the non-referent.
+For DINOv2 the test is underpowered (the dose is barely efficacious anywhere); for MAE there is no
+removal to restore. Open discrepancy to reconcile (not resolved here): the 2026-08 colour-swap
+intervention (`intervention_results.json`, direction = means[B] − means[A], mean norm 9.7 at b11
+for DINOv2) flipped 54 % of DINOv2 answers to B when added to the distractor at b11 with alpha 2,
+a norm comparable to alpha 4 here (20.5); the direction type differs (difference of two colour
+means vs one value's unit direction), and SigLIP showed 0 flips in both tests.
+
+**R2 GQA attribute decomposition (`x24_gqa_attr/`).** Pool 1664 objects / 1180 images (173 images
+excluded), 17 colour values (≥ 30 each) and 16 material values (≥ 15 each); extraction 1664 c0
+passes, 0.13 GB. Projections on the 184 records (349 object-role rows / 145 images; unit-normalised
+object means): non-referent queried-attribute change vs c0, b7–11: +0.006 / +0.010 / +0.003 /
+−0.001 / **−0.044 [−0.055, −0.033]**; referent: +0.001 / +0.016 / +0.005 / +0.010 / **+0.028
+[+0.019, +0.038]**. Colour-only (319 rows): non-referent b11 −0.046 [−0.058, −0.034], referent
++0.035 [+0.026, +0.045]. Material-only (30 rows / 11 images): both negative at b11 (−0.047 /
+−0.029), too few images. Unqueried attribute (36 rows / 28 images): referent b11 +0.041 [+0.008,
++0.078], non-referent +0.005 [−0.036, +0.047]; queried − unqueried within the same object (32
+rows): referent +0.007 [−0.025, +0.042], non-referent −0.002 [−0.043, +0.032] at b11 (wide).
+**Registered criterion**: non-referent CI excludes 0 at b11 only, not at b9–10 → the removal
+reproduces on real images but only at the last block (selection onset b7, X23 H1); referent
+enhancement present from b8. Secondary same-object test (16 items: 10 colour→material, 6
+material→colour; c1 re-extraction identical to the x23 cache): colour direction, colour asked −
+material asked, b11 −0.061 [−0.095, −0.026], b10 +0.019 [+0.005, +0.036]; material direction,
+material asked − colour asked, b10 +0.033 [+0.011, +0.053], b11 +0.004 [−0.052, +0.059]. CI
+reported only, as registered; the b11 colour sign is opposite to "amplify the asked attribute".
+
+**Not run / pending user.** A4 (fold-local PCA, registered statistics in GQA result files, spatial
+marker cross-fit), C1 (GQA dev-split retrain), Sup-ViT, reconciling R1 with the 2026-08 colour
+swap, MAE CPU checks.
