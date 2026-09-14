@@ -136,14 +136,16 @@ def probe_accuracy(X, y, n_splits=5):
     y_enc = le.fit_transform(y)
     if len(le.classes_) < 2:
         return 1.0
-    pca = PCA(n_components=min(50, X.shape[1], X.shape[0]))
-    X_r = pca.fit_transform(X)
+    # PCA is fitted inside each fold (X24 A4, 2026-09-14): the earlier version fitted it on
+    # all samples before the split, so test rows shaped the probe's coordinates.
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     accs = []
-    for train_idx, test_idx in skf.split(X_r, y_enc):
+    for train_idx, test_idx in skf.split(X, y_enc):
+        pca = PCA(n_components=min(50, X.shape[1], len(train_idx)))
+        X_tr = pca.fit_transform(X[train_idx])
         clf = LogisticRegression(max_iter=500, C=1.0, solver="lbfgs")
-        clf.fit(X_r[train_idx], y_enc[train_idx])
-        accs.append(clf.score(X_r[test_idx], y_enc[test_idx]))
+        clf.fit(X_tr, y_enc[train_idx])
+        accs.append(clf.score(pca.transform(X[test_idx]), y_enc[test_idx]))
     return np.mean(accs)
 
 

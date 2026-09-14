@@ -3167,19 +3167,36 @@ def gqa_decoder_attention_summary(out_dir, records, owners, groups, role_names):
     return res
 
 
-def gqa_h4_marker(caches, records, groups, direct_dir):
+def gqa_h4_marker(caches, records, groups, direct_dir, exclude_same_image=False):
     """H4: single-hop referent marker = mean over direct pairs of (c1 − c2) raw referent
     mean (direct cache, object 0); projection of each role's raw mean change c1 − c0 onto
-    the unit marker; target − third object averaged over blocks X23_H4_WINDOW."""
+    the unit marker; target − third object averaged over blocks X23_H4_WINDOW.
+    `exclude_same_image=True` (X24 A4 cross-fit): a record whose image also occurs among
+    the direct pairs is projected on a marker estimated without that image's pairs."""
     rom1 = np.load(direct_dir / "feats_c1.npz")["raw_obj_mean"][:, 0].astype(np.float32)
     rom2 = np.load(direct_dir / "feats_c2.npz")["raw_obj_mean"][:, 0].astype(np.float32)
-    marker = (rom1 - rom2).mean(0)
+    diff = rom1 - rom2
+    marker = diff.mean(0)
     u = _unit(marker)
     rom = {c: caches[c]["raw_obj_mean"].astype(np.float32) for c in ("c0", "c1")}
     rbg = {c: caches[c]["raw_bg_mean"].astype(np.float32) for c in ("c0", "c1")}
     ar = np.arange(len(records))
     res = {"marker_source": str(direct_dir), "marker_n_pairs": int(len(rom1)), "window": list(X23_H4_WINDOW),
-           "marker_norm_by_block": np.linalg.norm(marker, axis=-1).tolist(), "projection": {}, "window_mean": {}}
+           "marker_norm_by_block": np.linalg.norm(marker, axis=-1).tolist(), "projection": {}, "window_mean": {},
+           "exclude_same_image": bool(exclude_same_image)}
+    u_rec = np.broadcast_to(u, (len(records),) + u.shape).copy()                          # (N, 12, D)
+    if exclude_same_image:
+        with open(direct_dir / "relational_records.json") as f:
+            direct_ids = np.array([str(r["image_id"]) for r in json.load(f)])
+        overlap = []
+        for i, r in enumerate(records):
+            m = direct_ids != str(r["image_id"])
+            if not m.all():
+                u_rec[i] = _unit(diff[m].mean(0))
+                overlap.append((str(r["image_id"]), int((~m).sum())))
+        res["overlapping_images"] = sorted(set(overlap))
+        print(f"H4 cross-fit: {len(overlap)} records on {len(set(overlap))} images overlap the marker source "
+              f"(image id, pairs excluded): {sorted(set(overlap))}")
     proj = {}
     for role in ROLES + ("bg",):
         if role == "bg":
@@ -3187,7 +3204,7 @@ def gqa_h4_marker(caches, records, groups, direct_dir):
         else:
             idx = _role_index(records, role)
             d = rom["c1"][ar, idx] - rom["c0"][ar, idx]
-        proj[role] = (d * u).sum(-1)                                                  # (N, 12)
+        proj[role] = (d * u_rec).sum(-1)                                              # (N, 12)
         res["projection"][role] = [_group_boot(proj[role][:, l], groups) for l in range(NUM_LAYERS)]
     lo, hi = X23_H4_WINDOW
     for role in ROLES + ("bg",):
@@ -4187,6 +4204,81 @@ def run_gqa_attr(args, out_dir, label):
         json.dump(res, f, indent=1)
     plot_gqa_attr(res, label, out_dir / "attr_decomposition.png")
     print(f"Saved: {out_dir / 'attr_decomposition.json'}")
+
+
+def run_gqa_h4_crossfit(args, out_dir, label):
+    """X24 A4: H4 on a finished spatial directory (--cache-dir) with the marker cross-fit
+    by image against --gqa-direct-dir; writes new files, the earlier H4 is untouched."""
+    cache_dir = Path(args.cache_dir)
+    with open(cache_dir / "relational_records.json") as f:
+        records = json.load(f)
+    groups = np.array([r["image_id"] for r in records])
+    caches = {c: load_sparse(cache_dir, c) for c in ("c0", "c1")}
+    res = gqa_h4_marker(caches, records, groups, Path(args.gqa_direct_dir), exclude_same_image=True)
+    res["cache_dir"] = str(cache_dir)
+    with open(out_dir / "h4_marker_crossfit.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_gqa_h4(res, label + " (marker cross-fit by image)", out_dir / "h4_marker_crossfit.png")
+    print(f"Saved: {out_dir / 'h4_marker_crossfit.json'}")
+
+
+def run_gqa_summary(args, out_dir, label):
+    """X24 A4: one file with the registered X23 / X24 / X25 endpoints and their source files
+    (`<out-dir>/x23_registered_endpoints.json`); nothing is recomputed."""
+    R = out_dir
+    src = {"H1": R / "x23_gqa_direct" / "x23_results.json",
+           "H2": R / "x23_gqa_spatial_h2" / "x23_results.json",
+           "H3": R / "x23_gqa_spatial_v2_causal" / "head_ablation.json",
+           "H4": R / "x23_gqa_spatial_h2" / "x23_results.json",
+           "H4_crossfit": R / "x23_gqa_spatial_h2" / "h4_marker_crossfit.json",
+           "B2": R / "x23_gqa_direct_inject" / "marker_injection.json",
+           "R2": R / "x24_gqa_attr" / "attr_decomposition.json"}
+    load = {k: (json.load(open(p)) if p.exists() else None) for k, p in src.items()}
+    out = {"generated": "X24 A4 registered-endpoint summary", "sources": {k: str(p) for k, p in src.items()}}
+    if load["H1"]:
+        h = load["H1"]["h1"]
+        out["H1"] = {"registered_endpoint": "referent own-V projection change c1 − c2, blocks 5–11 mean",
+                     "ref": h["window_mean"]["ref"], "nonref": h["window_mean"]["nonref"],
+                     "contrast": h["window_mean"]["contrast"], "window": h["window"],
+                     "baseline_accuracy": load["H1"]["baseline_accuracy"]}
+    if load["H2"]:
+        h = load["H2"]["h2_observational"]
+        out["H2"] = {"registered_endpoint": "ΔR² = R²(c1) − R²(c0) of the anchor-centroid ridge probe per block, "
+                                            "image-grouped CV; k_condition = first block with ΔR² ≥ threshold",
+                     "n_questions": h["n_questions"], "n_images": h["n_images"], "delta_r2_threshold": h["delta_r2_threshold"],
+                     "k_condition": h["k_condition"], "delta_r2": h["delta_r2"], "delta_r2_shuffled": h["delta_r2_shuffled"],
+                     "probe_fix": load["H2"].get("probe_fix")}
+    if load["H3"]:
+        h = load["H3"]
+        out["H3"] = {"registered_endpoint": "accuracy drop of the rule-selected heads minus matched random heads "
+                                            "(spatial only on GQA; interaction with same-as not decidable)",
+                     "n_questions": h["n_questions"], "n_clean_correct": h["n_clean_correct"], "selection": h["selection"],
+                     "selected_minus_random": h["contrast"]["selected_minus_random"],
+                     "drop": {k: v for k, v in h["drop"].items() if not k.startswith("cum_") or "random" not in k}}
+    if load["H4"]:
+        h = load["H4"]["h4"]
+        out["H4"] = {"registered_endpoint": "target − third object marker projection, blocks 9–11 mean",
+                     "T_minus_D": h["window_mean"]["T_minus_D"], "T_minus_A": h["window_mean"]["T_minus_A"],
+                     "marker_n_pairs": h["marker_n_pairs"]}
+    if load["H4_crossfit"]:
+        h = load["H4_crossfit"]
+        out["H4_crossfit"] = {"T_minus_D": h["window_mean"]["T_minus_D"], "T_minus_A": h["window_mean"]["T_minus_A"],
+                              "overlapping_images": h.get("overlapping_images")}
+    if load["B2"]:
+        b = load["B2"]
+        out["B2"] = {"registered_endpoint": "ΔP(third object's value) for +marker on D minus +random on D (paired)",
+                     "n_items": b.get("n_items"), "n_images": b.get("n_images"),
+                     "rows": [r for r in b["rows"] if r["variant"] in ("marker_to_D", "marker_to_bg", "marker_to_D minus random_to_D")]}
+    if load["R2"]:
+        r = load["R2"]["projection"]
+        out["R2"] = {"registered_endpoint": "non-referent own-value projection change vs c0 at blocks 9–11 (CI excludes 0)",
+                     "nonref_queried_b9_11": r["nonref_queried"]["series"][9:12], "ref_queried_b9_11": r["ref_queried"]["series"][9:12],
+                     "n": r["nonref_queried"]["n"], "n_images": r["nonref_queried"]["n_images"]}
+    with open(out_dir / "x23_registered_endpoints.json", "w") as f:
+        json.dump(out, f, indent=1)
+    for k in ("H1", "H2", "H3", "H4", "H4_crossfit", "B2", "R2"):
+        print(k, "present" if k in out else "missing source")
+    print(f"Saved: {out_dir / 'x23_registered_endpoints.json'}")
 
 
 def run_gqa_causal(args, out_dir, label):
@@ -6117,6 +6209,10 @@ def main():
                     help="X25 R2: attribute pool + decomposition on a finished --gqa-run direct directory (--cache-dir)")
     ap.add_argument("--gqa-exclude-dirs", default="outputs/analysis/patch_language_condition/x23_gqa_spatial_v2",
                     help="--gqa-attr: comma-separated record dirs whose images are kept out of the pool")
+    ap.add_argument("--gqa-h4-crossfit", action="store_true",
+                    help="X24 A4: H4 on a finished spatial --cache-dir with the marker cross-fit by image (--gqa-direct-dir)")
+    ap.add_argument("--gqa-summary", action="store_true",
+                    help="X24 A4: collect the registered X23/X24/X25 endpoints into <out-dir>/x23_registered_endpoints.json")
     ap.add_argument("--restore", action="store_true",
                     help="X25 R1: attribute restoration on the non-referent (n1/n2 caches must exist)")
     ap.add_argument("--restore-layers", default="7,8,9,10,11", help="--restore: single blocks (plus joint 9,10,11)")
@@ -6161,6 +6257,13 @@ def main():
     if args.gqa_attr:
         assert args.cache_dir, "--gqa-attr needs --cache-dir (a finished --gqa-run direct directory)"
         run_gqa_attr(args, out_dir, label)
+        return
+    if args.gqa_h4_crossfit:
+        assert args.cache_dir and args.gqa_direct_dir, "--gqa-h4-crossfit needs --cache-dir (spatial) and --gqa-direct-dir"
+        run_gqa_h4_crossfit(args, out_dir, label)
+        return
+    if args.gqa_summary:
+        run_gqa_summary(args, out_dir, label)
         return
     if args.gqa_causal:
         assert args.cache_dir, "--gqa-causal needs --cache-dir (a finished --gqa-run directory)"

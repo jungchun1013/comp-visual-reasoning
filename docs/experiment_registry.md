@@ -519,6 +519,12 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   (−6.0/−5.9/−8.9; −6.3/−6.9/−9.2). The "≈0 to +4" row was the shape-word
   non-referent, not the size/material referent. After unit-normalisation the
   three strata are indistinguishable at blocks 9–11 (−0.42 / −0.45 / −0.46).
+  **Limit added 2026-09-14 (X25 clarification):** the colour directions along which
+  DINOv2's blocks 9–11 removal is measured classify held-out 1-object colours at only
+  0.43 / 0.40 / 0.41 (2-fold by image, unit-normalised object means, chance 0.125),
+  against 0.94 / 0.93 / 0.94 for SigLIP and 0.96 / 0.95 / 0.96 for MAE; DINOv2's late
+  object means carry colour weakly (its decoder reads background tokens), so its
+  late-block attribute numbers are less interpretable than SigLIP's.
   Reading: the model does both things — the asked
   attribute is amplified on every object by any question (Song et al.'s
   amplification, not selective), and from block 9 the selection is
