@@ -584,6 +584,8 @@ b1/3/5/7/9/11:0.972 / 0.984 / 0.980 / 0.984 / 0.956 / 0.914(原 b9/11 0.964 / 0.
 沒有任何已報告的比較改變。輸出 `outputs/analysis/linear_probe_v2/`。2 物件集沒有 `scenes.json`,這個腳本從沒跑過它,不重算。
 其他三個 backbone 的無問題顏色(b1/3/5/7/9/11,fold 內 PCA):SigLIP 0.992 / 1.000 / 1.000 / 1.000 / 1.000 / 1.000;MAE 0.998 / 0.986 / 0.986 / 0.980 / 0.978 / 0.952;Sup-ViT 0.998 / 1.000 / 1.000 / 1.000 / 1.000 / 0.998,與原值差都在 0.01 內。
 
+**更正(同日稍晚,Codex 提問後追查)。** 「2 物件集這個腳本從沒跑過」是錯的:RESULTS §16 那張 probe 表(訓練後 DINOv2,`outputs/analysis/tsne/object_count/n{1,2}/`)就是 `linear_probe_single.py --features-dir` 從快取特徵算的,PCA 同樣在 fold 外擬合;昨天失敗是我把 `--data-dir` 指到資料集。用同一批快取特徵、fold 內 PCA 重算(CPU,`outputs/analysis/linear_probe_v2/object_count/`):2 物件集 b11 目標顏色,無問題 0.356 → 0.365、「What color is the object?」0.458 → 0.496、「What color is the cube?」0.331 → 0.323、形狀問句 0.317 / 0.294 → 0.310 / 0.285;目標形狀無問題 0.667 → 0.656。60 格最大差 0.037(1 物件集 0.014)。已報告的比較(對齊的顏色問句把 2 物件顏色讀出拉高於無問題值,形狀問句不會)不變,差距從 +0.10 變 +0.13。X18 的 raw-backbone pooled probe 沒有用 PCA,不受影響。
+
 **Sup-ViT(第四個 backbone,`clevr_sup_decoder1l_scratch_s42`,grid 24,`.../sup/`)。** 要區分的假說:MAE 沒有移除是不是預訓練目標
 (重建 vs 判別式)的事。預測:監督式 backbone 應該有移除與後段 referent 增強。
 

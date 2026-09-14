@@ -1476,3 +1476,17 @@ reconstruction-pretrained one does not — consistent with the pretraining-objec
 one model per objective, so it is a consistency, not a test of the objective. Sup-ViT differs
 from the others in timing: the removal is present from block 5 (SigLIP 7, DINOv2 11 in raw
 units) and the referent is initially reduced too.
+
+**A4-1 correction (2026-09-14, later the same day).** The statement above that the two-object
+set "was never run through this script" is wrong: the RESULTS §16 probe table (trained DINOv2
+model, `outputs/analysis/tsne/object_count/n{1,2}/linear_probe_results.json`) was produced by
+`linear_probe_single.py --features-dir` from cached features with the global PCA, so it carried
+the same leakage. Rerun from the same cached features with fold-local PCA (CPU), new outputs
+`outputs/analysis/linear_probe_v2/object_count/n{1,2}/`. Two-object set, block 11, target
+colour, old → new: no question 0.356 → 0.365; "What color is the object?" 0.458 → 0.496; "What
+color is the cube?" 0.331 → 0.323; shape questions 0.317 / 0.294 → 0.310 / 0.285. Target shape:
+no question 0.667 → 0.656, "What color is the object?" 0.619 → 0.627. Largest change in any of
+the 60 cells per set: 0.037 (n2), 0.014 (n1). The reported comparison (aligned colour question
+raises two-object colour readout above the no-question value; shape questions do not) is
+unchanged; the gap widens from +0.10 to +0.13. The X18 raw-backbone pooled probe
+(`raw_backbone_probe.py`, 0.517 / 0.812 / 0.850 / 0.912) uses no PCA and is unaffected.
