@@ -9,7 +9,7 @@ All numbers below re-extracted first-hand on 2026-07-05 (session R0/R1). Log-for
 note: `train_log.jsonl` rows carry per-epoch `val_acc`; plain-text logs print
 per-epoch `Val acc: X` and a final `Done. Best val acc: X` line — the **paper uses
 final-epoch accuracy** (matches everywhere it can be checked; see learned-text, where
-best 0.4667 ≠ paper's 24.6 = final 0.2456).
+best 0.4667 ≠ paper's 24.6 = final 0.2456 — that run is superseded, see §2 row).
 
 ## 1. Model-variant identification (paper term → repo name)
 
@@ -51,7 +51,7 @@ single-provenance cells with E1b:
 | Classifier readout | 90.1 | `clevr_dinov2_cls_scratch_s42/train_log.jsonl` (ep15) | 0.9014 | ✓ |
 | Scratch ViT | 52.8 | `clevr_dinov2_gca_scratch_s42/train_log.jsonl` (ep15) | 0.5277 | ✓ |
 | −CA | 49.4 | `clevr_dinov2_concat_decoder1l_nogca_scratch_s42.log` | 0.4945 | ✓ |
-| Learned text | 24.6 | `clevr_dinov2_learned_text_decoder1l_s42_train.log` | final-epoch `Val acc: 0.2456` (best was 0.4667, early epoch — run degrades) | ✓ |
+| Learned text | 24.6 → **80.4** | `clevr_dinov2_learned_text_decoder1l_v2_s42/train.log` | final-epoch `Val acc: 0.8041` (best 0.8044, flat after ep 10; count 0.732, compare_integer 0.617). The original `..._decoder1l_s42` (0.2456) trained a frozen random text embedding (audit 2026-09-12) and is superseded 2026-09-13 | ✓ |
 
 ## 4. Classifier-readout backbone table (paper Table 4) — cls runs, seed 42
 
@@ -169,7 +169,7 @@ the (non-standard) name `concat_decoder_1l` — E4's gap is only the *GCA-decode
 | cls | 0.9014 | 0.8476 | 0.8663 | 0.7701 |
 | nogate (unreported) | 0.9683 (s43 0.9632) | 0.9457 (s43 0.9527) | 0.9439 | 0.9136 |
 
-Others: gca_scratch 0.5277 · learned_text 0.2456 (final; best 0.4667) ·
+Others: gca_scratch 0.5277 · learned_text 0.8041 (v2 retrain 2026-09-13, final; best 0.8044; old frozen-embedding run 0.2456 superseded) ·
 concat nogca 0.4945 · MoT 0.7483.
 s43 decoder1l runs incomplete (see §8.3).
 

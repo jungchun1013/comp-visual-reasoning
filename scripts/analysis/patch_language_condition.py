@@ -1088,6 +1088,180 @@ def run_intervened(out_dir, args, state, images_n2, owners_n2, labels_n2, labels
 
 
 # ---------------------------------------------------------------------------
+# Attribute restoration (registry X25 R1): add the non-referent's own queried-attribute
+# direction back onto its patches under c1 at a late block, dose matched to the measured
+# removal, and read the answer.  Controls: another value's direction, same-norm random
+# directions, the same vector on the referent / on the background, and under c2.
+# ---------------------------------------------------------------------------
+
+RESTORE_ALPHAS = (1.0, 2.0, 4.0)
+RESTORE_RANDOM_SEEDS = 5
+
+
+def restoration_dose(cache_c0, cache_c2, labels_n2, V_raw):
+    """(N, 12) raw own-value projection change of the target under c2 minus c0: the
+    non-referent's removal in raw residual units (negative where it happens)."""
+    r0 = cache_c0["raw_obj_mean"][:, 0].astype(np.float32)
+    r2 = cache_c2["raw_obj_mean"][:, 0].astype(np.float32)
+    d = np.full((len(labels_n2), NUM_LAYERS), np.nan, np.float32)
+    for i, rec in enumerate(labels_n2):
+        v = rec["target"][QUERIED]
+        if v in V_raw:
+            d[i] = ((r2[i] - r0[i]) * V_raw[v]).sum(-1)
+    return d
+
+
+@torch.no_grad()
+def run_restoration(out_dir, args, state, images_n2, owners_n2, labels_n2, labels_n1):
+    from contextlib import ExitStack
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk, vocab = steervit.vision_model.trunk, model.vocab
+    new_dir = out_dir / "n2_restore"
+    new_dir.mkdir(exist_ok=True)
+    V_raw = attribute_directions(load_sparse(out_dir / "n1", "c0"), labels_n1, space="raw")[QUERIED]
+    dose = restoration_dose(load_sparse(out_dir / "n2", "c0"), load_sparse(out_dir / "n2", "c2"), labels_n2, V_raw)
+    s = np.nanmean(dose, 0)                                                        # (12,)
+    print("removal dose s_l (raw units; target under c2 − c0 on its own direction): "
+          + " ".join(f"{v:+.2f}" for v in s))
+    N, bs, D = len(labels_n2), args.batch_size, next(iter(V_raw.values())).shape[-1]
+    values = sorted(V_raw)
+    A = [rec["target"][QUERIED] for rec in labels_n2]
+    Ad = [rec["distractors"][0][QUERIED] for rec in labels_n2]
+    B = []
+    for i in range(N):
+        others = [v for v in values if v not in (A[i], Ad[i])]
+        B.append(others[i % len(others)] if others else A[i])
+    valid = np.array([a in V_raw and d in V_raw and a != d for a, d in zip(A, Ad)])
+    a_id = np.array([vocab[v] for v in A])
+    ad_id = np.array([vocab[v] for v in Ad])
+    b_id = np.array([vocab[v] for v in B])
+    zero = np.zeros((NUM_LAYERS, D), np.float32)
+    dirs = {"own": np.stack([V_raw.get(v, zero) for v in Ad]),                    # (N, 12, D)
+            "other_value": np.stack([V_raw.get(v, zero) for v in B])}
+    for k in range(RESTORE_RANDOM_SEEDS):
+        r = _unit(np.random.default_rng(args.seed + k).standard_normal((NUM_LAYERS, D)).astype(np.float32))
+        dirs[f"random_{k}"] = np.broadcast_to(r, (N, NUM_LAYERS, D))
+    imgs_t = torch.stack([tf(im) for im in images_n2])
+    owner_t = torch.from_numpy(np.stack(owners_n2))
+    qs = {c: [rec["questions"][c] for rec in labels_n2] for c in ("c1", "c2")}
+
+    def probs(cond, hook_fn=None):
+        out = []
+        for st in range(0, N, bs):
+            e = min(st + bs, N)
+            with ExitStack() as es:
+                for h in (hook_fn(st, e) if hook_fn else []):
+                    es.enter_context(h)
+                lg = first_token_logits(model, steervit, imgs_t[st:e].to(device), qs[cond][st:e]).float()
+            out.append(lg.softmax(-1).cpu().numpy())
+        return np.concatenate(out)
+
+    def make_hook(layers, alpha, dir_arr, oid):
+        def hook_fn(st, e):
+            m = (owner_t[st:e] == oid).to(device)
+            return [ResidualAdder(trunk, l, torch.from_numpy(np.ascontiguousarray(dir_arr[st:e, l] * abs(s[l]))).to(device),
+                                  m, alpha) for l in layers]
+        return hook_fn
+
+    idx = np.arange(N)
+
+    def stats(pr, clean, cond, inj_id):
+        correct = a_id if cond == "c1" else ad_id
+        pred = pr.argmax(-1)
+        return {"n": int(clean.sum()), "p_A": _boot(pr[idx, a_id][clean]), "p_Ad": _boot(pr[idx, ad_id][clean]),
+                "p_B": _boot(pr[idx, b_id][clean]), "p_injected": _boot(pr[idx, inj_id][clean]),
+                "accuracy": _boot((pred == correct)[clean].astype(np.float64)),
+                "flip_to_injected": _boot((pred == inj_id)[clean].astype(np.float64)),
+                "flip_to_Ad": _boot((pred == ad_id)[clean].astype(np.float64))}
+
+    base = {c: probs(c) for c in ("c1", "c2")}
+    clean = {"c1": valid & (base["c1"].argmax(-1) == a_id), "c2": valid & (base["c2"].argmax(-1) == ad_id)}
+    print(f"clean items: c1 {int(clean['c1'].sum())}, c2 {int(clean['c2'].sum())} of {N} (valid {int(valid.sum())})")
+    layer_specs = [[int(l)] for l in args.restore_layers.split(",")] + [[9, 10, 11]]
+    variants = [("own", "own", 2, "c1"), ("other_value", "other_value", 2, "c1"),
+                ("own_on_referent", "own", 1, "c1"), ("own_on_bg", "own", 0, "c1"), ("own_c2", "own", 2, "c2")] \
+        + [(f"random_{k}", f"random_{k}", 2, "c1") for k in range(RESTORE_RANDOM_SEEDS)]
+    res = {"n_images": N, "dose_s": s.tolist(), "dose_per_image_mean_abs": float(np.nanmean(np.abs(dose))),
+           "alphas": list(RESTORE_ALPHAS), "layer_specs": layer_specs, "seed": args.seed,
+           "baseline": {c: stats(base[c], clean[c], c, ad_id) for c in ("c1", "c2")}, "rows": []}
+    for layers in layer_specs:
+        for alpha in RESTORE_ALPHAS:
+            p_ad = {}
+            for name, dkey, oid, cond in variants:
+                pr = probs(cond, make_hook(layers, alpha, dirs[dkey], oid))
+                inj = b_id if name == "other_value" else ad_id
+                row = {"layers": layers, "alpha": alpha, "variant": name, "cond": cond, **stats(pr, clean[cond], cond, inj)}
+                d = pr[idx, ad_id] - base[cond][idx, ad_id]
+                row["d_p_Ad"] = _boot(d[clean[cond]])
+                row["d_p_injected"] = _boot((pr[idx, inj] - base[cond][idx, inj])[clean[cond]])
+                p_ad[name] = pr[idx, ad_id]
+                res["rows"].append(row)
+                print(f"  L{'+'.join(map(str, layers)):8s} α={alpha:g} {name:16s} n={row['n']:3d} "
+                      f"ΔP(Ad) {row['d_p_Ad']['mean']:+.3f} [{row['d_p_Ad']['lo']:+.3f}, {row['d_p_Ad']['hi']:+.3f}] "
+                      f"P(inj) {row['p_injected']['mean']:.3f} flip→inj {row['flip_to_injected']['mean']:.3f} "
+                      f"acc {row['accuracy']['mean']:.3f}", flush=True)
+            rnd = np.mean([p_ad[f"random_{k}"] for k in range(RESTORE_RANDOM_SEEDS)], 0)
+            res["rows"].append({"layers": layers, "alpha": alpha, "variant": "own_minus_random", "cond": "c1",
+                                "n": int(clean["c1"].sum()), "d_p_Ad": _boot((p_ad["own"] - rnd)[clean["c1"]])})
+            q = res["rows"][-1]["d_p_Ad"]
+            print(f"  L{'+'.join(map(str, layers)):8s} α={alpha:g} own − random(mean of {RESTORE_RANDOM_SEEDS}) "
+                  f"ΔP(Ad) {q['mean']:+.3f} [{q['lo']:+.3f}, {q['hi']:+.3f}]", flush=True)
+    with open(new_dir / "restoration.json", "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"Saved: {new_dir / 'restoration.json'}")
+    return res
+
+
+def plot_restoration(res, label, out_path):
+    _t10 = plt.get_cmap("tab10").colors
+    specs = ["+".join(map(str, l)) for l in res["layer_specs"]]
+    x = np.arange(len(specs))
+    fig, axes = plt.subplots(1, 3, figsize=(14, 3.8))
+    series = [("own", "d_p_Ad", _t10[3], "+own colour on the non-referent: ΔP(its value)"),
+              ("own_minus_random", "d_p_Ad", "k", "own − random (paired)"),
+              ("own_on_bg", "d_p_Ad", _t10[7], "+own colour on the background: ΔP(non-referent's value)"),
+              ("own_on_referent", "d_p_injected", _t10[1], "+that colour on the referent: ΔP(that colour)"),
+              ("other_value", "d_p_injected", _t10[2], "+another colour on the non-referent: ΔP(that colour)")]
+    for ax, alpha in zip(axes[:2], (1.0, 2.0)):
+        for k, (var, key, col, name) in enumerate(series):
+            rows = {tuple(r["layers"]): r for r in res["rows"] if r["variant"] == var and r["alpha"] == alpha}
+            m = np.array([rows[tuple(l)][key]["mean"] for l in res["layer_specs"]])
+            lo = np.array([rows[tuple(l)][key]["lo"] for l in res["layer_specs"]])
+            hi = np.array([rows[tuple(l)][key]["hi"] for l in res["layer_specs"]])
+            off = (k - 2) * 0.12
+            ax.errorbar(x + off, m, yerr=[m - lo, hi - m], fmt="o", color=col, markersize=4, lw=0.9, label=name)
+        rnd = [np.mean([r["d_p_Ad"]["mean"] for r in res["rows"] if r["variant"].startswith("random_")
+                        and r["alpha"] == alpha and r["layers"] == l]) for l in res["layer_specs"]]
+        ax.plot(x, rnd, "_", color="0.5", markersize=10, label="+random direction on the non-referent (mean of 5)")
+        ax.axhline(0, color="k", lw=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"b{s}" for s in specs], fontsize=8)
+        ax.set_title(f"α = {alpha:g} × measured removal", fontsize=10)
+        ax.set_ylabel("Δ probability vs clean", fontsize=9)
+    ax = axes[2]
+    for var, col, name in (("own", _t10[3], "own colour → answers the non-referent's value"),
+                           ("other_value", _t10[2], "another colour → answers that colour"),
+                           ("own_on_referent", _t10[1], "that colour on the referent → answers it")):
+        for alpha, ls in ((1.0, ":"), (2.0, "--"), (4.0, "-")):
+            rows = {tuple(r["layers"]): r for r in res["rows"] if r["variant"] == var and r["alpha"] == alpha}
+            ax.plot(x, [rows[tuple(l)]["flip_to_injected"]["mean"] for l in res["layer_specs"]], ls, color=col,
+                    marker="o", markersize=3, label=f"{name} (α={alpha:g})")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"b{s}" for s in specs], fontsize=8)
+    ax.set_ylabel("flip rate (argmax = injected value)", fontsize=9)
+    ax.set_title("answer flips", fontsize=10)
+    ax.legend(fontsize=6)
+    axes[0].legend(fontsize=6, loc="upper left")
+    s = res["dose_s"]
+    fig.suptitle(f"{label} — attribute restoration on the non-referent ({res['baseline']['c1']['n']} clean items); "
+                 f"dose s_l = " + " ".join(f"{v:+.1f}" for v in s[7:]) + " (b7–11, raw units)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---------------------------------------------------------------------------
 # Readout check — where does the decoder read the answer from at the last block?
 # (i) decoder cross-attention mass by patch owner; (ii) activation patching of
 # background / object tokens between conditions at every block output.
@@ -3729,6 +3903,292 @@ def run_gqa_inject(args, out_dir, label):
     gqa_marker_injection(out_dir, args, state, records, images, owners, groups, cache_dir)
 
 
+# ---------------------------------------------------------------------------
+# GQA attribute decomposition (registry X25 R2 = X24 B3): attribute directions from an
+# independent pool of scene-graph objects (no question), projected on the query-attr
+# records per condition; plus the same-object / different-question secondary test.
+# ---------------------------------------------------------------------------
+
+GQA_ATTR_MIN = {"color": 30, "material": 15}
+
+
+def gqa_attr_pool(sg, exclude_images, grid, cap=60, per_image=2, seed=0, min_patches=4, bg_per_image=64):
+    """Objects with a colour or material attribute, relaxed box geometry, ≥ `min_patches`
+    owned patches, image not in `exclude_images`, ≤ `per_image` objects per image, ≤ `cap`
+    objects per attribute value (images visited in a seeded random order).  One object per
+    record (owner id 1); background sample as in `build_records`."""
+    from analysis.gqa_roles import GEOMETRY_PRESETS, patch_cover, _box, _object_record, object_color, _value
+    gp = GEOMETRY_PRESETS["relaxed"]
+    rng = np.random.RandomState(seed)
+    ids = [i for i in sorted(sg) if str(i) not in exclude_images]
+    rng.shuffle(ids)
+    count = {"color": collections.Counter(), "material": collections.Counter()}
+    records, owners = [], []
+    for image_id in ids:
+        s = sg[image_id]
+        W, H = s["width"], s["height"]
+        if not s["objects"]:
+            continue
+        covs = {oid: patch_cover(_box(o), W, H, grid) for oid, o in s["objects"].items()}
+        bg_b = np.nonzero(np.max(np.stack(list(covs.values())), 0) < gp["cover"])[0]
+        if len(bg_b) < 8:
+            continue
+        taken = 0
+        for oid in sorted(s["objects"]):
+            o = s["objects"][oid]
+            col, mat = object_color(o), _value(o, "material")
+            if col is None and mat is None:
+                continue
+            box = _box(o)
+            if box[2] * box[3] / (W * H) > gp["max_frac"]:
+                continue
+            owner = (covs[oid] >= gp["cover"]).astype(np.int8)
+            if int(owner.sum()) < min_patches:
+                continue
+            if not ((col is not None and count["color"][col] < cap) or (mat is not None and count["material"][mat] < cap)):
+                continue
+            if col is not None:
+                count["color"][col] += 1
+            if mat is not None:
+                count["material"][mat] += 1
+            bg_sample = sorted(int(v) for v in rng.choice(bg_b, min(bg_per_image, len(bg_b)), replace=False))
+            records.append({"objects": [_object_record(oid, o, W, H, grid, gp["cover"])], "T": 0,
+                            "color": col, "material": mat, "image_id": str(image_id), "filename": f"{image_id}.jpg",
+                            "image_wh": [W, H], "grid": grid, "n_patches": [int(owner.sum())], "bg_sample": bg_sample})
+            owners.append(owner)
+            taken += 1
+            if taken >= per_image:
+                break
+    return records, owners, count
+
+
+def gqa_attr_directions(cache, records):
+    """V[space][attr][value] (12, D) = unit(mean object mean of the pool objects with that
+    value − pool grand mean); values with fewer than GQA_ATTR_MIN objects are dropped."""
+    om = {"normed": cache["obj_mean"][:, 0].astype(np.float32), "raw": cache["raw_obj_mean"][:, 0].astype(np.float32)}
+    V, counts = {sp: {} for sp in om}, {}
+    for attr in ("color", "material"):
+        vals = np.array([r[attr] or "" for r in records])
+        cnt = collections.Counter(v for v in vals if v)
+        keep = sorted(v for v, c in cnt.items() if c >= GQA_ATTR_MIN[attr])
+        counts[attr] = {v: int(cnt[v]) for v in keep}
+        for sp in om:
+            mu = om[sp].mean(0)
+            V[sp][attr] = {v: _unit(om[sp][vals == v].mean(0) - mu) for v in keep}
+    return V, counts
+
+
+def gqa_attr_projection(caches, records, groups, V):
+    """Unit-normalised object means of T and D under c0 / c1 / c2 projected on the object's
+    own value direction of the record's queried attribute (and of the other attribute when
+    the object has one in V).  Referent = T under c1, D under c2; non-referent = T under
+    c2, D under c1; all changes relative to c0.  Image-bootstrap CIs."""
+    from analysis.gqa_roles import _value
+    om = {c: _unit(caches[c]["obj_mean"].astype(np.float32)) for c in ("c0", "c1", "c2")}     # (N, 2, 12, D)
+    ser, grp = collections.defaultdict(list), collections.defaultdict(list)
+
+    def add(key, val, g):
+        ser[key].append(val)
+        grp[key].append(g)
+
+    for i, r in enumerate(records):
+        q = r["queried"]
+        if q not in V:
+            continue
+        other_attr = "material" if q == "color" else "color"
+        for oid, ref_cond, non_cond in ((r["T"], "c1", "c2"), (r["D"], "c2", "c1")):
+            obj = r["objects"][oid]
+            proj = {}
+            for attr in (q, other_attr):
+                v = _value(obj, attr)
+                if attr in V and v in V[attr]:
+                    proj[attr] = {c: (om[c][i, oid] * V[attr][v]).sum(-1) for c in om}
+            if q in proj:
+                p = proj[q]
+                for key, cond in (("ref_queried", ref_cond), ("nonref_queried", non_cond)):
+                    add(key, p[cond] - p["c0"], groups[i])
+                    add(f"{key}_{q}", p[cond] - p["c0"], groups[i])
+            if other_attr in proj:
+                p = proj[other_attr]
+                for key, cond in (("ref_unqueried", ref_cond), ("nonref_unqueried", non_cond)):
+                    add(key, p[cond] - p["c0"], groups[i])
+            if q in proj and other_attr in proj:
+                pq, pu = proj[q], proj[other_attr]
+                add("qvu_ref", (pq[ref_cond] - pq["c0"]) - (pu[ref_cond] - pu["c0"]), groups[i])
+                add("qvu_nonref", (pq[non_cond] - pq["c0"]) - (pu[non_cond] - pu["c0"]), groups[i])
+    out = {}
+    for key in ser:
+        a = np.stack(ser[key])
+        out[key] = {"n": int(len(a)), "n_images": int(len(set(grp[key]))),
+                    "series": [_group_boot(a[:, l], grp[key]) for l in range(NUM_LAYERS)]}
+    return out
+
+
+def gqa_same_object_items(records, pool_questions):
+    """Records whose T has another natural `select|query` question in the pool asking the
+    other attribute (colour ↔ material); the copy carries that question as c4."""
+    by_obj = collections.defaultdict(list)
+    for q in pool_questions:
+        if q.get("ops") == "select|query":
+            by_obj[(str(q["image"]), str(q.get("select_id")))].append(q)
+    items = []
+    for i, r in enumerate(records):
+        if r["queried"] not in ("color", "material"):
+            continue
+        t = r["objects"][r["T"]]
+        alts = [q for q in by_obj.get((str(r["image_id"]), str(t["id"])), [])
+                if q.get("query") in ("color", "material") and q["query"] != r["queried"]]
+        if not alts:
+            continue
+        q = sorted(alts, key=lambda q: q["qid"])[0]
+        rec = dict(r)
+        rec["questions"] = {"c1": r["questions"]["c1"], "c4": q["question"]}
+        rec["referent_words"] = {"c1": r["referent_words"]["c1"], "c4": q["ref_word"]}
+        rec["answers"] = {"c1": r["answers"]["c1"], "c4": q["answer"]}
+        rec["c4_query"], rec["c4_question_id"], rec["src_index"] = q["query"], q["qid"], i
+        items.append(rec)
+    return items
+
+
+def gqa_same_object_stats(so_dir, items, V, cache_c1_full):
+    """Paired, per item: T's unit-normalised mean projected on its own colour direction
+    under the colour question minus under the material question, and on its own material
+    direction under the material question minus under the colour question."""
+    from analysis.gqa_roles import _value
+    c1, c4 = load_sparse(so_dir, "c1"), load_sparse(so_dir, "c4")
+    src = np.array([r["src_index"] for r in items])
+    reg = float(np.abs(c1["obj_mean"].astype(np.float32) - cache_c1_full["obj_mean"][src].astype(np.float32)).max())
+    print(f"same-object c1 re-extraction vs the x23 cache: max |Δ obj_mean| = {reg:.4f}")
+    om = {"c1": _unit(c1["obj_mean"].astype(np.float32)), "c4": _unit(c4["obj_mean"].astype(np.float32))}
+    ser, grp = collections.defaultdict(list), collections.defaultdict(list)
+    for i, r in enumerate(items):
+        t, oid = r["objects"][r["T"]], r["T"]
+        qcond = {r["queried"]: "c1", r["c4_query"]: "c4"}                      # attribute -> condition asking it
+        for attr in ("color", "material"):
+            v = _value(t, attr)
+            if attr not in V or v not in V[attr] or attr not in qcond:
+                continue
+            asked, unasked = qcond[attr], ("c4" if qcond[attr] == "c1" else "c1")
+            d = ((om[asked][i, oid] - om[unasked][i, oid]) * V[attr][v]).sum(-1)
+            ser[f"{attr}_asked_minus_unasked"].append(d)
+            grp[f"{attr}_asked_minus_unasked"].append(r["image_id"])
+    out = {"n_items": len(items), "c1_regression_max_abs": reg,
+           "pairs": collections.Counter(f"{r['queried']}->{r['c4_query']}" for r in items)}
+    for key in ser:
+        a = np.stack(ser[key])
+        out[key] = {"n": int(len(a)), "series": [_group_boot(a[:, l], grp[key]) for l in range(NUM_LAYERS)]}
+    return out
+
+
+def plot_gqa_attr(res, label, out_path):
+    _t10 = plt.get_cmap("tab10").colors
+    fig, axes = plt.subplots(1, 3, figsize=(14, 3.8))
+    xs = np.arange(NUM_LAYERS)
+
+    def band(ax, key, col, name, src=None, ls="-"):
+        src = res["projection"] if src is None else src
+        if key not in src:
+            return
+        q = src[key]["series"]
+        m, lo, hi = (np.array([v[k] for v in q]) for k in ("mean", "lo", "hi"))
+        ax.plot(xs, m, ls, color=col, marker="o", markersize=3, label=f"{name} (n={src[key]['n']})")
+        ax.fill_between(xs, lo, hi, color=col, alpha=0.15, lw=0)
+
+    band(axes[0], "ref_queried", _t10[3], "referent, queried attribute")
+    band(axes[0], "nonref_queried", _t10[0], "non-referent, queried attribute")
+    band(axes[0], "ref_unqueried", _t10[3], "referent, unqueried attribute", ls="--")
+    band(axes[0], "nonref_unqueried", _t10[0], "non-referent, unqueried attribute", ls="--")
+    axes[0].set_title("own-value projection change vs no question (all records)", fontsize=10)
+    band(axes[1], "ref_queried_color", _t10[3], "referent, colour asked")
+    band(axes[1], "nonref_queried_color", _t10[0], "non-referent, colour asked")
+    band(axes[1], "ref_queried_material", _t10[1], "referent, material asked")
+    band(axes[1], "nonref_queried_material", _t10[9], "non-referent, material asked")
+    band(axes[1], "qvu_ref", "k", "referent, queried − unqueried", ls=":")
+    band(axes[1], "qvu_nonref", "0.5", "non-referent, queried − unqueried", ls=":")
+    axes[1].set_title("by queried attribute; queried − unqueried of the same object", fontsize=10)
+    so = res.get("same_object", {})
+    band(axes[2], "color_asked_minus_unasked", _t10[3], "colour direction: colour asked − material asked", src=so)
+    band(axes[2], "material_asked_minus_unasked", _t10[1], "material direction: material asked − colour asked", src=so)
+    axes[2].set_title(f"same object, other question ({so.get('n_items', 0)} items)", fontsize=10)
+    for ax in axes:
+        ax.axhline(0, color="k", lw=0.6)
+        _layers_axis(ax, res["gca_layers"])
+        ax.set_ylabel("Δ cosine with own-value direction", fontsize=9)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — GQA attribute directions from {res['pool_n']} scene-graph objects "
+                 f"({', '.join(f'{a} {len(c)} values' for a, c in res['pool_counts'].items())}); "
+                 f"projections on {res['n_records']} query-attr questions", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def run_gqa_attr(args, out_dir, label):
+    """X25 R2 on a finished --gqa-run direct directory (--cache-dir)."""
+    from PIL import Image
+    from analysis.gqa_roles import load_scene_graphs
+    cache_dir, records, owners, images, groups = _gqa_causal_inputs(args)
+    assert records[0]["mode"] == "direct", "the attribute decomposition is defined on the query-attr (direct) records"
+    pool_dir = out_dir / "pool"
+    pool_dir.mkdir(exist_ok=True)
+    state = {}
+    if not (pool_dir / "feats_c0.npz").exists():
+        sg = load_scene_graphs(args.gqa_root)
+        exclude = {str(r["image_id"]) for r in records}
+        for extra in args.gqa_exclude_dirs.split(","):
+            if extra and (Path(extra) / "relational_records.json").exists():
+                with open(Path(extra) / "relational_records.json") as f:
+                    exclude |= {str(r["image_id"]) for r in json.load(f)}
+        p_records, p_owners, count = gqa_attr_pool(sg, exclude, args.grid, seed=args.seed)
+        print(f"pool: {len(p_records)} objects / {len({r['image_id'] for r in p_records})} images "
+              f"(excluded {len(exclude)} images); colour values ≥ {GQA_ATTR_MIN['color']}: "
+              f"{sum(c >= GQA_ATTR_MIN['color'] for c in count['color'].values())}, material values ≥ "
+              f"{GQA_ATTR_MIN['material']}: {sum(c >= GQA_ATTR_MIN['material'] for c in count['material'].values())}")
+        with open(pool_dir / "relational_records.json", "w") as f:
+            json.dump(p_records, f, indent=1)
+        np.save(pool_dir / "owner.npy", np.stack(p_owners))
+        with open(pool_dir / "pool_counts.json", "w") as f:
+            json.dump({a: dict(c) for a, c in count.items()}, f, indent=1)
+        p_images = [Image.open(Path(args.gqa_root) / "images" / r["filename"]).convert("RGB") for r in p_records]
+        extract_condition_sparse(pool_dir, "c0", p_images, p_owners, p_records, args, state, n_obj=1, save_tokens=False)
+    with open(pool_dir / "relational_records.json") as f:
+        p_records = json.load(f)
+    V, counts = gqa_attr_directions(load_sparse(pool_dir, "c0"), p_records)
+    np.savez(out_dir / "attr_directions.npz", **{f"{sp}_{a}_{v}": d for sp in V for a in V[sp] for v, d in V[sp][a].items()})
+    print("directions: " + "; ".join(f"{a}: {sorted(c)}" for a, c in counts.items()))
+    caches = {c: load_sparse(cache_dir, c) for c in ("c0", "c1", "c2")}
+    res = {"n_records": len(records), "n_images": int(len(np.unique(groups))), "pool_n": len(p_records),
+           "pool_counts": counts, "gca_layers": [int(l) for l in caches["c0"]["gca_layers"]],
+           "projection": gqa_attr_projection(caches, records, groups, V["normed"])}
+    for key in ("ref_queried", "nonref_queried", "ref_unqueried", "nonref_unqueried", "qvu_ref", "qvu_nonref"):
+        if key in res["projection"]:
+            print(f"  {key:18s} n={res['projection'][key]['n']:3d} "
+                  + " ".join(f"{q['mean']:+.3f}" for q in res["projection"][key]["series"]))
+    with open(Path(args.gqa_meta_dir) / "question_pool_val_all_refword2.json") as f:
+        items = gqa_same_object_items(records, json.load(f))
+    print(f"same-object items: {len(items)} " + str(collections.Counter(f"{r['queried']}->{r['c4_query']}" for r in items)))
+    if items:
+        so_dir = out_dir / "same_object"
+        so_dir.mkdir(exist_ok=True)
+        with open(so_dir / "relational_records.json", "w") as f:
+            json.dump(items, f, indent=1)
+        so_owners = [owners[r["src_index"]] for r in items]
+        np.save(so_dir / "owner.npy", np.stack(so_owners))
+        for cond in ("c1", "c4"):
+            extract_condition_sparse(so_dir, cond, [images[r["src_index"]] for r in items], so_owners, items,
+                                     args, state, n_obj=2, save_tokens=False)
+        res["same_object"] = gqa_same_object_stats(so_dir, items, V["normed"], caches["c1"])
+        for key in ("color_asked_minus_unasked", "material_asked_minus_unasked"):
+            if key in res["same_object"]:
+                print(f"  {key:28s} n={res['same_object'][key]['n']:3d} "
+                      + " ".join(f"{q['mean']:+.3f}" for q in res["same_object"][key]["series"]))
+    with open(out_dir / "attr_decomposition.json", "w") as f:
+        json.dump(res, f, indent=1)
+    plot_gqa_attr(res, label, out_dir / "attr_decomposition.png")
+    print(f"Saved: {out_dir / 'attr_decomposition.json'}")
+
+
 def run_gqa_causal(args, out_dir, label):
     """X23 steps 2–3 on a finished --gqa-run directory (--cache-dir): token transplant
     (k_target), and for spatial the SA-attention capture + H3 head ablation with the
@@ -5653,6 +6113,13 @@ def main():
     ap.add_argument("--gqa-inject", action="store_true",
                     help="X24 B2: marker injection on a finished --gqa-run direct directory (--cache-dir)")
     ap.add_argument("--inject-layers", default="7,9", help="--gqa-inject: blocks at which the marker is added")
+    ap.add_argument("--gqa-attr", action="store_true",
+                    help="X25 R2: attribute pool + decomposition on a finished --gqa-run direct directory (--cache-dir)")
+    ap.add_argument("--gqa-exclude-dirs", default="outputs/analysis/patch_language_condition/x23_gqa_spatial_v2",
+                    help="--gqa-attr: comma-separated record dirs whose images are kept out of the pool")
+    ap.add_argument("--restore", action="store_true",
+                    help="X25 R1: attribute restoration on the non-referent (n1/n2 caches must exist)")
+    ap.add_argument("--restore-layers", default="7,8,9,10,11", help="--restore: single blocks (plus joint 9,10,11)")
     ap.add_argument("--gqa-causal", action="store_true",
                     help="X23 steps 2–3 on a finished --gqa-run directory given as --cache-dir: token transplant "
                          "(k_target) and, for spatial, SA capture + H3 head ablation with the cumulative curve (new --out-dir)")
@@ -5690,6 +6157,10 @@ def main():
     if args.gqa_inject:
         assert args.cache_dir, "--gqa-inject needs --cache-dir (a finished --gqa-run direct directory)"
         run_gqa_inject(args, out_dir, label)
+        return
+    if args.gqa_attr:
+        assert args.cache_dir, "--gqa-attr needs --cache-dir (a finished --gqa-run direct directory)"
+        run_gqa_attr(args, out_dir, label)
         return
     if args.gqa_causal:
         assert args.cache_dir, "--gqa-causal needs --cache-dir (a finished --gqa-run directory)"
@@ -5738,6 +6209,11 @@ def main():
         if args.intervene_spec:
             for spec in args.intervene_spec:
                 run_intervened(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"], spec)
+            return
+        if args.restore:
+            ensure_model(state, args)
+            res = run_restoration(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"])
+            plot_restoration(res, label, out_dir / "n2_restore" / "restoration.png")
             return
         if args.head_combos:
             ensure_model(state, args)

@@ -1282,3 +1282,79 @@ target-only mask and @b10 projection remove the signature without harming accura
 
 **Not run / pending user.** B3 (GQA attribute pool), A4, C1, the attribute-restoration
 intervention (Codex contribution 2), Sup-ViT as a fourth backbone.
+
+
+### X25. Attribute restoration on the non-referent (CLEVR) and GQA attribute decomposition — pre-registered
+
+Registered 2026-09-13 before any GPU run (user go: "編輯修正和 intervention 還有 GQA").
+Follows X24: under a question the non-referent's alignment with its own queried-attribute
+direction falls below the no-question baseline late in the trunk (DINOv2 blocks 9–11, SigLIP
+7–11, MAE none). The paper outline (`PAPER_FRAMING_AND_ABSTRACT_CODEX_2026-09-13.md`,
+contribution 2) asks for a functional test with a **predicted alternative answer**: put the
+reduced component back and see whether the answer moves to the non-referent's value. R2 is
+X24 B3 (GQA attribute pool), unchanged in design.
+
+**R1 Restoration (CLEVR 2-object set, 324 images, question c1 about the target; the
+distractor is the non-referent).** Code: `run_restoration` in
+`scripts/analysis/patch_language_condition.py`, flag `--restore`, output
+`<out-dir>/n2_restore/restoration.{json,png}` per backbone (DINOv2 root, `siglip/`, `mae/`).
+
+- Direction: raw-space own-value direction of the distractor's colour,
+  `V_raw[colour][Ad] = unit(mean raw_obj_mean of the 1-object targets with colour Ad − grand
+  mean)` per block, from the independent 1-object set (`attribute_directions(space="raw")`).
+- Dose: at block l the vector `alpha · |s_l| · V_raw[Ad]` is added (`ResidualAdder`) to every
+  patch owned by the distractor, where `s_l` = mean over images of the raw own-value
+  projection change of the target under c2 minus c0 (the non-referent's measured removal in
+  raw units, negative where removal happens). alpha ∈ {1, 2, 4}; alpha = 1 restores the mean
+  removal exactly. `s_l` is reported per backbone.
+- Blocks: single-block 7, 8, 9, 10, 11 and joint {9, 10, 11} (each block with its own s_l).
+- Variants: `own` (above); `other_value` (another colour B ∉ {A, Ad}, round-robin, same dose,
+  distractor patches); `random` (same-norm random unit direction, 5 seeds, distractor
+  patches); `own_on_referent` (V_raw[Ad] on the target's patches — dose-efficacy reference:
+  the referent's colour is changed); `own_on_bg` (V_raw[Ad] on the background patches);
+  `own_c2` (V_raw[Ad] on the distractor under c2, where it is the referent — sanity).
+- Items: both colours in the vocabulary and different, clean c1 answer correct.
+- Readouts on the clean items: P(answer = Ad), P(answer = A), accuracy, flip rate to Ad
+  (argmax = Ad), and for `other_value` P(B) / flip rate to B; per-image bootstrap CIs;
+  paired `own − random` per image.
+- Predictions. **H-rest pass**: at alpha ≤ 2 on the blocks where removal was measured,
+  `own` raises P(Ad) with CI > 0 and paired `own − random` CI > 0, and the flip rate to Ad
+  is > 0 with CI. **Falsifier**: `own` ≈ `random` at every alpha ≤ 2 while `own_on_referent`
+  flips at the same dose → the non-referent's late queried-attribute content does not govern
+  the answer (removal is a signature, not a behavioural cause). Secondary reading:
+  `other_value` moving P(B) as much as `own` moves P(Ad) → the decoder reads whatever
+  colour content the non-referent's patches carry (generic), otherwise the effect is
+  specific to the removed component. `own_on_bg` ≈ `own` would repeat the X24 B2 caveat
+  (direction effective, not object-specific). MAE: no removal measured, `s_l` near zero →
+  descriptive only.
+- Cost: ≈ 324 × 10 direction sets × 6 block specs × 3 alphas forwards ≈ 5–8 min GPU per
+  backbone. Nothing is re-extracted.
+
+**R2 GQA attribute decomposition (X24 B3; GQA-trained SigLIP, `gqa_siglip_decoder1l_scratch_s42`).**
+Code: `run_gqa_attr`, flag `--gqa-attr` with `--cache-dir` = `x23_gqa_direct`; output
+`x24_gqa_attr/`.
+
+- Pool: GQA val scene-graph objects with a colour attribute (`COLOR_WORDS`) or a material
+  attribute (`MATERIAL_WORDS`), box passing the relaxed geometry (cover 0.3, ≥ 4 patches at
+  grid 16, ≤ 50 % of the image), image not among the 148 direct or 27 spatial images, at most
+  2 objects per image, per-value cap 60 (seeded). Directions kept for colour values with ≥ 30
+  objects and material values with ≥ 15. Extraction: c0 only (no question), one object per
+  record, aggregates only. Directions in `trunk.norm` space and raw space:
+  `V[attr][value] = unit(mean − pool grand mean)`.
+- Projection on the 184 direct records (c0 / c1 / c2 caches of `x23_gqa_direct`, unit-
+  normalised object means): own-value projection of each object on the record's queried
+  attribute. Referent series = T under c1 − c0 and D under c2 − c0; non-referent series = T
+  under c2 − c0 and D under c1 − c0; unqueried series where the object has a second attribute
+  in V (colour-queried records with a material value, and vice versa); qvu = queried change −
+  unqueried change of the same object. Image-bootstrap CIs (`_group_boot`).
+- Prediction (main): non-referent below zero with CI excluding 0 at blocks 9–11 (GQA onset is
+  b7); referent ≥ 0. Falsifier: non-referent CI includes 0 at every block 7–11 → "selection
+  reproduces on real images, removal does not" (reportable). Both are correlational.
+- Secondary (same object, different question): records whose T has another natural
+  `select|query` question on a different attribute (colour ↔ material) in the question pool;
+  extract T under both questions (c1 and c4); paired difference of the own-colour projection
+  (colour question − material question) and of the own-material projection (material − colour).
+  n ≈ 20–30; CI reported, no conclusion sentence.
+
+Registration rules as in X24: all cells reported; no design change after seeing results
+(changes → new directory).
