@@ -1406,3 +1406,26 @@ reported only, as registered; the b11 colour sign is opposite to "amplify the as
 **Not run / pending user.** A4 (fold-local PCA, registered statistics in GQA result files, spatial
 marker cross-fit), C1 (GQA dev-split retrain), Sup-ViT, reconciling R1 with the 2026-08 colour
 swap, MAE CPU checks.
+
+
+**Clarification 2026-09-14 (scope of the R1 null; the paragraph above is kept as written).**
+"Zero" means P(non-referent's colour) stayed at the 1e−5 level (DINOv2 b11 α4 own: 8.4e−6 →
+1.5e−5; SigLIP 8.9e−6 → 9.3e−6), P(referent's colour) ≥ 0.9996, 0 / 322 flips. The registered
+falsifier requires the efficacy control ("own_on_referent flips at the same dose"); only SigLIP
+meets it (b9–11 α2 flip 0.71), so the sentence "removal is a signature, not the behavioural
+cause" is licensed for SigLIP only. DINOv2: the add-only vector is ineffective on the referent
+too (b11 α4 flip 0; b8 α4 0.14) → no power. MAE: no removal to restore. What is refuted is the
+prediction for this direction, magnitude and location, not the grounding function.
+Comparison with the 2026-08 colour swap (`intervention_results.json`), from the JSONs: the
+old vector means[B] − means[A] has cos 0.75 with +V[B] and 0.75 with −V[A] (it removes A as
+much as it adds B); in DINOv2 at b11 α2 it flips 54 % on the distractor but also 52 % on a
+background subset of the target's size and 99 % on all background (random 0 %), i.e. an
+any-token effect of the decoder's background readout, not evidence about the non-referent;
+SigLIP: 0 flips in both tests. No contradiction; no extra GPU cell is needed. Direction
+usability (1-object set, 2-fold held-out colour classification by argmax projection of
+unit-normalised object means, chance 0.125), b7–11: DINOv2 0.51 / 0.51 / 0.43 / 0.40 / 0.41;
+SigLIP 0.96 / 0.94 / 0.94 / 0.93 / 0.94; MAE 0.98 / 0.96 / 0.96 / 0.95 / 0.96 → MAE's
+"no removal" is not a measurement floor; DINOv2's late colour directions are weak, a limit to
+carry with its b9–11 removal. GQA checkpoint: best.pt = last.pt = epoch 17 (val 0.6358), so
+val-based selection changed nothing; a dev-split retrain (C1) cannot undo the exploration of
+val and is not recommended.
