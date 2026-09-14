@@ -524,15 +524,21 @@ L11 probe accuracy (target attributes):
 
 | condition | n1 color | n1 shape | n2 color | n2 shape |
 |---|---|---|---|---|
-| no-CA | 0.992 | 0.998 | 0.356 | 0.667 |
-| CA "What color is the object?" | 0.996 | 0.990 | **0.458** | 0.619 |
-| CA "What color is the cube?" | 0.998 | 0.988 | 0.331 | 0.548 |
-| CA "What shape is the object?" | 0.994 | 0.994 | 0.317 | 0.613 |
-| CA "What shape is the large object?" | 0.974 | 0.990 | 0.294 | 0.575 |
+| no-CA | 0.996 | 0.998 | 0.365 | 0.656 |
+| CA "What color is the object?" | 0.994 | 0.990 | **0.496** | 0.627 |
+| CA "What color is the cube?" | 0.998 | 0.988 | 0.323 | 0.571 |
+| CA "What shape is the object?" | 0.990 | 0.994 | 0.310 | 0.631 |
+| CA "What shape is the large object?" | 0.974 | 0.988 | 0.285 | 0.579 |
+
+Table source (2026-09-14): `outputs/analysis/linear_probe_v2/object_count/n{1,2}/linear_probe_results.json`,
+`linear_probe_single.py --features-dir` on the cached features above, PCA(50) fitted inside each
+of the 5 folds (registry X24 A4). The 2026-07-08 table (PCA fitted on all data before the folds,
+`outputs/analysis/tsne/object_count/n{1,2}/linear_probe_results.json`) differed by at most 0.037
+in any cell (n2 "What color is the object?" colour 0.458 → 0.496, full precision 0.4583 → 0.4958).
 
 Single object: everything scene-level decodable (≈1.0) under every condition.
-One distractor: scene-level target decodability collapses (color 0.36); only
-the semantically aligned color prompt gives partial recovery (0.36→0.46);
+One distractor: scene-level target decodability collapses (color 0.37); only
+the semantically aligned color prompt gives partial recovery (0.37→0.50);
 shape prompts give none, and "the cube"/"the large object" referents mismatch
 the probe's target labels by construction. Consistent with §8/§11: the
 substrate keeps per-object information, but scene-level pooled features lose

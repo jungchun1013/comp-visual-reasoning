@@ -1490,3 +1490,36 @@ the 60 cells per set: 0.037 (n2), 0.014 (n1). The reported comparison (aligned c
 raises two-object colour readout above the no-question value; shape questions do not) is
 unchanged; the gap widens from +0.10 to +0.13. The X18 raw-backbone pooled probe
 (`raw_backbone_probe.py`, 0.517 / 0.812 / 0.850 / 0.912) uses no PCA and is unaffected.
+
+#### Corrections after the Codex response of 2026-09-14 (framing document, "Codex response to Claude's six pending items")
+
+**H3 reporting status.** The sentence in "A4-2 registered endpoints" above, "H3 (selected −
+random drop 0.00 [0.00, 0.00] on 20 clean-correct spatial items)", misstates the outcome. The
+X23 record (step 1–4 results) is correct: the registered selection rule selected **0 heads**
+(`x23_gqa_spatial_v2_causal/head_ablation.json`, `selection.n_meeting_rule = 0`; median |Δ| of
+the candidate statistics 0.0009 / 0.0011), so the registered test is **not estimable: no heads
+qualified**. The 0.00 [0.00, 0.00] is the accuracy drop of an empty head set and carries no
+information. The cumulative ablation (`cum_1 … cum_16`: 0.00 / 0.05 / 0.05 / 0.15 / 0.15 drop,
+CIs include 0) is a separate exploratory curve, not the registered test. The endpoint JSON is an
+output file and is left as written; this note is the correction.
+
+**Rounding of the two-object probe difference.** The reported maximum cell change 0.037 is the
+full-precision value 0.0375 (0.45833 → 0.49583, n = 480, one item = 1/480 = 0.0021); the rounded
+endpoints 0.458 → 0.496 differ by 0.038. Both are the same 18-item change.
+
+**GQA analyses: cohort and correctness filter (one row per analysis).**
+
+| analysis | cohort | correctness filter | c1 accuracy on the cohort | source |
+|---|---|---|---|---|
+| H1 direct (referent own-V projection) | 184 questions / 148 images, step 0c S_eligible | none (observational) | 0.679 (c2 0.663) | `x23_gqa_direct/x23_results.json` |
+| H2 spatial (anchor ridge probe ΔR²) | 35 q / 27 images, S_eligible | none | — | `x23_gqa_spatial_h2/x23_results.json` |
+| H4 spatial marker, and its cross-fit | 35 q / 27 images; marker from the 184 direct pairs | none | — | same; `h4_marker_crossfit.json` |
+| H3 head ablation | 20 of the 35 spatial questions | clean-correct (S_correct) | 1.0 by construction | `x23_gqa_spatial_v2_causal/head_ablation.json` |
+| B2 marker injection | 125 items / 107 images from the 184 direct records | clean-correct, plus both values in the answer vocabulary and different | 1.0 by construction | `x23_gqa_direct_inject/marker_injection.json` |
+| R2 attribute projection (queried attribute) | 349 objects / 145 images from the 184 records (colour 136 images, material 11) | none (projection only) | — | `x24_gqa_attr/attr_decomposition.json` |
+| R2 same-object secondary test | 16 items | none | — | `x24_gqa_attr/same_object/` |
+
+So "GQA analysis uses only clean-correct items" holds for the two interventions (H3, B2) only;
+the observational analyses (H1, H2, H4, R2) run on the eligible population, whose c1 accuracy
+is 0.679 on the direct records. Registry line for X23 "Analysis populations: S_eligible for
+observational analyses, S_correct for interventions" already states this rule.

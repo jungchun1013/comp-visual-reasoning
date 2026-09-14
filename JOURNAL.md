@@ -586,6 +586,8 @@ b1/3/5/7/9/11:0.972 / 0.984 / 0.980 / 0.984 / 0.956 / 0.914(原 b9/11 0.964 / 0.
 
 **更正(同日稍晚,Codex 提問後追查)。** 「2 物件集這個腳本從沒跑過」是錯的:RESULTS §16 那張 probe 表(訓練後 DINOv2,`outputs/analysis/tsne/object_count/n{1,2}/`)就是 `linear_probe_single.py --features-dir` 從快取特徵算的,PCA 同樣在 fold 外擬合;昨天失敗是我把 `--data-dir` 指到資料集。用同一批快取特徵、fold 內 PCA 重算(CPU,`outputs/analysis/linear_probe_v2/object_count/`):2 物件集 b11 目標顏色,無問題 0.356 → 0.365、「What color is the object?」0.458 → 0.496、「What color is the cube?」0.331 → 0.323、形狀問句 0.317 / 0.294 → 0.310 / 0.285;目標形狀無問題 0.667 → 0.656。60 格最大差 0.037(1 物件集 0.014)。已報告的比較(對齊的顏色問句把 2 物件顏色讀出拉高於無問題值,形狀問句不會)不變,差距從 +0.10 變 +0.13。X18 的 raw-backbone pooled probe 沒有用 PCA,不受影響。
 
+**Codex 2026-09-14 正式回覆後的三項更正(registry「Corrections after the Codex response」)。**(1) H3:我的端點摘要句寫成「selected − random 0.00 [0.00, 0.00]」,實情是登記的選取準則選到 0 個 head,登記檢定「無法估計」,累積消融曲線是另一條探索性結果。(2) 0.037 是全精度 0.0375(0.45833 → 0.49583,480 題差 18 題),兩端各自四捨五入才變 0.038。(3) GQA 各分析的族群與答對過濾列成表:只有 H3、B2 兩個介入用 clean-correct;H1、H2、H4、R2 都是 S_eligible,直接題族群 c1 答對率 0.679。RESULTS §16 的 probe 表已換成 fold 內 PCA 的數字並附來源路徑;網站原始檔沒有那張表。
+
 **Sup-ViT(第四個 backbone,`clevr_sup_decoder1l_scratch_s42`,grid 24,`.../sup/`)。** 要區分的假說:MAE 沒有移除是不是預訓練目標
 (重建 vs 判別式)的事。預測:監督式 backbone 應該有移除與後段 referent 增強。
 
