@@ -4,25 +4,24 @@ Instead of binary RSA on full DB (rare conditions diluted by "both false" pairs)
 each level is conditioned on the previous:
 
 Direct:
-  1. Binding | All                    — C1 on full DB
-  2. Retrieval | Binding              — C2 on subset where C1=True
-  3. Answer classification | Binding  — C4 on subset where C1=True
+  1. Description satisfaction | All                    — C1 on full DB
+  2. Object-profile match | Description satisfied              — C2 on subset where C1=True
+  3. Answer agreement | Description satisfied  — C4 on subset where C1=True
 
 Spatial (same_attr / spatial):
-  1. Anchor binding | All
-  2. Target binding | All
-  3. Anchor retrieval | Anc bind
-  4. Target retrieval | Tgt bind
-  5. Answer classification | Tgt bind
+  1. Anchor description satisfaction | All
+  2. Answer-object description satisfaction | All
+  3. Anchor profile match | Anchor description satisfied
+  4. Answer-object profile match | Answer-object description satisfied
+  5. Answer agreement | Answer-object description satisfied
 
-v2 naming (docs/legacy-reference.md §1.1): the 3-stage "binding → object
-grounding → answer matching" pipeline is now 2-stage "Binding → Retrieval";
-"Grounding" names the whole language-conditioning mechanism, never a chain
-stage. The old "object grounding" condition (C2: full 4-attr object identity
-match) IS the Retrieval stage (user decision 2026-07-07: no object/answer
-split within Retrieval). The answer-level condition (C4) is the pre-existing
-classification readout, labeled "Answer classification"; it is not a
-grounding stage. Condition indices / JSON keys are unchanged.
+Terminology corrected by Codex, 2026-09-14. These are semantic comparisons,
+not assumed neural processing stages. Direct condition 2 measures object-profile
+match; condition 4 measures answer agreement. Grounding is studied through
+referent identification and attribute-value retrieval, neither defined by one RDM.
+Historical result keys and condition indices remain unchanged. Plot labels use
+semantic condition IDs; original labels remain available in the source JSON.
+See docs/terminology_and_reporting.md.
 
 Usage:
     CUDA_VISIBLE_DEVICES=0 PYTHONPATH=src python scripts/analysis/conditional_rsa.py \
@@ -68,18 +67,18 @@ from analysis.run_log import tee_stdout
 # (name, condition_index, subset_condition_index or None)
 
 CHAIN_DIRECT = [
-    ("Binding | All", 1, None),
-    ("Retrieval | Binding", 2, 1),
-    ("Answer classification | Binding", 4, 1),
+    ("Description satisfaction | All", 1, None),
+    ("Object-profile match | Description satisfied", 2, 1),
+    ("Answer agreement | Description satisfied", 4, 1),
 ]
 CHAIN_DIRECT_COLORS = [COND_COLORS[1], COND_COLORS[2], COND_COLORS[4]]
 
 CHAIN_SPATIAL = [
-    ("Anchor binding | All", 0, None),
-    ("Target binding | All", 1, None),
-    ("Anchor retrieval | Anc bind", 2, 0),
-    ("Target retrieval | Tgt bind", 3, 1),
-    ("Answer classification | Tgt bind", 6, 1),
+    ("Anchor description satisfaction | All", 0, None),
+    ("Answer-object description satisfaction | All", 1, None),
+    ("Anchor profile match | Anchor description satisfied", 2, 0),
+    ("Answer-object profile match | Answer-object description satisfied", 3, 1),
+    ("Answer agreement | Answer-object description satisfied", 6, 1),
 ]
 CHAIN_SPATIAL_COLORS = [
     SPATIAL_COND_COLORS[0], SPATIAL_COND_COLORS[1],

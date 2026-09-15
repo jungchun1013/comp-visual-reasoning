@@ -170,14 +170,12 @@ COND_BINDING = 1
 COND_GROUNDING = 2
 COND_ANSWER = 4
 
-# v2 naming (docs/legacy-reference.md §1.1): the 3-stage "binding -> object
-# grounding -> answer matching" pipeline is now 2-stage "Binding -> Retrieval";
-# "Grounding" names the whole language-conditioning mechanism, never a stage.
-# manip_type values ("grounding"/"answer"/"random") and JSON keys are
-# unchanged for schema compat -- this only maps them to figure-visible text.
+# Semantic figure labels corrected by Codex, 2026-09-14. Internal manipulation
+# identifiers and JSON keys are retained for compatibility; these labels name
+# comparisons, not identified neural stages. See docs/terminology_and_reporting.md.
 MANIP_DISPLAY_NAME = {
-    "grounding": "Retrieval",
-    "answer": "Answer classification",
+    "grounding": "Object-profile match",
+    "answer": "Answer agreement",
     "random": "Random",
 }
 
@@ -411,7 +409,7 @@ def plot_results(results, output_dir):
 
         ax.set_xlabel("Manipulation Layer")
         ax.set_ylabel("Spearman ρ")
-        label = "Retrieval|Binding" if "grounding" in metric else "Answer classification|Binding"
+        label = "Object-profile match | Description satisfied" if "grounding" in metric else "Answer agreement | Description satisfied"
         ax.set_title(f"{label} RSA")
         ax.set_xticks(x)
         ax.set_xticklabels([str(l) for l in layers])
@@ -447,8 +445,8 @@ def plot_retrieval(results, output_dir):
     ax.bar(x + width / 2, after_vals, width, label="After", color="coral", alpha=0.8)
 
     ax.set_xlabel("Manipulation Layer")
-    ax.set_ylabel("Retrieval Accuracy")
-    ax.set_title(f"1-NN Retrieval Accuracy — "
+    ax.set_ylabel("Nearest-scene answer agreement")
+    ax.set_title(f"1-NN answer agreement — "
                  f"{MANIP_DISPLAY_NAME.get(manip_type, manip_type)} manipulation")
     ax.set_xticks(x)
     ax.set_xticklabels([str(l) for l in layers])
@@ -630,13 +628,13 @@ def plot_manipulation_tsne(steervit, retriever, dataset, device, query, scenes,
                markersize=7, label="None"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(FILL_COLORS[0]),
-               markersize=7, label="Feature binding"),
+               markersize=7, label="Description satisfaction"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(FILL_COLORS[1]),
-               markersize=7, label="Retrieval"),
+               markersize=7, label="Object-profile match"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=(0.75, 0.75, 0.75),
                markeredgecolor=tuple(ANSWER_MATCH_COLOR),
-               markeredgewidth=1.5, markersize=7, label="Answer classification"),
+               markeredgewidth=1.5, markersize=7, label="Answer agreement"),
     ]
 
     q_short = question[:60] + "..." if len(question) > 60 else question
@@ -773,7 +771,7 @@ def run_random_control(model, steervit, retriever, dataset, scenes,
 
     ax.errorbar(layers_x, r_means, yerr=r_stds, fmt="o-", color="gray",
                 label=f"Random (N={n_random})", capsize=4, markersize=6)
-    ax.plot(layers_x, g_accs, "s-", color="red", label="Retrieval", markersize=8)
+    ax.plot(layers_x, g_accs, "s-", color="red", label="Object-profile match", markersize=8)
     ax.axhline(y=1.0, color="black", linestyle="--", alpha=0.3, label="Clean")
     ax.set_xticks(layers_x)
     ax.set_xticklabels([str(l) for l in test_layers])

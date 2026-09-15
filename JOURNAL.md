@@ -1,5 +1,20 @@
 # JOURNAL
 
+## Codex editorial handoff — 2026-09-14
+
+Required reading: [terminology and reporting contract](docs/terminology_and_reporting.md).
+RSA labels now describe semantic comparisons in both checkouts; condition IDs and
+numerical outputs are unchanged. RESULTS corrects the 0.57 answer-agreement/profile
+confusion and withdraws the unverified universal stage-order claim. Historical
+entries below are retained, not re-endorsed. Current normalized alignment and
+GQA answer-choice/probability endpoints must be reported separately. See the
+vault-root `RETRIEVAL_VERSION_AUDIT_AND_DISCUSSION_CODEX_2026-09-14.md` for debug tasks.
+Website sources live only in the main checkout; their current summary replaces
+unsupported headline claims, while older text is explicitly archived. Public-repo
+preparation is recorded in the reporting contract; no release has been performed.
+
+**Signed: Codex.**
+
 ## TODO
 > [!NOTE] Persistent until done or removed. Every item requires a bracketed tag.
 > [!NOTE] Tags: `[model]`, `[data]`, `[metrics]`, `[infra]`, `[plot]`, `[main flow]`, `[paper]`, `[ablation]`, `[debug]`

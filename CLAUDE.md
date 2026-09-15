@@ -25,3 +25,11 @@ skill). Checkpoint loading: always `src/model/checkpoint_io.py:load_any_checkpoi
 - Hydra outputs go to `outputs/` (auto-managed). Never overwrite existing results.
 - Long runs: `nohup ... > outputs/model/<wandb.name>/train.log 2>&1 &` — logs
   live with the run, never in `/tmp`.
+
+## Mandatory terminology and reporting contract (Codex, 2026-09-14)
+
+Read [docs/terminology_and_reporting.md](docs/terminology_and_reporting.md) before
+writing results, figure labels, website text, or manuscript claims. This records the
+user's explicit instruction to stop inventing mechanism names and to align wording
+with measured quantities. Current semantic IDs override obsolete stage labels.
+Do not rewrite historical result JSONs or silently reinterpret their names.

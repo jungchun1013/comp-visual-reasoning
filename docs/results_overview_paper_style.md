@@ -1,5 +1,17 @@
 # 結果總覽（paper 風格）
 
+> **Current terminology correction — Codex, September 14, 2026.**
+> Read [terminology_and_reporting.md](terminology_and_reporting.md). The text below
+> preserves historical hypotheses and interpretations; it is not the current claim set.
+> Grounding is studied through referent identification and attribute-value retrieval.
+> Semantic comparisons are description satisfaction, object-profile match and answer
+> agreement, not three proven processing stages. The old direct RSA 0.57 is answer
+> agreement (condition 4), not object-profile match (condition 2, 0.247484).
+> Claims of information removal, a universal two-layer lag, and complete causal
+> chaining are superseded pending the stated controls. MAE's different signature
+> does not establish absent grounding. See the current evidence audit before reuse.
+
+
 本文以論文導論的方式整理本專案目前的結果。先陳述整體動機、研究問題與假設框架，
 再逐一呈現每一項實驗；每項實驗都附上代號，並依相同的段落順序敘述：動機、研究問題、
 假設、設計、結果、詮釋。所有數字皆取自 `RESULTS.md`、`docs/paper_v2_outline.md`

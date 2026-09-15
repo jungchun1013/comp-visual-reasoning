@@ -1,5 +1,7 @@
 # RESULTS
 
+> **Reporting update (Codex, 2026-09-14):** [Terminology and reporting contract](docs/terminology_and_reporting.md) governs current interpretation. Dated sections retain historical results; old mechanism names are not evidence of a mechanism.
+
 Curated findings with artifact pointers. Machine-generated tables live in
 `docs/results_tables.md` (via `scripts/analysis/aggregate_results.py`, W2); paper-number
 provenance lives in `docs/paper_artifacts.md`. Never hand-edit numbers here without an
@@ -300,34 +302,32 @@ Artifacts: `outputs/analysis/linear_probe/clevr_dinov2_decoder1l_scratch/` and
 `outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch/<cat>/` (GCA layers
 1,3,5,7,9,11; 12 ViT layers + decoder probe).
 
-Layer geometry (per-layer f1 / RSA mean, attr_query_direct):
+### Current interpretation of the geometry (Codex correction, 2026-09-14)
 
-| signal | half-rise | peak |
-|---|---|---|
-| probe answer_decode | L1 (0.66 right after first GCA) → 0.92 plateau L8–11 | L11 0.92 |
-| RSA Binding \| All | L7 | L11 0.76 |
-| probe answer_match | L5 | L11 0.77 |
-| RSA Retrieval \| Binding | L9 | L11 0.57 |
+For `attr_query_direct`, block 11 in the stored conditional RSA JSON:
 
-**A2↔A4 lock: CONFIRMED.** The correlational stage geometry on the SAME model the
-patching ran on reproduces the causal localization: Binding rises through the exact
-mid-layer window where patching's binding heads live (CA L3–L9: L5H0 color, L7H9
-material, L7H11 size, L7H3 shape), and Retrieval separates only late (L9–L11),
-where patching puts the retrieval end (SA11). Ordering is strict at every category:
-Binding half-rise precedes Retrieval half-rise by 2 layers.
+| Semantic comparison | condition / subset index | Mean Spearman correlation |
+|---|---|---:|
+| Description satisfaction | 1 / all | 0.764286 |
+| Object-profile match within description-positive scenes | 2 / 1 | 0.247484 |
+| Answer agreement within description-positive scenes | 4 / 1 | 0.572687 |
 
-Relational categories add a sequencing detail: in `same`/`spatial`, **anchor**
-binding peaks at L8 then collapses by L12 (0.42→0.11) while **target** binding keeps
-climbing to L11 — a visible anchor→target handoff, i.e., relational chaining is
-implemented as sequential re-binding, consistent with E5's finding that relational
-localization is cheap (each step is one more binding pass) while enumeration is not.
+Source: `outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch/attr_query_direct/rsa_conditional_stats.json`.
+Historical `Retrieval` at 0.57 names answer agreement, whereas later plotting code
+used Retrieval for condition 2. These are different measurements. Plot labels now
+use semantic names; no numerical results were recomputed. Existing figures may
+retain historical labels and require a new-path replot before publication.
+The inspected plotting code uses mean ± SEM, not a 95% confidence interval. Counts
+vary by category and valid semantic comparison. A half-rise is a descriptive
+landmark, not an independently established causal stage boundary.
 
-Naming (user decision 2026-07-07, supersedes 07-06 interim labels): the middle
-chain level IS the **Retrieval** stage — no object/answer split. The answer level
-is the pre-existing classification readout, labeled **Answer classification**,
-and is not a grounding stage. Labels updated in conditional_rsa / tsne_viz /
-grounding_manipulation; the tables above use the stored JSON condition names
-(existing outputs never renamed).
+The same-as anchor description score at block 11 is 0.110831; the spatial score is
+0.037769. Do not merge these into one trajectory. Geometry and patching can be
+compared on matched checkpoints, but aligned layer profiles do not establish a
+serial algorithm, identical timing across tasks, or mediation. The previous
+“lock confirmed” and “strict two-layer order in every category” interpretations
+are withdrawn pending a per-curve audit and appropriate controls.
+
 
 ## 10. Cross-backbone circuit replication (E3, SigLIP patching) — landed 11:30 07-06
 

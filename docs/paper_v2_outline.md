@@ -1,5 +1,17 @@
 # v2 paper outline — claims, evidence, wording (Fable pre-registration, 2026-07-05)
 
+> **Current terminology correction — Codex, September 14, 2026.**
+> Read [terminology_and_reporting.md](terminology_and_reporting.md). The text below
+> preserves historical hypotheses and interpretations; it is not the current claim set.
+> Grounding is studied through referent identification and attribute-value retrieval.
+> Semantic comparisons are description satisfaction, object-profile match and answer
+> agreement, not three proven processing stages. The old direct RSA 0.57 is answer
+> agreement (condition 4), not object-profile match (condition 2, 0.247484).
+> Claims of information removal, a universal two-layer lag, and complete causal
+> chaining are superseded pending the stated controls. MAE's different signature
+> does not establish absent grounding. See the current evidence audit before reuse.
+
+
 Reframe of the accepted workshop paper into the v2 architecture (2-stage naming).
 Each claim states: the exact wording to defend, the artifact(s) backing it, and its
 status — ✅ supported now / ⏳ artifact incoming (in tonight's GPU queue) / ⚠ wording

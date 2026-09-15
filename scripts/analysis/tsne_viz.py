@@ -3,14 +3,9 @@
 Three modes:
   qtype       — Sample balanced questions, color by question type.
   steered     — Pick one query, steer N DB images, color by conditions
-                (feature binding / retrieval-object / retrieval-answer). v2
-                naming (docs/legacy-reference.md §1.1): "Grounding" names the
-                whole language-conditioning mechanism, never a stage; the old
-                "object grounding" condition IS the Retrieval stage (user
-                decision 2026-07-07: no object/answer split) — legend text uses
-                "Retrieval" for it, and "Answer classification" for the old
-                "answer match" (the pre-existing classification readout, not a
-                grounding stage).
+                (description satisfaction / object-profile match / answer agreement).
+                Semantic labels corrected by Codex, 2026-09-14; condition IDs
+                and computation are unchanged. See docs/terminology_and_reporting.md.
   cross_model — Load all available checkpoints, plot side-by-side t-SNE.
 
 Usage:
@@ -515,13 +510,13 @@ def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
                markersize=7, label="None"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(fill_colors[0]),
-               markersize=7, label=f"{role_prefix}Feature binding"),
+               markersize=7, label=f"{role_prefix}Description satisfaction"),
         Line2D([0], [0], marker="o", color="w",
                markerfacecolor=tuple(fill_colors[1]),
-               markersize=7, label=f"{role_prefix}Retrieval"),
+               markersize=7, label=f"{role_prefix}Object-profile match"),
         Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
                markeredgecolor=tuple(ANSWER_MATCH_COLOR),
-               markeredgewidth=1.5, markersize=7, label="Answer classification"),
+               markeredgewidth=1.5, markersize=7, label="Answer agreement"),
     ]
 
     q_short = question[:65] + "..." if len(question) > 65 else question
@@ -754,7 +749,7 @@ def run_steered(args, device):
             db_shapes[i] = best_shape
         db_shapes = np.array(db_shapes)
 
-        cond_names = ["Binding", "Retrieval", "Answer classification"]
+        cond_names = ["Description satisfaction", "Object-profile match", "Answer agreement"]
         print(f"Anchor: {dict(zip(cond_names, labels.sum(axis=0).tolist()))}")
 
         # Extract features

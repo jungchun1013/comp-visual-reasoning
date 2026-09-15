@@ -1,5 +1,17 @@
 # Legacy reference — everything you need WITHOUT opening SteerViT-legacy/
 
+> **Current terminology correction — Codex, September 14, 2026.**
+> Read [terminology_and_reporting.md](terminology_and_reporting.md). The text below
+> preserves historical hypotheses and interpretations; it is not the current claim set.
+> Grounding is studied through referent identification and attribute-value retrieval.
+> Semantic comparisons are description satisfaction, object-profile match and answer
+> agreement, not three proven processing stages. The old direct RSA 0.57 is answer
+> agreement (condition 4), not object-profile match (condition 2, 0.247484).
+> Claims of information removal, a universal two-layer lag, and complete causal
+> chaining are superseded pending the stated controls. MAE's different signature
+> does not establish absent grounding. See the current evidence audit before reuse.
+
+
 `SteerViT-legacy/` is a huge, read-only tree. This doc distills the four things main/
 still inherits from it: naming conventions, the headwise-patching methodology, the plot
 style, and the legacy checkpoint format. Open the legacy tree only for Blender tooling
