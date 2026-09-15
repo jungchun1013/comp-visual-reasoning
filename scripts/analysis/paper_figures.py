@@ -358,7 +358,7 @@ def fig_rsa_direct(out_dir):
         prov["panels"].append({"title": title, "condition_index": cond, "subset_condition_index": sub, "historical_name": row["name"],
                                "block11_with": row["per_layer"]["11"]["mean"], "block11_without": ctrl[0]["per_layer"]["11"]["mean"],
                                "band": "± SEM = std / sqrt(n) over per-query Spearman rho, n = 72"})
-    axes[0].set_ylabel("Spearman ρ (neural RDM vs predicate RDM)")
+    axes[0].set_ylabel("Spearman ρ")
     prov["not_shown"] = "condition 2 (full four-attribute profile match, block 11 = 0.247) → appendix"
     save(fig, out_dir, "rsa_direct", prov, ncol=2)
 
