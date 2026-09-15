@@ -330,6 +330,42 @@ def fig_gqa_grounding(out_dir, example_idx=(0, 3)):
 
 FIGS = {"attribute_alignment": fig_attribute_alignment, "functional_tests": fig_functional_tests, "gqa_grounding": fig_gqa_grounding}
 
+# ---------------------------------------------------------------- figure 4
+RSA_JSON = Path("outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch/attr_query_direct/rsa_conditional_stats.json")
+
+
+def fig_rsa_direct(out_dir):
+    """Binding (condition 1, all scenes) and retrieval (condition 4 = answer value,
+    within binding-positive scenes), with vs without question, ± SEM across queries."""
+    d = json.load(open(RSA_JSON))
+    specs = [(1, None, "Binding (all reference scenes)", _tab10[0]),
+             (4, 1, "Retrieval (within binding-positive scenes)", _tab10[3])]
+    fig, axes = plt.subplots(1, 2, figsize=(S["subplot_size"][0] * 2, S["subplot_size"][1]), sharey=True)
+    prov = {"source": str(RSA_JSON), "checkpoint": d["checkpoint"], "n_queries": d["n_queries"], "num_db": d["num_db"], "panels": []}
+    for ax, (cond, sub, title, col) in zip(axes, specs):
+        row = next(r for r in d["conditional_rsa"] if r["condition_index"] == cond and r["subset_condition_index"] == sub)
+        ctrl = [r for r in d["conditional_rsa_unsteered"] if r["name"] == row["name"]]
+        assert len(ctrl) == 1
+        for rec, lab, ls, alpha in ((row, "with question", "-", 1.0), (ctrl[0], "without question", "--", 0.5)):
+            m = np.array([rec["per_layer"][str(k)]["mean"] for k in BLOCKS])
+            sem = np.array([rec["per_layer"][str(k)]["std"] / np.sqrt(rec["per_layer"][str(k)]["n"]) for k in BLOCKS])
+            ax.plot(BLOCKS, m, **line_kwargs(label=lab, color=col, linestyle=ls, alpha=alpha,
+                                              linewidth=S["linewidth"] if ls == "-" else 1))
+            ax.fill_between(BLOCKS, m - sem, m + sem, color=col, alpha=S["std_alpha"] * alpha, linewidth=0)
+        mark_gca_layers(ax)
+        ax.set_title(title, fontsize=S["subplot_title_fontsize"])
+        ax.set_xlabel("block"); ax.set_xticks(BLOCKS[1::2]); ax.set_ylim(0, 0.85)
+        prov["panels"].append({"title": title, "condition_index": cond, "subset_condition_index": sub, "historical_name": row["name"],
+                               "block11_with": row["per_layer"]["11"]["mean"], "block11_without": ctrl[0]["per_layer"]["11"]["mean"],
+                               "band": "± SEM = std / sqrt(n) over per-query Spearman rho, n = 72"})
+    axes[0].set_ylabel("Spearman ρ (neural RDM vs predicate RDM)")
+    prov["not_shown"] = "condition 2 (full four-attribute profile match, block 11 = 0.247) → appendix"
+    save(fig, out_dir, "rsa_direct", prov, ncol=2)
+
+
+FIGS["rsa_direct"] = fig_rsa_direct
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out-dir", required=True)
