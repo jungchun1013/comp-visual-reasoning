@@ -129,6 +129,8 @@ def finish_tsne_grid(fig, handles, suptitle: str = None, ncol: int = None):
     if suptitle:
         fig.suptitle(suptitle, fontsize=S["suptitle_fontsize"])
     fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.90, bottom=0.00)
+    if not handles:
+        return
     if ncol is None:
         ncol = min(len(handles), 5)
     fig.legend(handles=handles, loc="upper center",

@@ -236,11 +236,12 @@ def run(args):
             X = all_feats[layer]
             tsne = TSNE(n_components=2, perplexity=30, random_state=42)
             emb = tsne.fit_transform(X)
-            _pooled_scatter(ax, emb, attrs_list)
+            _pooled_scatter(ax, emb, attrs_list, edgecolor=args.edge_color,
+                            palette=args.palette)
             ax.set_title(f"L{layer}", fontsize=S["subplot_title_fontsize"])
             style_tsne_ax(ax)
 
-        finish_tsne_grid(fig, attribute_legend_handles(),
+        finish_tsne_grid(fig, [] if args.no_legend else attribute_legend_handles(),
                          suptitle=f"{scene_label} t-SNE — {tag}", ncol=5)
 
         fname = f"tsne_single_{condition}_allattr.png"
@@ -271,5 +272,12 @@ if __name__ == "__main__":
     ap.add_argument("--query-attr", default="color",
                     choices=["color", "shape", "material", "size"],
                     help="Queried attribute in --describe-target mode")
+    ap.add_argument("--edge-color", default="black",
+                    help="Marker edge colour of the all-attribute t-SNE")
+    ap.add_argument("--palette", default="tab20",
+                    choices=["tab20", "tab20light", "clevr", "tab10"],
+                    help="Hue palette for the colour attribute")
+    ap.add_argument("--no-legend", action="store_true",
+                    help="Omit the attribute legend under the grid")
     args = ap.parse_args()
     run(args)
