@@ -1588,6 +1588,30 @@ referent 從 b8 回升,non-referent 一路留在基線下;選取對比從 b5 就
 ## Log
 > [!NOTE] Day Rotation inserts archived entries here. Newest on top.
 
+### 2026-09-16 — 統一場景／物件分析(Codex 計畫):對帳表、條件對應、從既有快取補算五組角色對照
+
+Codex 的計畫要求先做 setup 對帳,再補「問另一物件 − 一般問句」這組對照。四種條件(無問題／一般問句／問 A／問 B)
+在 X21 快取裡本來就是 c0 / c3 / c1 / c2,同一批 324 對、DINOv2 / SigLIP / Sup-ViT / MAE 與 shape、material 三種被問屬性
+都有,所以沒有抽新特徵。新增 `--role-contrasts`(`role_contrasts`、`attribute_switch` 兩個函式),影像為 bootstrap 單位、
+2000 次、seed 42;輸出 `outputs/analysis/patch_language_condition/*/unified_role_contrasts/`。對帳表與可比性:
+`docs/unified_analysis_manifest.md`;登記 X26。
+
+**結果(單位化物件向量、A/B 平均、block 11、被問屬性自身方向)。** 一般問句 − 無問題 ≈ 問它 − 無問題(DINOv2 +0.151 vs
++0.156;SigLIP +0.216 vs +0.194);問它 − 一般問句 接近 0(+0.005 / −0.022 / +0.059);問另一物件 − 一般問句 明顯為負
+(DINOv2 −0.227、SigLIP −0.433、Sup-ViT −0.168、MAE −0.049)。未被問屬性(shape)三種問句一起下降,角色對照 |Δ| ≤ 0.03。
+shape 被問時所有問句都讓 shape 投影低於無問題,但角色對照同樣成立(−0.244 / +0.066)。
+
+**描述固定、只換被問屬性(DINOv2,同一影像同一指涉詞)。** 問 colour 相對問 shape / material:referent +0.23 / +0.20、
+一般 +0.22 / +0.20、non-referent +0.03 / +0.02。material 方向在 material 相異的 141 對:referent +0.17、一般 +0.17、
+non-referent −0.13。shape 方向不可估:描述不含 shape 詞的配對必然同形,non-referent 的「自身」shape 方向就是 referent 的。
+
+**對帳時發現的一處登記錯誤。** `outputs/analysis/tsne/object_count/`(無 _v2)用的是 v1 資料集(`clevr_single_object` 500 張
+320×240、`clevr_two_object` 480 張),不是登記 X18 附註所寫的 v3/v2;v3/v2 是 X18 `pooled_n1n2/` 與 X17 用的。
+歷史定位不變。
+
+未做:324 對子集上的場景層變異量份額與 t-SNE;按 pair 交叉擬合方向;同一次前向的 pooled 場景向量(X21 快取只有物件
+與 64 個背景 patch)。
+
 ### 2026-07-09 (Thu)
 - **E7 evidence completed**: new `scripts/analysis/add_object_plot.py` → `outputs/analysis/add_object/hallucination_bar.png` (grouped bars, 5 models × 4 attrs, aggregation-only/rerunnable). Existing-JSON version first, auto-refreshed after the flamingo rerun.
 - **Flamingo 8-ep E7 rerun (4 attrs, fixed protocol, last.pt)**: hallucination color 0.08 / material 0.59 / shape 0.52 / size 0.54, bait_share 0.83–1.00 (non-color); doubling training did not reduce hallucination → architecture (LLM-side fusion), not training budget. RESULTS.md §15.

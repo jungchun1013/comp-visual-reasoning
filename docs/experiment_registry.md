@@ -1523,3 +1523,89 @@ So "GQA analysis uses only clean-correct items" holds for the two interventions 
 the observational analyses (H1, H2, H4, R2) run on the eligible population, whose c1 accuracy
 is 0.679 on the direct records. Registry line for X23 "Analysis populations: S_eligible for
 observational analyses, S_correct for interventions" already states this rule.
+
+### X26. Unified role contrasts — object-level attribute alignment by question condition (from the X21 caches)
+
+- **Origin**: Codex plan "給 Claude:統一場景幾何與物件屬性分析" (2026-09-16), §2–§4; user
+  instruction to execute it reusing the existing code. Setup manifest, condition-name mapping
+  and comparability table: `docs/unified_analysis_manifest.md`.
+- **Status of the hypotheses**: the four conditions (No question / Generic attribute question /
+  Question about A / Question about B = `c0` / `c3` / `c1` / `c2`) were already extracted in
+  X21 for the same 324 pairs, so H1–H3 below are **re-analyses of existing observations on the
+  registered pipeline**, not pre-registered predictions; no new forward pass was run.
+- **Design**: script `scripts/analysis/patch_language_condition.py --role-contrasts`
+  (functions `role_contrasts`, `attribute_switch`; CPU, from `n{1,2}/feats_c*.npz`). Object
+  IDs fixed (A = `target` slot, B = `distractors[0]`); attribute directions from the 1-object
+  renders (`attribute_directions`, unchanged); per object, attribute and block the projection
+  on the object's own value direction under each condition, unit-normalised object means
+  (primary, `_normstd`) and raw. Five contrasts: about it − no question; about the other
+  object − no question; generic − no question; about the other object − generic; about it −
+  generic. Bootstrap unit = image, 2000 resamples, seed 42, 95 % percentile interval;
+  `both` = per-image mean of A and B. Description-fixed queried-attribute switch between the
+  colour / shape / material runs on the pairs whose c1 and c2 referring words coincide
+  (colour↔shape 101, colour↔material 282, shape↔material 59), with a differing-value stratum.
+  Outputs `outputs/analysis/patch_language_condition/{,siglip/,sup/,mae/,shape/}unified_role_contrasts/`.
+- **Results (2026-09-16; unit-normalised own-direction projection, mean of A and B, block
+  11, n = 324 images; intervals in the JSON files)**
+
+  Queried attribute (colour runs; DINOv2 shape run on its own shape direction):
+
+  | run | about it − none | about other − none | generic − none | about other − generic | about it − generic |
+  |---|---|---|---|---|---|
+  | DINOv2 colour | +0.156 | −0.077 | +0.151 | **−0.227** [−0.236, −0.219] | +0.005 [+0.001, +0.009] |
+  | SigLIP colour | +0.194 | −0.217 | +0.216 | **−0.433** [−0.440, −0.426] | −0.022 [−0.026, −0.018] |
+  | Sup-ViT colour | +0.106 | −0.121 | +0.047 | **−0.168** [−0.174, −0.162] | +0.059 [+0.057, +0.062] |
+  | MAE colour | +0.093 | +0.050 | +0.099 | −0.049 [−0.051, −0.046] | −0.006 [−0.008, −0.004] |
+  | DINOv2 shape | −0.106 | −0.416 | −0.172 | **−0.244** [−0.262, −0.226] | +0.066 [+0.061, +0.072] |
+
+  Unqueried attribute (shape direction in the colour runs), block 11: all three question
+  conditions move the shape projection together (DINOv2 −0.42 / −0.44 / −0.42, SigLIP
+  −0.30 / −0.31 / −0.30, Sup-ViT −0.31 / −0.32 / −0.32, MAE −0.03 / −0.01 / −0.04); about
+  other − generic = −0.015 / −0.011 / −0.004 / +0.031, about it − generic = −0.001 / +0.001 /
+  +0.008 / +0.009. In the shape run the unqueried colour direction behaves the same way (about
+  other − generic −0.027, about it − generic +0.018).
+
+  Reading, per Codex's hypothesis list: (H1) the generic question changes both objects' queried
+  attribute alignment by about as much as a referring question changes the referent's (DINOv2
+  +0.151 vs +0.156; SigLIP +0.216 vs +0.194) — the question adds attribute information without
+  a role distinction; (H2) relative to the generic question the referent gains little or
+  nothing (+0.005 / −0.022 / +0.059) and the non-referent loses a lot (−0.227 / −0.433 / −0.168),
+  so the role effect is "mainly a reduction of the non-referent" in the three discriminatively
+  pretrained backbones; MAE shows the same sign at a fifth of the size (−0.049). In the shape run
+  every question lowers the shape projection below the no-question level, yet the same
+  contrasts hold (about other − generic −0.244, about it − generic +0.066); (H3) on the
+  unqueried attribute the role contrasts are an order of magnitude smaller (|Δ| ≤ 0.03), so the
+  role effect is specific to the queried attribute. Per-object curves (A and B separately) agree
+  with the pooled ones in every run. Timing: the about-other − generic gap opens at block 9 in
+  DINOv2 (−0.10 → −0.13 → −0.23), at block 7–9 in SigLIP and Sup-ViT.
+
+  Queried-attribute switch, image + referent + description fixed (DINOv2, object A, block 11,
+  ask attribute *d* − ask the other attribute, projection on A's own *d* direction):
+
+  | pair (n same description) | direction | referent | generic | non-referent | non-referent, differing values (n) |
+  |---|---|---|---|---|---|
+  | colour vs shape (101) | colour | +0.227 | +0.223 | +0.034 | same (colours always differ) |
+  | colour vs material (282) | colour | +0.195 | +0.202 | +0.018 | same |
+  | colour vs material (282) | material | +0.166 | +0.184 | +0.006 | **−0.127** [−0.140, −0.114] (141) |
+  | shape vs material (59) | material | +0.151 | +0.172 | +0.016 | −0.108 [−0.144, −0.070] (31) |
+  | colour vs shape (101) / shape vs material (59) | shape | +0.315 / +0.308 | +0.269 / +0.250 | +0.259 / +0.268 | **not estimable: 0 differing-shape pairs** |
+
+  With everything but the queried word held fixed, asking about *d* raises the referent's and
+  the generic-condition alignment on *d* by 0.15–0.23 at block 11 and leaves the non-referent
+  near zero (colour) or below zero (material, differing values). The shape direction cannot be
+  assessed: a description that avoids shape words exists only when A and B share the shape, so
+  on that subset the non-referent's "own" shape direction is also the referent's.
+- **Cautions**: (i) the description-fixed subsets are, by construction, pairs whose other
+  attributes coincide (see the shape row); every switch contrast on a shared value is
+  confounded and is reported only in the JSON; (ii) attribute directions are estimated on the
+  1-object partner of the same pairs (see manifest §3) — the shared-instance term cancels in
+  every contrast but not in the levels; pair-wise cross-fitting not run; (iii) no equivalence
+  margin was pre-specified, so "the generic question does not reduce alignment" is not claimed;
+  the estimates are: generic − none is positive in all colour runs and negative in the shape run;
+  (iv) "generic question" here is the one string `What {attribute} is the object?`, a
+  non-referring question on a two-object scene — a competing reading (the model picks a default
+  object) is not excluded by these numbers; (v) H1–H3 are replications on a pipeline whose
+  results were known; the intervals are within-sample.
+- **Not run (plan items left open)**: scene-level variance share / t-SNE restricted to the 324
+  pairs; pair-wise cross-fit directions; a pooled scene vector from the same forward pass (the
+  X21 cache holds object + 64 background patches only).

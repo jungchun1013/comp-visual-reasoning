@@ -885,6 +885,198 @@ def plot_attr_directions(res, label, out_path, gca_layers):
     print(f"Saved: {out_path}")
 
 
+# ---------------------------------------------------------------------------
+# Unified role contrasts (2026-09-16; Codex plan "統一場景幾何與物件屬性分析" §4).
+# Object IDs are fixed — A = the `target` slot of labels.json, B = `distractors[0]`;
+# the role (referent / non-referent) changes with the question.  Five contrasts per
+# object and attribute from the existing c0–c3 caches (no new extraction); the image
+# is the bootstrap unit (2000 resamples, seed 42).  Names map the programme
+# conditions onto the manuscript conditions without rewriting the old result files.
+# ---------------------------------------------------------------------------
+
+ROLE_CONDITIONS = {"c0": "No question", "c3": "Generic attribute question",
+                   "c1": "Question about A", "c2": "Question about B"}
+ROLE_CONTRASTS = {"about_it": ("about it", "no question"),
+                  "about_other": ("about the other object", "no question"),
+                  "generic": ("generic question", "no question"),
+                  "about_other_vs_generic": ("about the other object", "generic question"),
+                  "about_it_vs_generic": ("about it", "generic question")}
+ROLE_COLOR = {"about_it": "#d62728", "about_other": "#1f77b4", "generic": "#7f7f7f",
+              "about_other_vs_generic": "#9467bd", "about_it_vs_generic": "#ff7f0e"}
+
+
+def own_value_projection(caches, labels, V, cond, oid, attr, norm_std=False):
+    """(N, 12) projection of object `oid`'s mean token under `cond` onto the direction of
+    its own `attr` value (NaN where that value has no direction)."""
+    om = caches[cond]["obj_mean"][:, oid].astype(np.float32)          # (N, 12, D)
+    if norm_std:
+        om = _unit(om)
+    out = np.full((om.shape[0], NUM_LAYERS), np.nan, np.float32)
+    for i, rec in enumerate(labels):
+        v = rec["target"][attr] if oid == 0 else rec["distractors"][0][attr]
+        if v in V[attr]:
+            out[i] = (om[i] * V[attr][v]).sum(-1)
+    return out
+
+
+def role_contrasts(caches_n2, labels_n2, V, norm_std=False, n_boot=2000, seed=42):
+    """Per object (A, B) and per attribute: the projection level under each condition and
+    the five role contrasts of ROLE_CONTRASTS; `both` = per-image mean of A and B."""
+    N = len(labels_n2)
+    has_d = np.array([rec["n_distractor_patches"] > 0 for rec in labels_n2])
+    attrs = list(dict.fromkeys([QUERIED, "color", "shape"]))
+    conds = [c for c in ("c0", "c1", "c2", "c3") if c in caches_n2]
+    res = {"n_images": N, "n_with_distractor": int(has_d.sum()), "norm_std": bool(norm_std),
+           "queried": QUERIED, "attributes": attrs, "conditions": ROLE_CONDITIONS,
+           "objects": {"A": "target slot of labels.json", "B": "distractors[0] slot"},
+           "bootstrap": {"unit": "image", "n": n_boot, "seed": seed}, "proj": {}, "delta": {}}
+    for attr in attrs:
+        P = {(c, o): own_value_projection(caches_n2, labels_n2, V, c, oid, attr, norm_std)
+             for c in conds for o, oid in (("A", 0), ("B", 1))}
+        valid = has_d & np.all([np.isfinite(P[(c, o)][:, 0]) for c in conds for o in ("A", "B")], 0)
+        for c in conds:
+            for o in ("A", "B"):
+                res["proj"][f"{o}_{attr}_{c}"] = [_boot(P[(c, o)][valid, l], n_boot, seed) for l in range(NUM_LAYERS)]
+        deltas = {}
+        for o, it, other in (("A", "c1", "c2"), ("B", "c2", "c1")):
+            spec = {"about_it": (it, "c0"), "about_other": (other, "c0"), "generic": ("c3", "c0"),
+                    "about_other_vs_generic": (other, "c3"), "about_it_vs_generic": (it, "c3")}
+            for name, (a, b) in spec.items():
+                if a in conds and b in conds:
+                    deltas[(o, name)] = P[(a, o)] - P[(b, o)]
+        for name in ROLE_CONTRASTS:
+            if ("A", name) not in deltas:
+                continue
+            for o in ("A", "B"):
+                res["delta"][f"{o}_{attr}_{name}"] = [_boot(deltas[(o, name)][valid, l], n_boot, seed)
+                                                     for l in range(NUM_LAYERS)]
+            both = 0.5 * (deltas[("A", name)] + deltas[("B", name)])
+            res["delta"][f"both_{attr}_{name}"] = [_boot(both[valid, l], n_boot, seed) for l in range(NUM_LAYERS)]
+        res.setdefault("n_valid", {})[attr] = int(valid.sum())
+    return res
+
+
+def plot_role_contrasts(res, label, out_path, gca_layers):
+    attrs = res["attributes"]
+    rows = ("A", "B", "both")
+    fig, axes = plt.subplots(len(rows), len(attrs), figsize=(5.2 * len(attrs), 3.4 * len(rows)),
+                             squeeze=False)
+    x = range(NUM_LAYERS)
+    for r, o in enumerate(rows):
+        for c, attr in enumerate(attrs):
+            ax = axes[r][c]
+            for name, (a, b) in ROLE_CONTRASTS.items():
+                key = f"{o}_{attr}_{name}"
+                if key not in res["delta"]:
+                    continue
+                d = res["delta"][key]
+                m = np.array([q["mean"] for q in d]); lo = np.array([q["lo"] for q in d]); hi = np.array([q["hi"] for q in d])
+                ax.plot(x, m, "-", color=ROLE_COLOR[name], marker="o", markersize=3, label=f"{a} − {b}")
+                ax.fill_between(x, lo, hi, color=ROLE_COLOR[name], alpha=0.12, linewidth=0)
+            ax.axhline(0, color="k", linewidth=0.6)
+            aL = "colour" if attr == "color" else attr
+            who = {"A": "object A", "B": "object B", "both": "mean of A and B"}[o]
+            ax.set_title(f"{who}: own {aL} direction" + ("  (queried)" if attr == res["queried"] else ""), fontsize=10)
+            ax.set_ylabel("Δ projection", fontsize=10)
+            _layers_axis(ax, gca_layers)
+            if r == 0 and c == 0:
+                ax.legend(fontsize=6)
+    qL = "colour" if res["queried"] == "color" else res["queried"]
+    fig.suptitle(f"{label} — object-level attribute alignment by question condition (questions ask about {qL}; "
+                 f"n = {res['n_images']} two-object images" + (", unit-normalised object means" if res["norm_std"] else "") + ")")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+def attribute_switch(run_dirs, V, norm_std=False, n_boot=2000, seed=42):
+    """Queried-attribute contrast with image, referent and description fixed.  `run_dirs`
+    maps a queried attribute to a finished X21 run directory (same 324 pairs, same model).
+    For every pair of runs, only images whose c1 and c2 referring words are identical in
+    both runs are used; for each object and role the projection onto the object's own
+    direction of attribute d is compared between the run that asks about d and the run
+    that asks about the other attribute (the description word never names d or the
+    other attribute on the retained images, by construction of the referring rule)."""
+    data = {}
+    for qa, d in run_dirs.items():
+        d = Path(d)
+        labels = load_labels(d / "n2")
+        caches = {c: {"obj_mean": np.load(d / "n2" / f"feats_{c}.npz")["obj_mean"]}
+                  for c in ("c0", "c1", "c2", "c3") if (d / "n2" / f"feats_{c}.npz").exists()}
+        data[qa] = (labels, caches)
+    res = {"norm_std": bool(norm_std), "bootstrap": {"unit": "image", "n": n_boot, "seed": seed},
+           "runs": {k: str(v) for k, v in run_dirs.items()}, "pairs": {}}
+    keys = list(run_dirs)
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            qa, qb = keys[i], keys[j]
+            la, ca = data[qa]; lb, cb = data[qb]
+            assert [r["pair_index"] for r in la] == [r["pair_index"] for r in lb], "runs must share the pair list"
+            same = np.array([ra["referent_words"]["c1"] == rb["referent_words"]["c1"] and
+                             ra["referent_words"]["c2"] == rb["referent_words"]["c2"] for ra, rb in zip(la, lb)])
+            has_d = np.array([r["n_distractor_patches"] > 0 for r in la])
+            entry = {"n_same_description": int(same.sum()), "n_images": len(la),
+                     "description_words": dict(collections.Counter(r["referent_words"]["c1"] for r, s in zip(la, same) if s)),
+                     "delta": {}}
+            for dattr, ask, other in ((qa, ca, cb), (qb, cb, ca)):
+                if dattr not in V:
+                    continue
+                # the description-fixed subset is, by construction, the pairs whose other
+                # attributes coincide (e.g. colour<->shape keeps only same-shape pairs); on the
+                # direction of a shared value the non-referent contrast is confounded, so the
+                # differing-value stratum is reported alongside
+                differs = np.array([r["target"][dattr] != r["distractors"][0][dattr] for r in la])
+                entry[f"n_differing_{dattr}"] = int((same & has_d & differs).sum())
+                for o, oid, it, non in (("A", 0, "c1", "c2"), ("B", 1, "c2", "c1")):
+                    for role, cond in (("referent", it), ("non_referent", non), ("generic", "c3")):
+                        pa = own_value_projection(ask, la, V, cond, oid, dattr, norm_std)
+                        pb = own_value_projection(other, la, V, cond, oid, dattr, norm_std)
+                        v = same & has_d & np.isfinite(pa[:, 0]) & np.isfinite(pb[:, 0])
+                        entry["delta"][f"{o}_{dattr}_{role}"] = [_boot((pa - pb)[v, l], n_boot, seed) for l in range(NUM_LAYERS)]
+                        entry["delta"][f"{o}_{dattr}_{role}_differing"] = [_boot((pa - pb)[v & differs, l], n_boot, seed)
+                                                                           for l in range(NUM_LAYERS)]
+                    pa = 0.5 * sum(own_value_projection(ask, la, V, c, oid, dattr, norm_std) for oid, c in ((0, "c1"), (1, "c2")))
+                    pb = 0.5 * sum(own_value_projection(other, la, V, c, oid, dattr, norm_std) for oid, c in ((0, "c1"), (1, "c2")))
+                    v = same & has_d & np.isfinite(pa[:, 0]) & np.isfinite(pb[:, 0])
+                    entry["delta"][f"both_{dattr}_referent"] = [_boot((pa - pb)[v, l], n_boot, seed) for l in range(NUM_LAYERS)]
+                    entry["n_valid_" + dattr] = int(v.sum())
+            res["pairs"][f"{qa}_vs_{qb}"] = entry
+    return res
+
+
+def plot_attribute_switch(res, label, out_path, gca_layers):
+    pairs = list(res["pairs"])
+    fig, axes = plt.subplots(1, len(pairs), figsize=(5.4 * len(pairs), 3.6), squeeze=False)
+    x = range(NUM_LAYERS)
+    role_style = {"referent": ("-", "o"), "non_referent": ("--", "s"), "generic": (":", "^")}
+    for ax, pk in zip(axes[0], pairs):
+        entry = res["pairs"][pk]
+        qa, qb = pk.split("_vs_")
+        for dattr, color in ((qa, "#d62728"), (qb, "#1f77b4")):
+            for role, (ls, mk) in role_style.items():
+                key = f"A_{dattr}_{role}"
+                if key not in entry["delta"]:
+                    continue
+                d = entry["delta"][key]
+                m = np.array([q["mean"] for q in d]); lo = np.array([q["lo"] for q in d]); hi = np.array([q["hi"] for q in d])
+                dL = "colour" if dattr == "color" else dattr
+                ax.plot(x, m, ls, color=color, marker=mk, markersize=3,
+                        label=f"own {dL} direction, {role.replace('_', '-')}: ask {dL} − ask other")
+                ax.fill_between(x, lo, hi, color=color, alpha=0.12, linewidth=0)
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.set_title(f"{qa} vs {qb}: n = {entry['n_same_description']} images with the same description", fontsize=10)
+        ax.set_ylabel("Δ projection (object A)", fontsize=10)
+        _layers_axis(ax, gca_layers)
+        ax.legend(fontsize=6)
+    fig.suptitle(f"{label} — queried-attribute switch with image, referent and description fixed"
+                 + (" (unit-normalised object means)" if res["norm_std"] else ""))
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def token_norm_stats(c0):
     rn = c0["raw_norm"].astype(np.float32)                    # (N,12,P)
     own = c0["owner"]
@@ -6112,6 +6304,13 @@ def main():
                     help="only: attribute-specific direction projections (new files)")
     ap.add_argument("--rsa-template", action="store_true",
                     help="only: RSA with the per-position background template (new files)")
+    ap.add_argument("--role-contrasts", action="store_true",
+                    help="only: unified role contrasts per object (A/B) from the c0-c3 caches, image "
+                         "bootstrap 2000 / seed 42, written to <out-dir>/unified_role_contrasts/")
+    ap.add_argument("--attribute-switch", nargs="*", default=None, metavar="ATTR=DIR",
+                    help="with --role-contrasts: finished runs of the same pairs that ask about "
+                         "another attribute (e.g. shape=outputs/analysis/patch_language_condition/shape); "
+                         "the current --out-dir is the run for --queried")
     ap.add_argument("--intervene", action="store_true")
     ap.add_argument("--queried", default="color", choices=["color", "shape", "material", "size"],
                     help="queried attribute of every question (c1/c2 refer by another attribute)")
@@ -6393,6 +6592,31 @@ def main():
                 json.dump(res, f, indent=1)
             plot_attr_directions(res, label + (" — unit-normalised object means" if norm_std else ""),
                                  v2_dir / f"attr_directions{tag}.png", gca_layers)
+        return
+    if args.role_contrasts:
+        V = attribute_directions(cache_n1, labels["n1"])
+        u_dir = out_dir / "unified_role_contrasts"
+        u_dir.mkdir(exist_ok=True)
+        for tag, norm_std in (("", False), ("_normstd", True)):
+            res = role_contrasts(caches_n2, labels["n2"], V, norm_std)
+            print(f"\n--- role contrasts{tag} (norm_std={norm_std}; n valid {res['n_valid']}) ---")
+            for key, d in res["delta"].items():
+                if key.startswith("both_"):
+                    print(f"{key:<40} " + " ".join(f"{q['mean']:+.3f}" for q in d))
+            with open(u_dir / f"role_contrasts{tag}.json", "w") as f:
+                json.dump(res, f, indent=1)
+            plot_role_contrasts(res, label, u_dir / f"role_contrasts{tag}.png", gca_layers)
+            if args.attribute_switch:
+                runs = {QUERIED: out_dir}
+                runs.update(kv.split("=", 1) for kv in args.attribute_switch)
+                sw = attribute_switch(runs, V, norm_std)
+                for pk, entry in sw["pairs"].items():
+                    print(f"switch {pk}{tag}: n same description {entry['n_same_description']} {entry['description_words']}")
+                    for key, d in entry["delta"].items():
+                        print(f"  {key:<32} " + " ".join(f"{q['mean']:+.3f}" for q in d))
+                with open(u_dir / f"attribute_switch{tag}.json", "w") as f:
+                    json.dump(sw, f, indent=1)
+                plot_attribute_switch(sw, label, u_dir / f"attribute_switch{tag}.png", gca_layers)
         return
     if args.rsa_template:
         res = rsa_template(caches_n2, labels["n2"], args.grid)
