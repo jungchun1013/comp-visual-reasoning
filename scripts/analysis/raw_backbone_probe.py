@@ -301,13 +301,15 @@ def plot_pooled_tsne(entries, out_dir, seed):
     plt.close(fig)
 
 
-def _pooled_scatter(ax, emb, sub, edgecolor="black", palette="tab20"):
+def _pooled_scatter(ax, emb, sub, edgecolor="black", palette="tab20",
+                    small_size=None, large_size=45):
     """Shared t-SNE panel encoding: hue = target color, shade = material
     (dark = metal, light = rubber), marker = shape, point size = size."""
     from analysis.plot_style import TSNE_STYLE
     from dino_attribute_tsne import SHAPE_MARKERS, face_color
 
-    size_pt = {"small": TSNE_STYLE["mid_size"], "large": 45}
+    size_pt = {"small": TSNE_STYLE["mid_size"] if small_size is None else small_size,
+               "large": large_size}
     for shape, marker in SHAPE_MARKERS.items():
         ii = [k for k, m in enumerate(sub) if m["shape"] == shape]
         ax.scatter(emb[ii, 0], emb[ii, 1],

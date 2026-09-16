@@ -92,6 +92,12 @@ TARGET_FILL_COLORS = [
 CORRECT_COLOR = _tab10[0]   # blue
 WRONG_COLOR = (0.75, 0.75, 0.75)
 
+# Steered-plot style overrides (set from the CLI in main). two_stage draws only
+# description satisfaction (fill) and answer agreement (fill), dropping the
+# object-profile-match colour; sizes/edge follow the object-count t-SNE grids.
+STEERED_STYLE = {"two_stage": False, "cell": 2.8, "edge": None,
+                 "small": None, "large": None, "suffix": ""}
+
 ATTR_KEYS = ("color", "shape", "material", "size")
 SHAPE_MARKERS = {"sphere": "o", "cylinder": "^", "cube": "s"}
 
@@ -369,9 +375,11 @@ def check_conditions(db_objs, described_attrs, anchor_4attrs, program, gt_answer
 
 # ── Plotting: shared layout ─────────────────────────────────────────
 
-def _make_layer_grid(n_panels, ncols=3, cell=2.8):
+def _make_layer_grid(n_panels, ncols=3, cell=None):
     """Create a grid of subplots for per-layer visualization."""
     apply_style()
+    if cell is None:
+        cell = STEERED_STYLE["cell"]
     nrows = (n_panels + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols,
                              figsize=(cell * ncols + 1, cell * nrows + 1))
@@ -462,6 +470,24 @@ def _scatter_shaped(ax, emb, mask, colors, sizes, db_shapes,
 def _plot_steered_axes(ax, emb, labels, db_shapes, query_pt, fill_colors):
     """Draw one steered subplot with condition coloring."""
     N = labels.shape[0]
+    if STEERED_STYLE["two_stage"]:
+        gray = np.array([0.75, 0.75, 0.75])
+        point_colors = np.tile(gray, (N, 1))
+        has_binding = labels[:, 0]
+        answer_mask = labels[:, 2] & has_binding
+        point_colors[has_binding] = fill_colors[0]
+        point_colors[answer_mask] = ANSWER_MATCH_COLOR
+        edge = STEERED_STYLE["edge"]
+        small = STEERED_STYLE["small"] or 8
+        large = STEERED_STYLE["large"] or 22
+        ax.scatter(emb[~has_binding, 0], emb[~has_binding, 1],
+                   c=point_colors[~has_binding], s=small, marker="o",
+                   edgecolors=edge or "none", linewidths=0.5, rasterized=True)
+        _scatter_shaped(ax, emb, has_binding & ~answer_mask, point_colors, small,
+                        db_shapes, edge_color=edge, edge_width=0.5)
+        _scatter_shaped(ax, emb, answer_mask, point_colors, large,
+                        db_shapes, edge_color=edge, edge_width=0.5)
+        return
     gray = np.array([0.75, 0.75, 0.75])
     point_colors = np.tile(gray, (N, 1))
     for c in range(2):  # binding, grounding
@@ -505,6 +531,22 @@ def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
 
     gray_rgba = (0.75, 0.75, 0.75)
     role_prefix = f"{role} " if role else ""
+    if STEERED_STYLE["two_stage"]:
+        edge = STEERED_STYLE["edge"] or "none"
+        handles = [
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
+                   markeredgecolor=edge, markersize=7, label="None"),
+            Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=tuple(fill_colors[0]), markeredgecolor=edge,
+                   markersize=7, label=f"{role_prefix}Binding"),
+            Line2D([0], [0], marker="o", color="w",
+                   markerfacecolor=tuple(ANSWER_MATCH_COLOR), markeredgecolor=edge,
+                   markersize=9, label="Retrieval (answer agreement)"),
+        ]
+        q_short = question[:65] + "..." if len(question) > 65 else question
+        title = f"[{role}] {q_short}  →  {answer}" if role else f"{q_short}  →  {answer}"
+        _finish_plot(fig, title, handles, output_path, ncol_legend=3)
+        return
     handles = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
                markersize=7, label="None"),
@@ -839,7 +881,7 @@ def run_steered(args, device):
         plot_steered_tsne(
             embeddings, labels, db_shapes, show_layers, query_emb,
             question, gt_answer,
-            output_dir / f"tsne_{tag}_q{qi}.png",
+            output_dir / f"tsne_{tag}_q{qi}{STEERED_STYLE['suffix']}.png",
         )
     else:
         plot_steered_tsne(
@@ -973,6 +1015,13 @@ def main():
                         help="Subsample show_layers by every N-th")
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--replot", action="store_true")
+    parser.add_argument("--two-stage", action="store_true",
+                        help="Steered plots: binding + answer agreement only "
+                             "(no object-profile-match colour); file suffix _two_stage")
+    parser.add_argument("--cell", type=float, default=2.8, help="Panel edge, inches")
+    parser.add_argument("--edge-color", type=str, default=None)
+    parser.add_argument("--small-size", type=float, default=None)
+    parser.add_argument("--large-size", type=float, default=None)
     parser.add_argument("--compute-only", action="store_true")
     parser.add_argument("--no-ca", action="store_true",
                         help="Extract features without text (no cross-attention)")
@@ -987,6 +1036,10 @@ def main():
     parser.add_argument("--n-questions", type=int, default=2)
     parser.add_argument("--n-images", type=int, default=300)
     args = parser.parse_args()
+    STEERED_STYLE.update(two_stage=args.two_stage, cell=args.cell,
+                         edge=args.edge_color, small=args.small_size,
+                         large=args.large_size,
+                         suffix="_two_stage" if args.two_stage else "")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

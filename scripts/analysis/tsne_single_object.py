@@ -219,7 +219,7 @@ def run(args):
         # rubber), marker = shape, point size = size
         from raw_backbone_probe import _pooled_scatter
         from dino_attribute_tsne import attribute_legend_handles
-        fig, axes = make_tsne_grid(len(gca_layers), ncols=3)
+        fig, axes = make_tsne_grid(len(gca_layers), ncols=3, cell=args.cell)
         if condition == "noca":
             tag = "No cross-attention"
         elif args.describe_target:
@@ -237,7 +237,8 @@ def run(args):
             tsne = TSNE(n_components=2, perplexity=30, random_state=42)
             emb = tsne.fit_transform(X)
             _pooled_scatter(ax, emb, attrs_list, edgecolor=args.edge_color,
-                            palette=args.palette)
+                            palette=args.palette, small_size=args.small_size,
+                            large_size=args.large_size)
             ax.set_title(f"L{layer}", fontsize=S["subplot_title_fontsize"])
             style_tsne_ax(ax)
 
@@ -249,6 +250,38 @@ def run(args):
         fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
         plt.close(fig)
         print(f"Saved: {out_path}")
+
+
+
+def composite_last_layer(args):
+    """One row, block 11 only: 1 object / 2 objects without a question and
+    2 objects under the minimal referring colour / shape question
+    ("What color is the large object?", --refer-minimal caches)."""
+    from sklearn.manifold import TSNE
+    from analysis.plot_style import make_tsne_grid, style_tsne_ax, finish_tsne_grid, S
+    from raw_backbone_probe import _pooled_scatter
+    apply_style()
+    n1, n2 = Path(args.features_dir), Path(args.features_dir_n2)
+    panels = [(n1, "noca", "1 object\nno question"),
+              (n2, "noca", "2 objects\nno question"),
+              (n2, "ca_color_refer", '2 objects\n"What color is\nthe {referent} object?"'),
+              (n2, "ca_shape_refer", '2 objects\n"What shape is\nthe {referent} object?"')]
+    fig, axes = make_tsne_grid(4, ncols=4, cell=args.cell)
+    for ax, (d, cond, title) in zip(axes, panels):
+        X = np.load(d / f"feats_{cond}.npz")["11"]
+        with open(d / "attrs.json") as f:
+            attrs = json.load(f)
+        emb = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(X)
+        _pooled_scatter(ax, emb, attrs, edgecolor=args.edge_color, palette=args.palette,
+                        small_size=args.small_size, large_size=args.large_size)
+        ax.set_title(title, fontsize=S["subplot_title_fontsize"])
+        style_tsne_ax(ax)
+    finish_tsne_grid(fig, [], suptitle=None)
+    fig.subplots_adjust(wspace=0.12)
+    out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out / "composite_block11.png", dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out / 'composite_block11.png'}")
 
 
 if __name__ == "__main__":
@@ -279,5 +312,18 @@ if __name__ == "__main__":
                     help="Hue palette for the colour attribute")
     ap.add_argument("--no-legend", action="store_true",
                     help="Omit the attribute legend under the grid")
+    ap.add_argument("--small-size", type=float, default=None,
+                    help="Scatter area (pt^2) of small objects; default TSNE_STYLE mid_size = 18")
+    ap.add_argument("--large-size", type=float, default=45,
+                    help="Scatter area (pt^2) of large objects; small = TSNE_STYLE mid_size")
+    ap.add_argument("--cell", type=float, default=None,
+                    help="Panel edge in inches (default TSNE_STYLE['cell'] = 2.8)")
+    ap.add_argument("--features-dir-n2", default=None,
+                    help="With --composite: cached 2-object features dir (n1 = --features-dir)")
+    ap.add_argument("--composite", action="store_true",
+                    help="Block-11 row: n1 noca / n2 noca / n2 colour q / n2 shape q")
     args = ap.parse_args()
-    run(args)
+    if args.composite:
+        composite_last_layer(args)
+    else:
+        run(args)
