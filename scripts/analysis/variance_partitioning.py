@@ -132,8 +132,9 @@ def silhouette_pair(X50, L, attr_b, attr_a):
 
 # ── per-condition computation ────────────────────────────────────
 
-def analyze_condition(feats_by_layer, L, ds, rng):
-    """feats_by_layer: {layer: (480, D) float64}."""
+def analyze_condition(feats_by_layer, L, ds, rng, balanced=True):
+    """feats_by_layer: {layer: (480, D) float64}.  `balanced=False` for a pair subset:
+    the `interaction` field is then not written (see the comment below)."""
     from sklearn.decomposition import PCA
 
     factors = ATTRS + ([f"d_{a}" for a in ATTRS] if ds == "n2" else [])
@@ -143,10 +144,16 @@ def analyze_condition(feats_by_layer, L, ds, rng):
         sst = float((Xc ** 2).sum())
         part = partition(Xc, L, factors, sst)
         row = {"shares": part}
-        if ds == "n1":  # balanced factorial: cells model + interaction
+        if ds == "n1":  # cells model vs additive main effects
             r2_cells = between_share(Xc, joint_label(L, ATTRS), sst)
             row["r2_cells"] = r2_cells
-            row["interaction"] = r2_cells - sum(part["marginal"].values())
+            # in-sample incremental fit of the full categorical cell model beyond the
+            # additive main-effect model; valid for balanced and unbalanced designs
+            row["cells_beyond_additive"] = r2_cells - part["r2_full"]
+            if balanced:
+                # only for the balanced 480 factorial are the marginal shares orthogonal,
+                # so that r2_cells − Σ marginal is the interaction variance
+                row["interaction"] = r2_cells - sum(part["marginal"].values())
         out["layers"][str(layer)] = row
 
     # Main-layer extras: PCA spectrum, nesting silhouettes, permutation nulls
@@ -208,13 +215,51 @@ def iter_conditions(args, labels):
                    labels[ds], ds)
 
 
+def write_provenance(args, out_dir):
+    """Sidecar for re-running the same numbers: command, code commit, source caches (path,
+    mtime, shapes), checkpoint recorded in the cache logs, pair ids, layers, statistics."""
+    import subprocess, sys, os, re
+    rows = subset_rows(getattr(args, "subset_labels", None))
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                                cwd=Path(__file__).resolve().parent).stdout.strip()
+    except Exception:
+        commit = None
+    caches, ckpt = {}, set()
+    for ds, conds in TRAINED_CONDS.items():
+        tdir = Path(args.trained_root) / ds
+        for cond in conds:
+            f = tdir / f"feats_{cond}.npz"
+            if f.exists():
+                z = np.load(f)
+                caches[str(f)] = {"mtime": os.path.getmtime(f), "shape": list(z["11"].shape)}
+        log = tdir / "log.txt"
+        if log.exists():
+            for line in open(log):
+                m = re.search(r"--checkpoint (\S+)", line)
+                if m:
+                    ckpt.add(m.group(1))
+    prov = {"command": " ".join(sys.argv), "code_commit": commit, "script": str(Path(__file__).resolve()),
+            "source_caches": caches, "checkpoint_recorded_in_cache_logs": sorted(ckpt),
+            "data_root": args.data_root, "seed": args.seed,
+            "subset_labels": getattr(args, "subset_labels", None), "n_rows": len(rows) if rows else 480,
+            "pair_index": rows, "layers": LAYERS, "main_layer": MAIN_LAYER,
+            "statistics": {"marginal": "SS_between / SS_total per factor",
+                           "unique": "R2(full additive one-hot OLS) − R2(without the factor)",
+                           "cells_beyond_additive": "R2(full categorical cell model) − R2(additive main effects), n1 only",
+                           "interaction": "r2_cells − Σ marginal; written only for the balanced 480 set"},
+            "note": "raw-backbone conditions skipped" if getattr(args, "skip_raw", False) else None}
+    (out_dir / "provenance.json").write_text(json.dumps(prov, indent=1))
+
+
 def compute(args, out_dir):
     labels = load_labels(args.data_root, subset_rows(getattr(args, "subset_labels", None)))
     rng = np.random.RandomState(args.seed)
     results = {}
+    balanced = not getattr(args, "subset_labels", None)
     for key, feats, L, ds in iter_conditions(args, labels):
         print(f"analyzing {key} ...", flush=True)
-        results[key] = analyze_condition(feats, L, ds, rng)
+        results[key] = analyze_condition(feats, L, ds, rng, balanced=balanced)
 
     # Sanity: n1 balanced factorial — main effects + interaction == cells R2
     # (only holds for the full balanced 480; a pair subset is not balanced)
@@ -234,7 +279,7 @@ def compute_own_axis(args):
     PCs."""
     from sklearn.decomposition import PCA
     from sklearn.metrics import silhouette_score
-    labels = load_labels(args.data_root)
+    labels = load_labels(args.data_root, subset_rows(getattr(args, "subset_labels", None)))
     rng = np.random.RandomState(args.seed)
     out = {}
     for key, feats, L, ds in iter_conditions(args, labels):
@@ -479,6 +524,7 @@ def main():
         print(f"Wrote {path}")
         return
     results_path = out_dir / "results.json"
+    write_provenance(args, out_dir)
 
     if args.replot or results_path.exists():
         results = json.loads(results_path.read_text())
@@ -488,10 +534,11 @@ def main():
         results_path.write_text(json.dumps(results, indent=1))
         print(f"Wrote {results_path}")
 
-    plot_variance_shares(results, out_dir)
-    plot_queried_share_by_layer(results, out_dir)
-    plot_pc_eta_heatmap(results, out_dir)
-    plot_nesting(results, out_dir)
+    for fn in (plot_variance_shares, plot_queried_share_by_layer, plot_pc_eta_heatmap, plot_nesting):
+        try:
+            fn(results, out_dir)
+        except KeyError as ex:          # trained-only runs (--skip-raw) lack the raw-backbone panels
+            print(f"{fn.__name__}: skipped, condition {ex} not in results (run without --skip-raw for it)")
 
 
 if __name__ == "__main__":

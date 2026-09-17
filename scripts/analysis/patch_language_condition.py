@@ -915,11 +915,15 @@ def pair_folds(labels, n_folds=5, seed=42):
     and all questions of a pair in the same fold.  Fixed before any result is seen: seed 42,
     five folds (per-fold minimum per attribute value checked at 30 for colour, 82 shape,
     117 size, 118 material, all above the ≥ 5 threshold of `attribute_directions`)."""
-    N = len(labels)
-    fold_of = np.empty(N, int)
-    for k, idx in enumerate(np.array_split(np.random.RandomState(seed).permutation(N), n_folds)):
-        fold_of[idx] = k
-    return fold_of
+    ids = [r["pair_index"] for r in labels]
+    assert len(set(ids)) == len(ids), "pair_index must be unique"
+    assert ids == sorted(ids), "pair list must be in ascending pair_index order (the stored selection is)"
+    uniq = sorted(set(ids))
+    fold_of_id = {}
+    for k, idx in enumerate(np.array_split(np.random.RandomState(seed).permutation(len(uniq)), n_folds)):
+        for i in idx:
+            fold_of_id[uniq[i]] = k
+    return np.array([fold_of_id[i] for i in ids], int)
 
 
 def attribute_directions_crossfit(cache_n1, labels_n1, fold_of):
@@ -1079,8 +1083,157 @@ def plot_role_paper(results, out_path, gca_layers):
                  f"mean of both objects; 95 % image-bootstrap intervals conditional on fixed directions)", fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    fig.savefig(Path(out_path).with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved: {out_path}")
+    print(f"Saved: {out_path} (+ .pdf)")
+
+
+def plot_unified_figures(args, out_dir, gca_layers):
+    """Manuscript figures 1(b), 3 and appendix A1 from finished JSON files (no recompute).
+    --unified-figures takes LABEL=DIR pairs of unified_role_contrasts_v2 directories (the
+    first is the DINOv2 colour run, which also holds attribute_switch_crossfit_normstd.json);
+    --variance-results points at variance_partitioning results.json restricted to the same
+    pairs."""
+    fig_dir = out_dir / args.role_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    runs = {}
+    for kv in args.unified_figures:
+        lab, d = kv.split("=", 1)
+        with open(Path(d) / "role_contrasts_crossfit_normstd.json") as f:
+            runs[lab] = json.load(f)
+    x = range(NUM_LAYERS)
+
+    def series(d):
+        return (np.array([q["mean"] for q in d]), np.array([q["lo"] for q in d]), np.array([q["hi"] for q in d]))
+
+    # ---- Figure 1(b): unique variance share of the scene vector, block 11, four conditions
+    if args.variance_results:
+        with open(args.variance_results) as f:
+            vp = json.load(f)
+        conds = [("trained_noca_n1", "1 object\nNo question"), ("trained_noca_n2", "2 objects\nNo question"),
+                 ("trained_ca_color_object_n2", '2 objects\n"What color is the object?"'),
+                 ("trained_ca_color_refer_n2", '2 objects\n"What color is the {referent} object?"')]
+        fig, ax = plt.subplots(figsize=(11, 3.6))
+        w = 0.36
+        for k, (fac, lab, col) in enumerate((("color", "colour of object A", CLUSTER_RGB["target"]),
+                                             ("d_color", "colour of object B", CLUSTER_RGB["distractor"]))):
+            vals = [vp[c]["layers"]["11"]["shares"]["unique"].get(fac, np.nan) for c, _ in conds]
+            ax.bar(np.arange(len(conds)) + (k - 0.5) * w, vals, w, color=col, label=lab)
+            for i, v in enumerate(vals):
+                if np.isfinite(v):
+                    ax.text(i + (k - 0.5) * w, v + 0.01, f"{v:.2f}", ha="center", fontsize=7)
+        ax.set_xticks(range(len(conds)))
+        ax.set_xticklabels([lab for _, lab in conds], fontsize=8)
+        ax.set_ylabel("unique variance share, block 11", fontsize=9)
+        ax.set_ylim(0, 0.7)
+        ax.legend(fontsize=8, frameon=False)
+        fig.tight_layout()
+        fig.savefig(fig_dir / "fig1b_variance_share.png", dpi=S["dpi"], bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved: {fig_dir / 'fig1b_variance_share.png'}")
+
+    # ---- Figure 3: queried-attribute switch, description fixed (DINOv2)
+    first_dir = Path(args.unified_figures[0].split("=", 1)[1])
+    with open(first_dir / "attribute_switch_crossfit_normstd.json") as f:
+        sw = json.load(f)
+    e = sw["pairs"]["color_vs_material"]
+    panels = [("color", "", "own colour direction: ask colour − ask material"),
+              ("material", "_differing", "own material direction: ask material − ask colour")]
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.6))
+    roles = (("referent", "question about it", "-", "o", "#d62728"),
+             ("generic", "generic question", ":", "^", "#7f7f7f"),
+             ("non_referent", "question about the other object", "--", "s", "#1f77b4"))
+    for ax, (dattr, suf, title) in zip(axes, panels):
+        n = e["n"][dattr]["differing" if suf else "full"]
+        for role, lab, ls, mk, col in roles:
+            m, lo, hi = series(e["delta"][f"both_{dattr}_{role}{suf}"])
+            ax.plot(x, m, ls, color=col, marker=mk, markersize=3, label=lab)
+            ax.fill_between(x, lo, hi, color=col, alpha=0.15, linewidth=0)
+        ax.axhline(0, color="k", linewidth=0.6)
+        ax.set_title(f"{title}\n(n = {n} images" + (", A and B differ in material" if suf else "") + ")", fontsize=9)
+        ax.set_ylabel("Δ alignment (mean of A and B)", fontsize=9)
+        _layers_axis(ax, gca_layers)
+    axes[0].legend(fontsize=7, loc="upper left")
+    fig.tight_layout()
+    fig.savefig(fig_dir / "fig3_attribute_switch.png", dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {fig_dir / 'fig3_attribute_switch.png'}")
+
+    # ---- Appendix A1: A and B separately, queried colour and unqueried shape, per model
+    labels = list(runs)
+    fig, axes = plt.subplots(3, len(labels), figsize=(4.2 * len(labels), 8.4), squeeze=False)
+    rows = (("A", "color", "object A, own colour (queried)"), ("B", "color", "object B, own colour (queried)"),
+            ("both", "shape", "mean of A and B, own shape (not queried)"))
+    for c, lab in enumerate(labels):
+        res = runs[lab]
+        for r, (o, attr, rlab) in enumerate(rows):
+            ax = axes[r][c]
+            for name, lname in (("about_it", "question about it"), ("about_other", "question about the other object"),
+                                ("generic", "generic colour question")):
+                m, lo, hi = series(res["delta"][f"{o}_{attr}_{name}"])
+                ax.plot(x, m, "-", color=ROLE_COLOR[name], marker="o", markersize=3, label=lname)
+                ax.fill_between(x, lo, hi, color=ROLE_COLOR[name], alpha=0.15, linewidth=0)
+            ax.axhline(0, color="k", linewidth=0.6)
+            ax.set_title(f"{lab}: {rlab}", fontsize=9)
+            if c == 0:
+                ax.set_ylabel("Δ alignment − no question", fontsize=9)
+            _layers_axis(ax, gca_layers)
+            if r == 0 and c == 0:
+                ax.legend(fontsize=7)
+    fig.tight_layout()
+    fig.savefig(fig_dir / "figA1_per_object_and_unqueried.png", dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {fig_dir / 'figA1_per_object_and_unqueried.png'}")
+
+
+def write_role_provenance(args, out_dir):
+    """Sidecar for the unified_role_contrasts_v2 files, without recomputation: command,
+    code commit, checkpoint path + sha256, source caches (path, mtime, shapes), pair ids,
+    split file, and the verbatim question check across the attribute-switch runs."""
+    import hashlib, subprocess, sys, os
+    u_dir = out_dir / args.role_dir
+    labels = {n: load_labels(out_dir / n) for n in ("n1", "n2")}
+    ckpt = _run_checkpoint(out_dir)
+    assert ckpt, "checkpoint not recorded in log.txt"
+    h = hashlib.sha256()
+    with open(ckpt, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 24), b""):
+            h.update(chunk)
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+                                cwd=Path(__file__).resolve().parent).stdout.strip()
+    except Exception:
+        commit = None
+    caches = {}
+    for n in ("n1", "n2"):
+        for c in ("c0", "c1", "c2", "c3"):
+            f = out_dir / n / f"feats_{c}.npz"
+            if f.exists():
+                z = np.load(f)
+                caches[str(f)] = {"mtime": os.path.getmtime(f), "obj_mean_shape": list(z["obj_mean"].shape)}
+    question_check = {}
+    for kv in (args.attribute_switch or []):
+        qb, d = kv.split("=", 1)
+        lb = load_labels(Path(d) / "n2")
+        assert [r["pair_index"] for r in lb] == [r["pair_index"] for r in labels["n2"]]
+        n_ok = 0
+        for ra, rb in zip(labels["n2"], lb):
+            keep = ra["referent_words"]["c1"] == rb["referent_words"]["c1"] and ra["referent_words"]["c2"] == rb["referent_words"]["c2"]
+            if keep:
+                for c in ("c1", "c2", "c3"):
+                    assert ra["questions"][c].replace(f"What {QUERIED} ", f"What {qb} ") == rb["questions"][c], (ra["pair_index"], c)
+                n_ok += 1
+        question_check[f"{QUERIED}_vs_{qb}"] = {"n_same_description": n_ok, "other_run_checkpoint": _run_checkpoint(d),
+                                                "verbatim_questions_differ_only_in_queried_word": True}
+    prov = {"command": " ".join(sys.argv), "code_commit": commit, "script": str(Path(__file__).resolve()),
+            "checkpoint": ckpt, "checkpoint_sha256": h.hexdigest(), "queried": QUERIED,
+            "source_caches": caches, "n_pairs": len(labels["n2"]),
+            "pair_index": [r["pair_index"] for r in labels["n2"]],
+            "split_file": str(u_dir / "split.json") if (u_dir / "split.json").exists() else None,
+            "bootstrap": {"unit": "image", "n": 2000, "seed": 42, "interval": "percentile 95 %, conditional on fixed directions and model"},
+            "question_check": question_check}
+    (u_dir / "provenance.json").write_text(json.dumps(prov, indent=1))
+    print(f"Saved: {u_dir / 'provenance.json'} (checkpoint sha256 {h.hexdigest()[:12]}…)")
 
 
 def _run_checkpoint(run_dir):
@@ -1129,9 +1282,17 @@ def attribute_switch(run_dirs, V, norm_std=False, n_boot=2000, seed=42, fold_of=
             res["checks"][f"{qa}_vs_{qb}"] = {"same_pair_list": same_pairs, "same_object_attributes_and_positions": same_objects,
                                              "same_owner_masks": same_masks, "same_checkpoint": cka == ckb,
                                              "checkpoints": [cka, ckb]}
+            assert cka is not None and ckb is not None, "checkpoint not recorded in a run log"
             assert same_pairs and same_objects and same_masks and cka == ckb, res["checks"][f"{qa}_vs_{qb}"]
             same = np.array([ra["referent_words"]["c1"] == rb["referent_words"]["c1"] and
                              ra["referent_words"]["c2"] == rb["referent_words"]["c2"] for ra, rb in zip(la, lb)])
+            # verbatim check: on the retained images the three question strings differ only
+            # in the queried word
+            for ra, rb, keep in zip(la, lb, same):
+                if keep:
+                    for c in ("c1", "c2", "c3"):
+                        assert ra["questions"][c].replace(f"What {qa} ", f"What {qb} ") == rb["questions"][c], \
+                            (ra["pair_index"], c, ra["questions"][c], rb["questions"][c])
             has_d = np.array([r["n_distractor_patches"] > 0 for r in la])
             entry = {"n_same_description": int(same.sum()), "n_images": len(la),
                      "description_words": dict(collections.Counter(r["referent_words"]["c1"] for r, s in zip(la, same) if s)),
@@ -6449,6 +6610,13 @@ def main():
     ap.add_argument("--crossfit-folds", type=int, default=0,
                     help="with --role-contrasts: also write *_crossfit files with directions "
                          "estimated on the other pair-grouped folds (0 = in-sample only)")
+    ap.add_argument("--unified-figures", nargs="*", default=None, metavar="LABEL=DIR",
+                    help="only: manuscript figures 1(b), 3, A1 from unified_role_contrasts_v2 dirs")
+    ap.add_argument("--variance-results", default=None,
+                    help="with --unified-figures: variance_partitioning results.json (same pairs)")
+    ap.add_argument("--role-provenance", action="store_true",
+                    help="only: write <role-dir>/provenance.json (checkpoint sha256, caches, pair ids, "
+                         "verbatim question check against --attribute-switch runs); no recompute")
     ap.add_argument("--role-paper", nargs="*", default=None, metavar="LABEL=JSON",
                     help="only: manuscript figure from finished role_contrasts JSON files")
     ap.add_argument("--attribute-switch", nargs="*", default=None, metavar="ATTR=DIR",
@@ -6736,6 +6904,12 @@ def main():
                 json.dump(res, f, indent=1)
             plot_attr_directions(res, label + (" — unit-normalised object means" if norm_std else ""),
                                  v2_dir / f"attr_directions{tag}.png", gca_layers)
+        return
+    if args.unified_figures:
+        plot_unified_figures(args, out_dir, gca_layers)
+        return
+    if args.role_provenance:
+        write_role_provenance(args, out_dir)
         return
     if args.role_paper:
         results = {}

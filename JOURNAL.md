@@ -1625,6 +1625,18 @@ v2 新增:直接的 self−other(DINOv2 +0.221、SigLIP +0.407、Sup-ViT +0.221�
 場景層在同一批 324 對:變異量份額與 480 相差 ≤ 0.03(問 A:A colour 0.546、B colour 0.006);t-SNE 四條件 composite。
 主文圖候選 `unified_role_contrasts_v2/role_contrasts_paper.png`。全部從快取、CPU,沒有新抽特徵或訓練。
 
+### 2026-09-17 — X26 v3:Codex 驗收主結果,修正範圍敘述、324 子集 interaction 欄位、provenance 與圖
+
+Codex 從快取獨立重算交叉擬合後的五組主對照、self−other、切換 dd 與 n2 最後一層 unique shares,全部吻合;主結果可採用。
+本次修正:(1)「最大移動 0.022、無變號」限定為五組 block 11 被問屬性 A/B 平均的六個對照;全部曲線的最大變化 0.046,19 個近零值
+變號。DINOv2 非指涉 − 無問題改引 −0.055。(2)Sup-ViT 問它 − 一般改為 +0.058。(3)場景份額「≤ 0.03」撤回,改列 block 11 各條件數值
+(generic B colour 差 0.032;全部條件最大差 0.058)。(4)`variance_partitioning.py` 對不平衡子集不再寫 interaction,改 `cells_beyond_additive`
+= r2_cells − r2_full(n1 無問題 b11:0.169,舊欄 0.155 不供引用);新目錄 `variance_partitioning_324_v2/`,unique shares 與 v1 相同;
+繪圖在 trained-only 時跳過 raw 面板。(5)`pair_folds` 改由 sorted unique pair id 建折並加 assertion(與 split.json 完全相同);
+`attribute_switch` 要求 checkpoint 非空、逐字檢查問句只差被問屬性詞;`--role-provenance` 寫每個 run 的 provenance.json(命令、commit、
+checkpoint sha256、快取、pair id、bootstrap 規格、問句檢查)。(6)主文圖出 PDF;composite v2 面板改為 No question / Generic colour question /
+Question about A,附圖例與 n。(7)X18 附註就地加日期更正。全部 CPU、從快取。
+
 ### 2026-07-09 (Thu)
 - **E7 evidence completed**: new `scripts/analysis/add_object_plot.py` → `outputs/analysis/add_object/hallucination_bar.png` (grouped bars, 5 models × 4 attrs, aggregation-only/rerunnable). Existing-JSON version first, auto-refreshed after the flamingo rerun.
 - **Flamingo 8-ep E7 rerun (4 attrs, fixed protocol, last.pt)**: hallucination color 0.08 / material 0.59 / shape 0.52 / size 0.54, bait_share 0.83–1.00 (non-color); doubling training did not reduce hallucination → architecture (LLM-side fusion), not training budget. RESULTS.md §15.

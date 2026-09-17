@@ -193,6 +193,12 @@ ordered by severity. Status legend: ✅ done · 🔄 running tonight · ⏳ queu
   (feats npz per backbone×dataset, probe_results.json, pooled_probe.png,
   pooled_tsne.png; `raw_backbone_probe.py --pooled [--only LABEL | --replot-pooled]`).
 - **Status**: ✅ done 08-19 (CPU-only; GPU was occupied by the s44 cls run).
+- **Dated correction (2026-09-16, X26 setup manifest)**: the July t-SNE / probe run
+  `outputs/analysis/tsne/object_count/` (no `_v2`) was built on the **v1** sets
+  `data/clevr_single_object` (500, 320×240) and `data/clevr_two_object` (480), verified by
+  byte-comparing its `attrs.json` with the dataset files — not on the v3/v2 stimuli as the
+  X18 notes elsewhere state. The v3/v2 sets were used by this entry's `pooled_n1n2/` and by
+  X17. Historical status of all three unchanged; see `docs/unified_analysis_manifest.md` §2.
 
 ### X19. Patch-token PCA + KMeans on the paired renders — additive object vector
 - **Motivation** (user hypothesis): a patch containing an object carries the
@@ -1696,3 +1702,63 @@ DINOv2, SigLIP and the supervised ViT; MAE shows a smaller role-dependent contra
 decrease below the no-question baseline. This is a representational dependence on the
 referring expression; it is not evidence of information removal, of behavioural necessity,
 of completed retrieval, or of two serial stages.
+
+#### X26 v3 (2026-09-17, after the Codex v2 review `writing/X26_V2_REVIEW_CODEX_2026-09-17.md`; main result accepted, scope and P3 fixes)
+
+Codex independently re-derived the five cross-fit "about the other object − generic" contrasts,
+the self − other contrasts, the switch difference-in-differences and the block-11 n2 unique
+shares; all match. The following statements above are narrowed; numbers below were re-verified
+here (`check_scope.py` / `check_v3.py` in the job directory, from the JSON files).
+
+1. **Scope of "no contrast moves by more than 0.022, no sign change".** True for the **six
+   block-11, queried-attribute, A/B-mean contrasts of the five runs** (max change 0.02161). Over
+   all objects / attributes / blocks the largest change is 0.0457 (DINOv2, object A, own colour,
+   about the other object − no question, block 11: −0.084 → −0.039) and 19 near-zero values change
+   sign (e.g. SigLIP generic − none at block 5: −0.00007 → +0.0023). The DINOv2 non-referent −
+   no-question value is −0.055 after cross-fitting (28 % smaller in magnitude than −0.077); the
+   cross-fit numbers are the ones to quote.
+2. **Sup-ViT about it − generic (cross-fit) is +0.058** [+0.055, +0.060]; the +0.059 in the v2
+   section mixed in the in-sample mean.
+3. **Scene-level shares on the 324 pairs: "changes nothing by more than 0.03" withdrawn.**
+   Block-11 shares used in the text, 480 → 324: no question A 0.032 → 0.030, B 0.035 → 0.030;
+   generic colour question A 0.273 → 0.300, B 0.287 → **0.319** (difference 0.0316); question
+   about A: A 0.562 → 0.546, B 0.005 → 0.006; shape question about A 0.554 → 0.556 / 0.005 →
+   0.005. Largest difference over all conditions, layers and factors: 0.0578 (1-object shape
+   question, block 1, colour).
+4. **Interaction field on the unbalanced subset (P3 code fix).** `variance_partitioning.py`
+   computed `r2_cells − Σ marginal` as "interaction" for n1; on the 324 subset the factors are
+   not orthogonal, so that number (0.155 at block 11, no question) is not an interaction
+   variance. New field `cells_beyond_additive = r2_cells − r2_full` (0.169; in-sample incremental
+   fit of the full cell model beyond additive main effects, not evidence of hierarchy) and the
+   `interaction` field is written only for the balanced 480 set. New output
+   `outputs/analysis/variance_partitioning_324_v2/` (unique shares identical to the 324 v1 file
+   to 1e-16; the v1 `interaction` field is not to be cited). `compute_own_axis` now takes the same
+   subset. Plotting: the three raw-backbone figures are skipped with a message under
+   `--skip-raw`; `queried_share_by_layer.png` is produced. Status for the 324 v1 directory:
+   numbers computed, plotting step failed (`KeyError: raw_DINOv2_n1`).
+5. **Provenance / assertions.** `pair_folds` builds the fold map from sorted unique pair ids
+   and asserts uniqueness and order (reproduces `split.json` exactly); `attribute_switch`
+   requires a recorded checkpoint in both runs and asserts, per retained image, that the c1/c2/c3
+   strings differ only in the queried word. `--role-provenance` writes
+   `unified_role_contrasts_v2/provenance.json` per run: command, code commit, checkpoint path and
+   **sha256** (DINOv2 22f4e90f…, SigLIP eee4673c…, Sup-ViT 6a01ed64…, MAE 57b008ea…), cache
+   paths / mtimes / shapes, the 324 pair ids, split file, bootstrap spec, and the verbatim
+   question check (colour vs shape 101, colour vs material 282: pass).
+   `variance_partitioning_324_v2/provenance.json` records command, commit, caches, checkpoint
+   from the cache logs, pair ids, layers and the definition of every statistic.
+6. **Figures.** `role_contrasts_paper.{png,pdf}` (cross-fit JSONs; caption must state 5-fold
+   pair-grouped cross-fit, image bootstrap 2000 / seed 42, conditional intervals, and that the
+   top-row y-axes are scaled per model). Composite v2
+   `outputs/analysis/tsne/object_count_v3/{n2_324/,}composite_block11_conditions_v2.png`: panels
+   "No question / Generic colour question / Question about A" (object count on its own line, no
+   question strings), attribute legend, n per panel; real question examples belong in the
+   caption ("What color is the cube?", "What color is the large object?"); each panel is an
+   independent t-SNE. Figures 1(b), 3 and A1 in `unified_role_contrasts_v2/figures/`.
+7. X18 stimulus note: dated correction inserted in the X18 entry above.
+
+Manuscript sentence adopted from the review: language conditioning changes object
+representations according to both the referring expression and the requested attribute; in the
+two-object colour analysis the contrast with a generic question is dominated by lower colour
+alignment in the non-referent, and this remains after pair-grouped cross-fitting of the attribute
+directions. Model differences and the MAE limitation are reported alongside; no claim of
+information deletion, behavioural necessity, completed retrieval, or fixed serial stages.

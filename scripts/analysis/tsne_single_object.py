@@ -281,10 +281,10 @@ def composite_last_layer(args):
     if args.composite_panels == "conditions":
         # the four question conditions of the object-level analysis (no Question-about-B
         # scene cache exists): 1 object / 2 objects no question, generic, question about A
-        panels = [(n1, "noca", "1 object\nno question"),
-                  (n2, "noca", "2 objects\nno question"),
-                  (n2, "ca_color_object", '2 objects\n"What color is\nthe object?"'),
-                  (n2, "ca_color_refer", '2 objects\n"What color is\nthe {referent} object?"')]
+        panels = [(n1, "noca", "1 object\nNo question"),
+                  (n2, "noca", "2 objects\nNo question"),
+                  (n2, "ca_color_object", "2 objects\nGeneric colour question"),
+                  (n2, "ca_color_refer", "2 objects\nQuestion about A")]
     rows = subset_rows(args.subset_labels) if args.subset_labels else None
     fig, axes = make_tsne_grid(4, ncols=4, cell=args.cell)
     for ax, (d, cond, title) in zip(axes, panels):
@@ -298,10 +298,16 @@ def composite_last_layer(args):
                         small_size=args.small_size, large_size=args.large_size)
         ax.set_title(title, fontsize=S["subplot_title_fontsize"])
         style_tsne_ax(ax)
-    finish_tsne_grid(fig, [], suptitle=None)
+        if args.composite_panels == "conditions":
+            ax.text(0.02, 0.02, f"n = {len(attrs)}", transform=ax.transAxes, fontsize=9, ha="left", va="bottom")
+    if args.composite_panels == "conditions":
+        from dino_attribute_tsne import attribute_legend_handles
+        finish_tsne_grid(fig, attribute_legend_handles(), suptitle=None, ncol=7)
+    else:
+        finish_tsne_grid(fig, [], suptitle=None)
     fig.subplots_adjust(wspace=0.12)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
-    name = "composite_block11.png" if args.composite_panels == "refer" else "composite_block11_conditions.png"
+    name = "composite_block11.png" if args.composite_panels == "refer" else "composite_block11_conditions_v2.png"
     fig.savefig(out / name, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out / name}")
