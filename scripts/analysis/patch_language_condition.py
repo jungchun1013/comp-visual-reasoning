@@ -906,6 +906,13 @@ ROLE_CONTRASTS = {"about_it": ("about it", "no question"),
 ROLE_COLOR = {"about_it": "#d62728", "about_other": "#1f77b4", "generic": "#7f7f7f",
               "about_other_vs_generic": "#9467bd", "about_it_vs_generic": "#ff7f0e",
               "self_minus_other": "#2ca02c"}
+# Legend text and line style for the three question conditions (user wording, 2026-09-17):
+# the plotted object is the target when the question queries it, the distractor when the
+# question queries the other object.  Solid = an object is named; long dash = none named.
+GENERIC_LS = (0, (6, 3))
+ROLE_LEGEND = {"about_it": ("Query the attribute of this object (target)", "-"),
+               "about_other": ("Query the attribute of the other object (distractor)", "-"),
+               "generic": ("Query the attribute without specifying an object", GENERIC_LS)}
 
 
 def pair_folds(labels, n_folds=5, seed=42):
@@ -1052,11 +1059,10 @@ def plot_role_paper(results, out_path, gca_layers):
     for c, lab in enumerate(labels):
         res = results[lab]
         ax = fig.add_subplot(gs[0, c])
-        for name, lab_line in (("about_it", "question about it"), ("about_other", "question about the other object"),
-                               ("generic", f"generic {qL} question")):
+        for name, (lab_line, ls) in ROLE_LEGEND.items():
             d = res["delta"][f"both_{q}_{name}"]
             m = np.array([v["mean"] for v in d]); lo = np.array([v["lo"] for v in d]); hi = np.array([v["hi"] for v in d])
-            ax.plot(x, m, "-", color=ROLE_COLOR[name], marker="o", markersize=3, label=lab_line)
+            ax.plot(x, m, ls=ls, color=ROLE_COLOR[name], marker="o", markersize=3, label=lab_line)
             ax.fill_between(x, lo, hi, color=ROLE_COLOR[name], alpha=0.15, linewidth=0)
         ax.axhline(0, color="k", linewidth=0.6)
         ax.set_title(lab, fontsize=11)
@@ -1066,8 +1072,8 @@ def plot_role_paper(results, out_path, gca_layers):
         _layers_axis(ax, gca_layers)
     ax = fig.add_subplot(gs[1, :])
     w = 0.36
-    for k, (name, lab_bar) in enumerate((("about_it_vs_generic", "question about it − generic question"),
-                                         ("about_other_vs_generic", "question about the other object − generic question"))):
+    for k, (name, lab_bar) in enumerate((("about_it_vs_generic", "query this object (target) − query without specifying an object"),
+                                         ("about_other_vs_generic", "query the other object (distractor) − query without specifying an object"))):
         vals = [results[lab]["delta"][f"both_{q}_{name}"][NUM_LAYERS - 1] for lab in labels]
         m = np.array([v["mean"] for v in vals]); lo = np.array([v["lo"] for v in vals]); hi = np.array([v["hi"] for v in vals])
         pos = np.arange(len(labels)) + (k - 0.5) * w
@@ -1140,14 +1146,14 @@ def plot_unified_figures(args, out_dir, gca_layers):
     panels = [("color", "", "own colour direction: ask colour − ask material"),
               ("material", "_differing", "own material direction: ask material − ask colour")]
     fig, axes = plt.subplots(1, 2, figsize=(9.6, 3.6))
-    roles = (("referent", "question about it", "-", "o", "#d62728"),
-             ("generic", "generic question", ":", "^", "#7f7f7f"),
-             ("non_referent", "question about the other object", "--", "s", "#1f77b4"))
+    roles = (("referent", ROLE_LEGEND["about_it"][0], "-", "o", ROLE_COLOR["about_it"]),
+             ("generic", ROLE_LEGEND["generic"][0], GENERIC_LS, "^", ROLE_COLOR["generic"]),
+             ("non_referent", ROLE_LEGEND["about_other"][0], "-", "s", ROLE_COLOR["about_other"]))
     for ax, (dattr, suf, title) in zip(axes, panels):
         n = e["n"][dattr]["differing" if suf else "full"]
         for role, lab, ls, mk, col in roles:
             m, lo, hi = series(e["delta"][f"both_{dattr}_{role}{suf}"])
-            ax.plot(x, m, ls, color=col, marker=mk, markersize=3, label=lab)
+            ax.plot(x, m, ls=ls, color=col, marker=mk, markersize=3, label=lab)
             ax.fill_between(x, lo, hi, color=col, alpha=0.15, linewidth=0)
         ax.axhline(0, color="k", linewidth=0.6)
         ax.set_title(f"{title}\n(n = {n} images" + (", A and B differ in material" if suf else "") + ")", fontsize=9)
@@ -1168,10 +1174,9 @@ def plot_unified_figures(args, out_dir, gca_layers):
         res = runs[lab]
         for r, (o, attr, rlab) in enumerate(rows):
             ax = axes[r][c]
-            for name, lname in (("about_it", "question about it"), ("about_other", "question about the other object"),
-                                ("generic", "generic colour question")):
+            for name, (lname, ls) in ROLE_LEGEND.items():
                 m, lo, hi = series(res["delta"][f"{o}_{attr}_{name}"])
-                ax.plot(x, m, "-", color=ROLE_COLOR[name], marker="o", markersize=3, label=lname)
+                ax.plot(x, m, ls=ls, color=ROLE_COLOR[name], marker="o", markersize=3, label=lname)
                 ax.fill_between(x, lo, hi, color=ROLE_COLOR[name], alpha=0.15, linewidth=0)
             ax.axhline(0, color="k", linewidth=0.6)
             ax.set_title(f"{lab}: {rlab}", fontsize=9)
