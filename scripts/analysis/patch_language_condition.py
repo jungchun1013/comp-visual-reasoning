@@ -1757,6 +1757,553 @@ def plot_restoration(res, label, out_path):
 
 
 # ---------------------------------------------------------------------------
+# Colour-subspace replacement at the decoder input (X27; Codex spec
+# writing/ATTRIBUTE_GEOMETRY_INTERVENTION_SPEC_CODEX_2026-09-17.md).  One operation,
+# one site, two object roles: the colour-subspace coordinates of the selected object's
+# patch tokens are returned to those of the SAME image with no question (donor), on the
+# final encoder features that `first_token_logits` hands to the decoder.  Token norm and
+# the direction of the component outside the colour subspace are preserved.  Controls:
+# sham (donor = recipient), matched rotations (same per-token angle; independent /
+# object-shared / outside-colour-span tangent directions), dose 0.
+# ---------------------------------------------------------------------------
+
+CR_FOLDS = 5
+CR_EPS = 1e-6
+
+
+def colour_subspace_folds(cache_n1, labels_n1, n_folds=CR_FOLDS, rel_tol=1e-6):
+    """Per fold k: orthonormal basis U_k (D, r) of the span of the centred colour class
+    means of 1-object, no-question object means at the decoder input (block 11, trunk.norm
+    space) of the pairs NOT in fold k (fold = pair_index % n_folds).  Class means are centred
+    by their unweighted mean; U keeps the left singular vectors with singular value
+    >= rel_tol * max (rank <= n_classes − 1).  Held-out discrimination = nearest projected
+    class mean on fold k's own images.  Returns (folds dict, fold_of (N,))."""
+    om = cache_n1["obj_mean"][:, 0, NUM_LAYERS - 1].astype(np.float32)      # (N, D)
+    vals = np.array([r["target"]["color"] for r in labels_n1])
+    pidx = np.array([r["pair_index"] for r in labels_n1])
+    fold_of = pidx % n_folds
+    out = {}
+    for k in range(n_folds):
+        tr = fold_of != k
+        classes = [c for c in COLORS if (vals[tr] == c).sum() > 0]
+        M = np.stack([om[tr & (vals == c)].mean(0) for c in classes])       # (C, D)
+        Mc = M - M.mean(0, keepdims=True)
+        Uf, Sf, _ = np.linalg.svd(Mc.T, full_matrices=False)               # Uf (D, C)
+        r = min(int((Sf >= rel_tol * Sf[0]).sum()), len(classes) - 1)
+        U = np.ascontiguousarray(Uf[:, :r]).astype(np.float32)
+        te = fold_of == k
+        pm = M @ U                                                          # (C, r)
+        pt = om[te] @ U
+        pred = np.array(classes)[np.argmin(((pt[:, None, :] - pm[None]) ** 2).sum(-1), 1)]
+        out[k] = {"U": U, "S": Sf.astype(np.float32), "rank": r, "classes": classes,
+                  "n_per_class_fit": {c: int((tr & (vals == c)).sum()) for c in classes},
+                  "fit_pair_index": pidx[tr].tolist(), "heldout_pair_index": pidx[te].tolist(),
+                  "heldout_acc": float((pred == vals[te]).mean()), "n_heldout": int(te.sum())}
+    return out, fold_of
+
+
+def replace_colour_coords(x, z, U, lam, eps=CR_EPS):
+    """Spec §6.  x recipient, z donor (T, D); U (D, r) orthonormal; dose lam in [0, 1].
+    r = |x|, u = x/r, w = z/|z|, a = P u, b = P w, a_lam = (1−lam) a + lam b,
+    t = (I−P) u / |(I−P) u|, x_lam = r (a_lam + sqrt(1 − |a_lam|²) t).
+    Returns x_lam (T, D), theta (T,) = angle(u, x_lam), invalid (T,) bool.  Invalid = zero
+    recipient / donor norm, degenerate residual, or |a_lam|² > 1 + 1e-5 (float excursions in
+    [−1e-5, 0) are clipped; the flag is reported, never silently repaired)."""
+    r = x.norm(dim=-1, keepdim=True)
+    rz = z.norm(dim=-1, keepdim=True)
+    u = x / r.clamp_min(eps)
+    w = z / rz.clamp_min(eps)
+    a = (u @ U) @ U.T
+    b = (w @ U) @ U.T
+    a_l = (1.0 - lam) * a + lam * b
+    res = u - a
+    rn = res.norm(dim=-1, keepdim=True)
+    t = res / rn.clamp_min(eps)
+    rem = 1.0 - (a_l ** 2).sum(-1, keepdim=True)
+    invalid = (r[:, 0] < eps) | (rz[:, 0] < eps) | (rn[:, 0] < eps) | (rem[:, 0] < -1e-5)
+    x_l = r * (a_l + rem.clamp_min(0.0).sqrt() * t)
+    cos = (u * x_l).sum(-1) / x_l.norm(dim=-1).clamp_min(eps)
+    theta = torch.arccos(cos.clamp(-1.0, 1.0))
+    return x_l, theta, invalid
+
+
+def matched_rotation(x, theta, seed, exclude_U=None, shared=False, eps=CR_EPS):
+    """Spec §7.2–7.3.  Rotate each token x by its own angle theta towards a random tangent
+    direction e ⊥ u: x_rand = r (cos θ u + sin θ e) — same norm and same Euclidean edit
+    length as the colour edit.  `exclude_U`: e also ⊥ span(U) (targeted control; e is made
+    orthogonal to U first and then to the residual direction (I−P)u, hence to u).  `shared`:
+    all tokens draw e from ONE Gaussian vector (object-coherent control).  Returns
+    (x_rand, invalid) with invalid = degenerate tangent."""
+    T, D = x.shape
+    g = torch.Generator(device="cpu").manual_seed(int(seed))
+    r = x.norm(dim=-1, keepdim=True)
+    u = x / r.clamp_min(eps)
+    e = torch.randn(1 if shared else T, D, generator=g).to(x)
+    if shared:
+        e = e.expand(T, D).clone()
+    if exclude_U is not None:
+        e = e - (e @ exclude_U) @ exclude_U.T
+        base = u - (u @ exclude_U) @ exclude_U.T
+        base = base / base.norm(dim=-1, keepdim=True).clamp_min(eps)
+    else:
+        base = u
+    e = e - (e * base).sum(-1, keepdim=True) * base
+    en = e.norm(dim=-1, keepdim=True)
+    invalid = en[:, 0] < eps
+    e = e / en.clamp_min(eps)
+    th = theta[:, None]
+    return r * (torch.cos(th) * u + torch.sin(th) * e), invalid
+
+
+def _boot_family(x, fam, n=2000, seed=42, level=0.95):
+    """Cluster (family) bootstrap of the mean of x (N,) with clusters fam (N,): resample
+    families with replacement, mean over the selected observations.  NaNs dropped."""
+    x = np.asarray(x, np.float64)
+    fam = np.asarray(fam)
+    ok = np.isfinite(x)
+    x, fam = x[ok], fam[ok]
+    if len(x) == 0:
+        return {"mean": float("nan"), "lo": float("nan"), "hi": float("nan"), "n": 0, "level": level}
+    fams, inv = np.unique(fam, return_inverse=True)
+    F = len(fams)
+    sums = np.bincount(inv, weights=x, minlength=F)
+    cnts = np.bincount(inv, minlength=F).astype(np.float64)
+    rng = np.random.RandomState(seed)
+    draws = rng.randint(0, F, (n, F))
+    m = (sums[draws].sum(1) / cnts[draws].sum(1))
+    q = (1 - level) / 2 * 100
+    return {"mean": float(x.mean()), "lo": float(np.percentile(m, q)), "hi": float(np.percentile(m, 100 - q)),
+            "n": int(len(x)), "n_families": int(F), "level": level}
+
+
+def _cr_obj_stats(tok, om_ref, V_own, V_unq, U):
+    """Object-level manipulation statistics of a (T, D) token block (decoder-input space):
+    unit-normalised object mean → cosine with the own-colour direction, cosines with the
+    own-value directions of the unqueried attributes, colour-subspace coordinates."""
+    m = tok.mean(0)
+    mu = m / m.norm().clamp_min(CR_EPS)
+    out = {"own_cos": float(mu @ V_own), "u_coords": (mu @ U)}
+    for a, v in V_unq.items():
+        out[f"unq_{a}_cos"] = float(mu @ v) if v is not None else float("nan")
+    if om_ref is not None:
+        d = tok - om_ref
+        out["obj_mean_disp"] = float((m - om_ref.mean(0)).norm())
+        dn = d.norm(dim=-1)
+        out["edit_len_mean"], out["edit_len_max"] = float(dn.mean()), float(dn.max())
+        dd = d / dn.clamp_min(CR_EPS)[:, None]
+        G = dd @ dd.T
+        T = dd.shape[0]
+        out["patch_coherence"] = float((G.sum() - G.diagonal().sum()) / max(T * (T - 1), 1)) if T > 1 else float("nan")
+    return out
+
+
+def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, labels_n1):
+    import hashlib
+    import subprocess
+    import time
+    from datetime import datetime
+    model, steervit, device, tf = state["model"], state["steervit"], state["device"], state["transform"]
+    trunk, vocab = steervit.vision_model.trunk, model.vocab
+    prefix = trunk.num_prefix_tokens
+    pilot = int(args.colour_replace_pilot)
+    new_dir = out_dir / ("n2_colour_replace_pilot" if pilot else "n2_colour_replace")
+    new_dir.mkdir(exist_ok=True)
+    doses = [float(d) for d in args.colour_replace_doses.split(",")]
+    n_seeds = int(args.colour_replace_seeds)
+    t_start = datetime.now()
+
+    # ---- colour subspace (5 folds by pair_index) and own-value directions (same folds) ----
+    cache_n1 = load_sparse(out_dir / "n1", "c0")
+    folds, fold_n1 = colour_subspace_folds(cache_n1, labels_n1)
+    Vs, v_record = attribute_directions_crossfit(cache_n1, labels_n1, fold_n1)
+    np.savez(new_dir / "subspace.npz", **{f"U_{k}": f["U"] for k, f in folds.items()},
+             **{f"S_{k}": f["S"] for k, f in folds.items()})
+    for k, f in folds.items():
+        print(f"fold {k}: classes {len(f['classes'])} rank {f['rank']} S {np.round(f['S'], 3).tolist()} "
+              f"held-out colour acc {f['heldout_acc']:.3f} (n={f['n_heldout']})")
+
+    # ---- cohort ----
+    N = len(labels_n2)
+    if pilot:
+        N = min(pilot, N)
+    A = [rec["target"]["color"] for rec in labels_n2]
+    Ad = [rec["distractors"][0]["color"] if rec["distractors"] else None for rec in labels_n2]
+    excluded = []
+    keep = []
+    for i in range(N):
+        rec = labels_n2[i]
+        why = []
+        if rec["n_target_patches"] <= 0:
+            why.append("no target patches")
+        if rec["n_distractor_patches"] <= 0:
+            why.append("no distractor patches")
+        if Ad[i] is None or A[i] == Ad[i]:
+            why.append("same colour")
+        if A[i] not in vocab or (Ad[i] is not None and Ad[i] not in vocab):
+            why.append("colour not in vocab")
+        (excluded if why else keep).append({"i": i, "pair_index": rec["pair_index"], "why": why} if why else i)
+    keep_set = set(keep)
+    print(f"cohort: {len(keep)} of {N} images; excluded {len(excluded)}")
+    fold_n2 = {rec["pair_index"]: int(rec["pair_index"] % CR_FOLDS) for rec in labels_n2}
+
+    imgs_t = torch.stack([tf(images_n2[i]) for i in range(N)])
+    owner_t = torch.from_numpy(np.stack(owners_n2[:N]))
+    a_id = np.array([vocab[a] for a in A[:N]])
+    ad_id = np.array([vocab[d] if d is not None else -1 for d in Ad[:N]])
+    colour_ids = {c: vocab[c] for c in COLORS if c in vocab}
+    bos = lambda b: torch.full((b, 1), vocab["<bos>"], dtype=torch.long, device=device)
+    bs = args.batch_size
+    qs = {c: [labels_n2[i]["questions"][c] for i in range(N)] for c in ("c1", "c2")}
+
+    space_check = None
+    fout = open(new_dir / "per_image.jsonl", "w")
+    n_rows = 0
+    invalid_total = {"edit": 0, "rot": 0, "rot_shared": 0, "rot_targeted": 0}
+    for s in range(0, N, bs):
+        e = min(s + bs, N)
+        ims = imgs_t[s:e].to(device)
+        with torch.no_grad():
+            if space_check is None:
+                with BlockCapture(trunk) as cap:
+                    donor = steervit.forward(ims, None)[:, prefix:, :]
+                space_check = bool(torch.allclose(trunk.norm(cap.out[NUM_LAYERS - 1]), donor, atol=1e-4))
+                print(f"feature-space check (trunk.norm(block 11) == decoder input): {space_check}")
+                assert space_check
+            else:
+                donor = steervit.forward(ims, None)[:, prefix:, :]
+            rec_feats = {c: steervit.forward(ims, qs[c][s:e]) [:, prefix:, :] for c in ("c1", "c2")}
+        for bi in range(e - s):
+            i = s + bi
+            if i not in keep_set:
+                continue
+            k = fold_n2[labels_n2[i]["pair_index"]]
+            U = torch.from_numpy(folds[k]["U"]).to(device)
+            V = Vs[k]
+            ow = owner_t[i]
+            for c in ("c1", "c2"):
+                ref_oid = 1 if c == "c1" else 2
+                correct_id = int(a_id[i] if c == "c1" else ad_id[i])
+                other_id = int(ad_id[i] if c == "c1" else a_id[i])
+                x_full = rec_feats[c][bi]                                       # (P, D)
+                z_full = donor[bi]
+                variants = []                                                   # (name, role, dose, seed, patches)
+                variants.append(("clean", "none", 0.0, -1, x_full))
+                for role, oid in (("referent", ref_oid), ("nonreferent", 3 - ref_oid)):
+                    m = (ow == oid).to(device)
+                    idx = torch.nonzero(m)[:, 0]
+                    x, z = x_full[idx], z_full[idx]
+                    obj_val = (A[i] if oid == 1 else Ad[i])
+                    V_own = torch.from_numpy(V["color"][obj_val][NUM_LAYERS - 1]).to(device) if obj_val in V["color"] else None
+                    V_unq = {a: (torch.from_numpy(V[a][val][NUM_LAYERS - 1]).to(device) if val in V[a] else None)
+                             for a, val in ((a, (labels_n2[i]["target"] if oid == 1 else labels_n2[i]["distractors"][0])[a])
+                                            for a in ("shape", "material", "size"))}
+                    meta_role = {"n_tokens": int(len(idx)), "obj_colour": obj_val}
+                    if V_own is None:
+                        continue
+                    sham, _, _ = replace_colour_coords(x, x, U, 1.0)
+                    sham_ok = bool(torch.allclose(sham, x, atol=1e-5))
+                    st_clean = _cr_obj_stats(x, None, V_own, V_unq, U)
+                    st_donor = _cr_obj_stats(z, None, V_own, V_unq, U)
+                    full = x_full.clone(); full[idx] = sham
+                    variants.append(("sham", role, 1.0, -1, full, {**meta_role, "sham_equal": sham_ok,
+                                                                   "clean": st_clean, "donor": st_donor}))
+                    for lam in doses:
+                        xl, theta, inv = replace_colour_coords(x, z, U, lam)
+                        invalid_total["edit"] += int(inv.sum())
+                        st = _cr_obj_stats(xl, x, V_own, V_unq, U)
+                        st["u_dist_to_donor"] = float((st["u_coords"] - st_donor["u_coords"]).norm())
+                        st["theta_mean"], st["theta_max"] = float(theta.mean()), float(theta.max())
+                        st["n_invalid"] = int(inv.sum())
+                        full = x_full.clone(); full[idx] = xl
+                        variants.append(("edit", role, lam, -1, full, {**meta_role, **st}))
+                        if lam == 0.0:
+                            continue
+                        for kind, kw in (("rot", {}), ("rot_shared", {"shared": True}),
+                                         ("rot_targeted", {"exclude_U": U})):
+                            for sd in range(n_seeds):
+                                xr, invr = matched_rotation(x, theta, sd, **kw)
+                                invalid_total[kind] += int(invr.sum())
+                                st = _cr_obj_stats(xr, x, V_own, V_unq, U)
+                                st["u_dist_to_donor"] = float((st["u_coords"] - st_donor["u_coords"]).norm())
+                                st["n_invalid"] = int(invr.sum())
+                                full = x_full.clone(); full[idx] = xr
+                                variants.append((kind, role, lam, sd, full, {**meta_role, **st}))
+                # one decoder call per (image, question)
+                P_all = torch.stack([v[4] for v in variants])
+                with torch.no_grad():
+                    lg = model.decoder(bos(len(variants)), P_all)[:, 0, :].float()
+                pr = lg.softmax(-1)
+                for j, v in enumerate(variants):
+                    name, role, lam, sd = v[:4]
+                    meta = v[5] if len(v) > 5 else {}
+                    meta = {kk: vv for kk, vv in meta.items() if not kk.startswith("u_coords")}
+                    for sub in ("clean", "donor"):
+                        if sub in meta:
+                            meta[sub] = {kk: vv for kk, vv in meta[sub].items() if kk != "u_coords"}
+                    row = {"i": i, "pair_index": labels_n2[i]["pair_index"], "fold": k, "cond": c,
+                           "variant": name, "role": role, "dose": lam, "seed": sd,
+                           "correct": A[i] if c == "c1" else Ad[i], "other": Ad[i] if c == "c1" else A[i],
+                           "correct_id": correct_id, "other_id": other_id,
+                           "margin": float(lg[j, correct_id] - lg[j, other_id]),
+                           "p_correct": float(pr[j, correct_id]), "p_other": float(pr[j, other_id]),
+                           "argmax": int(lg[j].argmax()), "is_correct": bool(int(lg[j].argmax()) == correct_id),
+                           "logits_colours": {cc: float(lg[j, ci]) for cc, ci in colour_ids.items()},
+                           **meta}
+                    fout.write(json.dumps(row) + "\n")
+                    n_rows += 1
+        print(f"  {e}/{N} images, {n_rows} rows", flush=True)
+    fout.close()
+    t_end = datetime.now()
+
+    # ---- manifest ----
+    def sha256(p):
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 24), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    try:
+        git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parent,
+                                           text=True).strip()
+    except Exception as ex:
+        git_hash = f"unavailable: {ex}"
+    manifest = {"spec": "writing/ATTRIBUTE_GEOMETRY_INTERVENTION_SPEC_CODEX_2026-09-17.md",
+                "checkpoint": str(args.checkpoint), "checkpoint_sha256": sha256(args.checkpoint),
+                "code": str(Path(__file__).resolve()), "git_head": git_hash, "command": " ".join(sys.argv),
+                "start": t_start.isoformat(timespec="seconds"), "end": t_end.isoformat(timespec="seconds"),
+                "site": "final encoder patch features passed to model.decoder (trunk.norm(block 11), prefix excluded)",
+                "feature_space_check_trunk_norm_equals_decoder_input": space_check,
+                "donor": "same image, same patch positions, no-question forward; never edited",
+                "n_images_requested": N, "cohort_pair_index": [labels_n2[i]["pair_index"] for i in keep],
+                "excluded": excluded, "pilot": pilot,
+                "colour_classes_available": [c for c in COLORS], "note_classes": "7 colour classes (gray excluded by the "
+                "segmentation, see COLORS); rank <= 6, not 8 classes / rank 7 as written in the spec",
+                "folds": {k: dict({kk: vv for kk, vv in f.items() if kk not in ("U", "S")}, S=f["S"].tolist())
+                          for k, f in folds.items()},
+                "own_value_directions": v_record, "doses": doses, "n_seeds": n_seeds,
+                "controls": ["sham (donor = recipient)", "rot: independent tangent per token",
+                             "rot_shared: one tangent source per object", "rot_targeted: tangent ⊥ colour span"],
+                "invalid_counts": invalid_total, "n_rows": n_rows,
+                "h3": "not run: n2 has only colour questions (c1/c2/c3); no fixed-description other-attribute set",
+                "measurement_transform": "object mean of decoder-input tokens, unit-normalised, cosine with the "
+                                         "fold's own-value direction (attribute_directions_crossfit, block 11)"}
+    with open(new_dir / "manifest.json", "w") as f:
+        json.dump(manifest, f, indent=1)
+    print(f"invalid token counts: {invalid_total}")
+    res = summarise_colour_replace(new_dir, doses, n_seeds)
+    return res
+
+
+def summarise_colour_replace(new_dir, doses=None, n_seeds=None):
+    """Paired per-image effects from per_image.jsonl (spec §8 + review R1–R4).  Every
+    quantity is first averaged over the two question directions (c1, c2) within an image,
+    then family-bootstrapped (family = pair_index; 2000 replicates, seed 42).  Written to
+    summary.json; no verbal verdict, only the registered fields."""
+    rows = [json.loads(l) for l in open(new_dir / "per_image.jsonl")]
+    doses = doses or sorted({r["dose"] for r in rows if r["variant"] == "edit"})
+    imgs = sorted({r["i"] for r in rows})
+    fam = {r["i"]: r["pair_index"] for r in rows}
+    by = collections.defaultdict(list)
+    for r in rows:
+        by[(r["i"], r["cond"], r["variant"], r["role"], r["dose"])].append(r)
+
+    def img_val(i, key, variant, role, dose, agg="mean"):
+        vals = []
+        for c in ("c1", "c2"):
+            rr = by.get((i, c, variant, role, dose), [])
+            if not rr:
+                continue
+            v = [r[key] for r in rr]
+            vals.append(np.mean(v))
+        return float(np.mean(vals)) if vals else np.nan
+
+    def clean(i, key):
+        return img_val(i, key, "clean", "none", 0.0)
+
+    F = np.array([fam[i] for i in imgs])
+    out = {"n_images": len(imgs), "doses": doses, "seed": 42, "replicates": 2000, "roles": {}}
+    D_role = {}
+    for role in ("referent", "nonreferent"):
+        R = {"sham_all_equal": all(r.get("sham_equal", True) for r in rows if r["variant"] == "sham" and r["role"] == role)}
+        for lam in doses:
+            key = f"dose_{lam:g}"
+            primary = (role == "referent" and lam == 1.0)
+            lvl = 0.975 if primary else 0.95
+            dm_e = np.array([img_val(i, "margin", "edit", role, lam) - clean(i, "margin") for i in imgs])
+            dp_e = np.array([img_val(i, "p_other", "edit", role, lam) - clean(i, "p_other") for i in imgs])
+            acc_e = np.array([img_val(i, "is_correct", "edit", role, lam) for i in imgs])
+            acc_c = np.array([clean(i, "is_correct") for i in imgs])
+            ent = {"T0_margin_edit_minus_clean": _boot_family(dm_e, F, level=lvl),
+                   "p_other_edit_minus_clean": _boot_family(dp_e, F),
+                   "accuracy_edit": _boot_family(acc_e, F), "accuracy_clean": _boot_family(acc_c, F),
+                   "flip_to_other_given_clean_correct": None, "controls": {}}
+            # clean-correct flip rate: among (image, question) pairs answered correctly without the
+            # edit, the fraction whose edited argmax is the other object's colour (secondary, own denominator)
+            flips, n_cc = [], 0
+            for i in imgs:
+                v = []
+                for c in ("c1", "c2"):
+                    rc = by.get((i, c, "clean", "none", 0.0), [])
+                    re_ = by.get((i, c, "edit", role, lam), [])
+                    if rc and re_ and rc[0]["is_correct"]:
+                        v.append(float(re_[0]["argmax"] == rc[0]["other_id"]))
+                        n_cc += 1
+                flips.append(np.mean(v) if v else np.nan)
+            ent["flip_to_other_given_clean_correct"] = {**_boot_family(np.array(flips), F), "denominator_pairs": n_cc}
+            if lam > 0:
+                for kind in ("rot", "rot_shared", "rot_targeted"):
+                    dm_r = np.array([img_val(i, "margin", kind, role, lam) - clean(i, "margin") for i in imgs])
+                    dp_r = np.array([img_val(i, "p_other", kind, role, lam) - clean(i, "p_other") for i in imgs])
+                    seeds = sorted({r["seed"] for r in rows if r["variant"] == kind})
+                    per_seed = []
+                    for sd in seeds:
+                        v = []
+                        for i in imgs:
+                            vv = [r["margin"] for c in ("c1", "c2") for r in by.get((i, c, kind, role, lam), []) if r["seed"] == sd]
+                            v.append(np.mean(vv) - clean(i, "margin") if vv else np.nan)
+                        per_seed.append(float(np.nanmean(v)))
+                    ent["controls"][kind] = {
+                        "margin_control_minus_clean": _boot_family(dm_r, F),
+                        "T1_margin_edit_minus_control": _boot_family(dm_e - dm_r, F, level=lvl if kind == "rot" else 0.95),
+                        "p_other_edit_minus_control": _boot_family(dp_e - dp_r, F),
+                        "margin_control_minus_clean_per_seed": per_seed,
+                        "obj_mean_disp_control": _boot_family([img_val(i, "obj_mean_disp", kind, role, lam) for i in imgs], F),
+                        "patch_coherence_control": _boot_family([img_val(i, "patch_coherence", kind, role, lam) for i in imgs], F)}
+                    if kind == "rot":
+                        D_role[(role, lam)] = dm_e - dm_r
+                ent["edit_geometry"] = {k: _boot_family([img_val(i, k, "edit", role, lam) for i in imgs], F)
+                                        for k in ("theta_mean", "theta_max", "edit_len_mean", "edit_len_max",
+                                                  "obj_mean_disp", "patch_coherence", "n_tokens")}
+                # manipulation check (R3): own-colour cosine clean / donor / edited, restoration ratio rho
+                cos_c = np.array([np.nanmean([r["clean"]["own_cos"] for c in ("c1", "c2")
+                                              for r in by.get((i, c, "sham", role, 1.0), [])]) for i in imgs])
+                cos_d = np.array([np.nanmean([r["donor"]["own_cos"] for c in ("c1", "c2") for r in by.get((i, c, "sham", role, 1.0), [])]) for i in imgs])
+                cos_e = np.array([img_val(i, "own_cos", "edit", role, lam) for i in imgs])
+                gap = cos_d - cos_c
+                defined = np.abs(gap) > 0.01
+                rho = np.where(defined, (cos_e - cos_c) / np.where(defined, gap, 1.0), np.nan)
+                sign_ok = np.where(defined, np.sign(cos_e - cos_c) == np.sign(gap), np.nan)
+                rho_b = _boot_family(rho, F)
+                frac_sign = float(np.nanmean(sign_ok)) if defined.any() else float("nan")
+                ent["manipulation"] = {
+                    "own_cos_clean": _boot_family(cos_c, F), "own_cos_donor": _boot_family(cos_d, F),
+                    "own_cos_edited": _boot_family(cos_e, F),
+                    "donor_minus_clean": _boot_family(gap, F), "edited_minus_clean": _boot_family(cos_e - cos_c, F),
+                    "rho": rho_b, "n_rho_defined": int(defined.sum()), "frac_sign_consistent": frac_sign,
+                    "frac_images_change_negative": float(np.nanmean((cos_e - cos_c) < 0)),
+                    "u_dist_to_donor_edited": _boot_family([img_val(i, "u_dist_to_donor", "edit", role, lam) for i in imgs], F),
+                    "u_dist_to_donor_rot": _boot_family([img_val(i, "u_dist_to_donor", "rot", role, lam) for i in imgs], F),
+                    "unqueried": {a: {"clean": _boot_family([np.nanmean([r["clean"][f"unq_{a}_cos"] for c in ("c1", "c2")
+                                                                          for r in by.get((i, c, "sham", role, 1.0), [])]) for i in imgs], F),
+                                      "edited": _boot_family([img_val(i, f"unq_{a}_cos", "edit", role, lam) for i in imgs], F)}
+                                  for a in ("shape", "material", "size")},
+                    "manipulation_ok": bool(rho_b["lo"] > 0.5 and frac_sign >= 0.8),
+                    "rule": "rho 95% family-bootstrap lower bound > 0.5 AND sign-consistent fraction >= 0.8 "
+                            "(rho defined where |donor − clean| > 0.01)"}
+                sub = defined & (rho >= 0.5)
+                ent["sensitivity_rho_ge_0.5"] = {
+                    "n": int(sub.sum()),
+                    "T0_margin_edit_minus_clean": _boot_family(np.where(sub, dm_e, np.nan), F),
+                    "T1_margin_edit_minus_rot": _boot_family(np.where(sub, D_role[(role, lam)], np.nan), F)}
+            R[key] = ent
+        out["roles"][role] = R
+    # R1: role difference on the same margin metric, paired within image
+    out["role_difference"] = {}
+    for lam in doses:
+        if (("referent", lam) in D_role) and (("nonreferent", lam) in D_role):
+            out["role_difference"][f"dose_{lam:g}"] = {
+                "D_ref_minus_D_nonref": _boot_family(D_role[("referent", lam)] - D_role[("nonreferent", lam)], F),
+                "definition": "D_role = (margin_edit − margin_clean) − mean_seeds(margin_rot − margin_clean), per image"}
+    out["decision_fields"] = {
+        role: {f"dose_{lam:g}": {
+            "manipulation_ok": out["roles"][role][f"dose_{lam:g}"].get("manipulation", {}).get("manipulation_ok"),
+            "T0_hi_below_0": out["roles"][role][f"dose_{lam:g}"]["T0_margin_edit_minus_clean"]["hi"] < 0,
+            "T1_rot_hi_below_0": out["roles"][role][f"dose_{lam:g}"]["controls"].get("rot", {}).get(
+                "T1_margin_edit_minus_control", {}).get("hi", float("nan")) < 0}
+            for lam in doses if lam > 0} for role in ("referent", "nonreferent")}
+    with open(new_dir / "summary.json", "w") as f:
+        json.dump(out, f, indent=1)
+    for role in ("referent", "nonreferent"):
+        for lam in doses:
+            if lam == 0:
+                continue
+            ent = out["roles"][role][f"dose_{lam:g}"]
+            t0, t1 = ent["T0_margin_edit_minus_clean"], ent["controls"]["rot"]["T1_margin_edit_minus_control"]
+            mp = ent["manipulation"]
+            print(f"{role:12s} dose {lam:g}: T0 Δmargin {t0['mean']:+.3f} [{t0['lo']:+.3f},{t0['hi']:+.3f}] "
+                  f"T1 vs rot {t1['mean']:+.3f} [{t1['lo']:+.3f},{t1['hi']:+.3f}] ({t1['level']:.3f}) "
+                  f"acc {ent['accuracy_edit']['mean']:.3f} | own-cos clean {mp['own_cos_clean']['mean']:+.3f} "
+                  f"donor {mp['own_cos_donor']['mean']:+.3f} edited {mp['own_cos_edited']['mean']:+.3f} "
+                  f"rho {mp['rho']['mean']:+.2f} [{mp['rho']['lo']:+.2f},{mp['rho']['hi']:+.2f}] "
+                  f"sign {mp['frac_sign_consistent']:.2f} ok={mp['manipulation_ok']}", flush=True)
+    for key, v in out["role_difference"].items():
+        d = v["D_ref_minus_D_nonref"]
+        print(f"role difference {key}: {d['mean']:+.3f} [{d['lo']:+.3f},{d['hi']:+.3f}]")
+    print(f"Saved: {new_dir / 'summary.json'}")
+    return out
+
+
+def plot_colour_replace(res, label, out_path, image=None, owner=None, question=None):
+    """Spec §10: left — the edited image with the two object masks; middle — manipulation
+    check (own-colour cosine clean / donor / edited, both roles); right — Δmargin of the
+    edit and of the matched rotation controls, both roles, dose 1 (and 0.5 lighter)."""
+    _t10 = plt.get_cmap("tab10").colors
+    role_col = {"referent": _t10[3], "nonreferent": _t10[0]}
+    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6), gridspec_kw={"width_ratios": [1.0, 1.1, 1.3]})
+    ax = axes[0]
+    if image is not None:
+        ax.imshow(image)
+        if owner is not None:
+            g = int(np.sqrt(len(owner)))
+            om = np.array(owner).reshape(g, g)
+            H, W = np.array(image).shape[:2]
+            ax.contour(np.kron(om == 1, np.ones((H // g, W // g))), levels=[0.5], colors=[role_col["referent"]], linewidths=1.2)
+            ax.contour(np.kron(om == 2, np.ones((H // g, W // g))), levels=[0.5], colors=[role_col["nonreferent"]], linewidths=1.2)
+        ax.set_title(question or "", fontsize=9)
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_xlabel("colour coordinates of ONE object returned\nto the no-question state (decoder input)", fontsize=8)
+    ax = axes[1]
+    xs = np.arange(3)
+    for r_i, role in enumerate(("referent", "nonreferent")):
+        mp = res["roles"][role]["dose_1"]["manipulation"]
+        ms = [mp["own_cos_clean"], mp["own_cos_donor"], mp["own_cos_edited"]]
+        m = np.array([q["mean"] for q in ms]); lo = np.array([q["lo"] for q in ms]); hi = np.array([q["hi"] for q in ms])
+        ax.errorbar(xs + (r_i - 0.5) * 0.15, m, yerr=[m - lo, hi - m], fmt="o", color=role_col[role], markersize=5,
+                    lw=1, label=f"{role} (rho {mp['rho']['mean']:+.2f}, sign {mp['frac_sign_consistent']:.2f})")
+    ax.set_xticks(xs); ax.set_xticklabels(["clean\n(with question)", "donor\n(no question)", "edited\n(dose 1)"], fontsize=8)
+    ax.set_ylabel("own-colour cosine of the object mean", fontsize=9)
+    ax.set_title("manipulation check", fontsize=10)
+    ax.legend(fontsize=7)
+    ax = axes[2]
+    names = [("edit", "T0_margin_edit_minus_clean", None), ("rot", None, "rot"), ("rot_shared", None, "rot_shared"),
+             ("rot_targeted", None, "rot_targeted")]
+    xs = np.arange(len(names))
+    for r_i, role in enumerate(("referent", "nonreferent")):
+        for lam, alpha in ((1.0, 1.0), (0.5, 0.45)):
+            ent = res["roles"][role].get(f"dose_{lam:g}")
+            if ent is None:
+                continue
+            qs = [ent["T0_margin_edit_minus_clean"] if ck is None else ent["controls"][ck]["margin_control_minus_clean"]
+                  for _, _, ck in names]
+            m = np.array([q["mean"] for q in qs]); lo = np.array([q["lo"] for q in qs]); hi = np.array([q["hi"] for q in qs])
+            ax.errorbar(xs + (r_i - 0.5) * 0.18 + (0.06 if lam < 1 else 0), m, yerr=[m - lo, hi - m], fmt="o",
+                        color=role_col[role], alpha=alpha, markersize=4, lw=1,
+                        label=f"{role}, dose {lam:g}")
+    ax.axhline(0, color="k", lw=0.6)
+    ax.set_xticks(xs); ax.set_xticklabels(["colour edit", "rotation\n(independent)", "rotation\n(object-shared)",
+                                          "rotation\n(outside colour span)"], fontsize=8)
+    ax.set_ylabel("Δ margin vs clean", fontsize=9)
+    ax.set_title("answer margin = logit(correct) − logit(other object's colour)", fontsize=9)
+    ax.legend(fontsize=7)
+    fig.suptitle(f"{label} — colour-subspace replacement at the decoder input ({res['n_images']} images; "
+                 f"bars 95 % family bootstrap, T1 primary at 97.5 %)", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
+# ---------------------------------------------------------------------------
 # Readout check — where does the decoder read the answer from at the last block?
 # (i) decoder cross-attention mass by patch owner; (ii) activation patching of
 # background / object tokens between conditions at every block output.
@@ -6732,6 +7279,14 @@ def main():
     ap.add_argument("--restore", action="store_true",
                     help="X25 R1: attribute restoration on the non-referent (n1/n2 caches must exist)")
     ap.add_argument("--restore-layers", default="7,8,9,10,11", help="--restore: single blocks (plus joint 9,10,11)")
+    ap.add_argument("--colour-replace", action="store_true",
+                    help="X27: colour-subspace replacement at the decoder input (Codex spec 2026-09-17; n1/n2 caches must exist)")
+    ap.add_argument("--colour-replace-pilot", type=int, default=0,
+                    help="--colour-replace: engineering pilot on the first N images (output n2_colour_replace_pilot/)")
+    ap.add_argument("--colour-replace-doses", default="0,0.5,1")
+    ap.add_argument("--colour-replace-seeds", type=int, default=10, help="--colour-replace: rotation-control seeds 0..n-1")
+    ap.add_argument("--colour-replace-summarise", default=None,
+                    help="recompute summary.json and the figure from an existing per_image.jsonl directory (no model)")
     ap.add_argument("--gqa-causal", action="store_true",
                     help="X23 steps 2–3 on a finished --gqa-run directory given as --cache-dir: token transplant "
                          "(k_target) and, for spatial, SA capture + H3 head ablation with the cumulative curve (new --out-dir)")
@@ -6807,6 +7362,11 @@ def main():
     if args.mirror:
         run_mirror(args, out_dir, label, state, n1_entries, n2_entries, x19_pairs)
         return
+    if args.colour_replace_summarise:
+        sub = Path(args.colour_replace_summarise)
+        res = summarise_colour_replace(sub)
+        plot_colour_replace(res, label, sub / "colour_replace.png")
+        return
 
     if not args.replot:
         keep, images, owners, labels = load_or_prepare_subsets(out_dir, n1_entries, n2_entries, args, x19_pairs)
@@ -6828,6 +7388,13 @@ def main():
         if args.intervene_spec:
             for spec in args.intervene_spec:
                 run_intervened(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"], spec)
+            return
+        if args.colour_replace:
+            ensure_model(state, args)
+            res = run_colour_replace(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"])
+            sub = out_dir / ("n2_colour_replace_pilot" if args.colour_replace_pilot else "n2_colour_replace")
+            plot_colour_replace(res, label, sub / "colour_replace.png", image=images["n2"][0], owner=owners["n2"][0],
+                                question=labels["n2"][0]["questions"]["c1"])
             return
         if args.restore:
             ensure_model(state, args)
