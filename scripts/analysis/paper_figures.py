@@ -181,7 +181,7 @@ def fig_functional_tests(out_dir):
         ax2.plot(x, [r["acc_c2"] for r in rows], **line_kwargs(label="accuracy, question about B (c2)", color=C_NONREF, linestyle="--"))
         ax2.set_ylim(0, 1.05)
         ax2.set_xticks(x); ax2.set_xticklabels([r["label"] for r in rows], rotation=35, ha="right", fontsize=S["tick_labelsize"] - 4)
-        ax2.set_title(f"{name}: two-object accuracy under the same interventions", fontsize=S["subplot_title_fontsize"])
+        ax2.set_title(f"{name}: accuracy, same interventions", fontsize=S["subplot_title_fontsize"])
         if j == 0:
             ax2.set_ylabel("accuracy (324 images)")
         prov["B1"][name] = {"rows": rows, "source_dirs": f"{ROOT}/{sub}/n2_int_<spec>/{{partA_attr_directions_normstd.json,behaviour.json}}"}
@@ -328,7 +328,137 @@ def fig_gqa_grounding(out_dir, example_idx=(0, 3)):
     save(fig, out_dir, "gqa_grounding", prov, ncol=2)
 
 
-FIGS = {"attribute_alignment": fig_attribute_alignment, "functional_tests": fig_functional_tests, "gqa_grounding": fig_gqa_grounding}
+# ---------------------------------------------------------------- functional tests, split (2026-09-17)
+# Codex figure spec F4 (writing/STORY_REVISION_AND_FIGURE_SPEC_CODEX_2026-09-17.md): one
+# palette for every panel — red = the referent (the object the question is about, or the
+# object the edit is applied to while it is the referent), blue = the non-referent, grey =
+# random control, purple = background.  Object A is always the measured object in the
+# dependence figure; A / B are the fixed object ids of labels.json.
+C_A, C_B = (0.839, 0.153, 0.157), (0.121, 0.467, 0.706)
+DEP_LABELS = {"none": "none",
+              "project_7_marker": "remove ref.\ndirection\nblock 7",
+              "project_8_marker": "remove ref.\ndirection\nblock 8",
+              "project_10_marker": "remove ref.\ndirection\nblock 10",
+              "project_7_random": "remove random\ndirection\nblock 7",
+              "gcamask_1-3-5": "mask text\nwrites 1,3,5\nall patches",
+              "gcamask_1-3-5_target": "mask text\nwrites 1,3,5\nA patches",
+              "gcamask_9-11": "mask text\nwrites 9,11\nall patches"}
+
+
+def fig_functional_referent_edit(out_dir, alpha=1.0):
+    """X21 Part B: colour-difference vector added on patches at one block; y = fraction of
+    baseline-correct items whose answer becomes the injected colour."""
+    models = [("DINOv2", ""), ("SigLIP", "siglip"), ("MAE", "mae")]
+    fig, axes = plt.subplots(1, 3, figsize=(S["subplot_size"][0] * 3, S["subplot_size"][1]), sharey=True)
+    prov = {"alpha": alpha, "models": {}}
+    lines = [("target_delta_c1", C_A, "-", "on the referent (A, question about A)"),
+             ("distractor_delta_c1", C_B, "-", "on the non-referent (B, question about A)"),
+             ("bg_all_delta_c1", C_BG, "-", "on all background patches (question about A)"),
+             ("target_random_c1", C_NONUNIQUE, "-", "random direction of the same norm on the referent"),
+             ("distractor_deltaD_c2", C_A, "--", "on the referent (B, question about B)"),
+             ("target_delta_c2", C_B, "--", "on the non-referent (A, question about B)")]
+    for ax, (name, sub) in zip(axes, models):
+        r = load(f"{sub}/intervention_results.json".lstrip("/"))
+        n = None
+        for var, col, ls, lab in lines:
+            rows = sorted([x for x in r["rows"] if x["variant"] == var and x["alpha"] == alpha], key=lambda x: x["layer"])
+            n = rows[0]["n"]
+            ax.plot([x["layer"] for x in rows], [x["flip_rate"] for x in rows],
+                    **line_kwargs(label=lab, color=col, linestyle=ls))
+        mark_gca_layers(ax)
+        ax.set_title(f"{name} (n = {n})", fontsize=S["subplot_title_fontsize"])
+        ax.set_xlabel("block where the vector is added"); ax.set_xticks(BLOCKS[1::2]); ax.set_ylim(-0.02, 1.02)
+        prov["models"][name] = {"source": str(ROOT / sub / "intervention_results.json"), "n_baseline_correct": n,
+                                "baseline_accuracy": r["baseline_accuracy"], "variants": r["variants"], "alphas": r["alphas"]}
+    axes[0].set_ylabel("fraction of answers switched to the injected colour")
+    prov.update({"design": "vector = alpha * (mean raw target mean of colour B − of colour A) from the 1-object set, added at the output of one block on the listed patches; readout = decoder first-token argmax; flip counted on items whose baseline answer is correct",
+                 "palette": "red = referent, blue = non-referent, grey = random, purple = background; dashed = question about B (roles swapped)",
+                 "not_excluded": "additive edit at one block is not a two-value replacement; background addition switches answers at late blocks in SigLIP/MAE (loss of specificity)",
+                 "registry": "X21 Part B results (2026-08-27)"})
+    save(fig, out_dir, "functional_referent_edit", prov, ncol=3)
+
+
+def fig_functional_addback(out_dir, spec=(9, 10, 11)):
+    """X25: the non-referent's own colour direction added back on B at blocks 9–11, dose
+    alpha × |s_L|; y = fraction of items switching to B's colour."""
+    models = [("DINOv2", ""), ("SigLIP", "siglip"), ("MAE", "mae")]
+    fig, axes = plt.subplots(1, 3, figsize=(S["subplot_size"][0] * 3, S["subplot_size"][1]), sharey=True)
+    prov = {"layer_spec": list(spec), "models": {}}
+    lines = [("own", C_B, "-", "own colour of B added on B (non-referent)", None),
+             ("own_on_referent", C_A, "-", "same vector added on A (referent, efficacy control)", None),
+             ("random", C_NONUNIQUE, "-", "random direction on B (mean, min–max of 5 seeds)", range(5)),
+             ("own_on_bg", C_BG, "-", "same vector added on the background", None)]
+    for ax, (name, sub) in zip(axes, models):
+        r = load(f"{sub}/n2_restore/restoration.json".lstrip("/"))
+        alphas = r["alphas"]
+        n = [x["n"] for x in r["rows"] if x["variant"] == "own"][0]
+        for var, col, ls, lab, seeds in lines:
+            m, lo, hi = [], [], []
+            for a in alphas:
+                if seeds is None:
+                    row = [x for x in r["rows"] if x["variant"] == var and x["cond"] == "c1" and x["alpha"] == a and x["layers"] == list(spec)][0]
+                    m.append(row["flip_to_Ad"]["mean"]); lo.append(row["flip_to_Ad"]["lo"]); hi.append(row["flip_to_Ad"]["hi"])
+                else:
+                    ms = [[x for x in r["rows"] if x["variant"] == f"random_{s_}" and x["cond"] == "c1" and x["alpha"] == a and x["layers"] == list(spec)][0]["flip_to_Ad"]["mean"] for s_ in seeds]
+                    m.append(np.mean(ms)); lo.append(min(ms)); hi.append(max(ms))
+            ax.plot(alphas, m, **line_kwargs(label=lab, color=col, linestyle=ls))
+            ax.fill_between(alphas, lo, hi, color=col, alpha=S["std_alpha"], linewidth=0)
+        dose = r["dose_s"][11]
+        ax.set_title(f"{name} (n = {n}; |s| at block 11 = {abs(dose):.2f})", fontsize=S["subplot_title_fontsize"])
+        ax.set_xlabel("dose α (× measured removal |s|)"); ax.set_xticks(alphas); ax.set_ylim(-0.02, 1.02)
+        prov["models"][name] = {"source": str(ROOT / sub / "n2_restore/restoration.json"), "n": n, "dose_s_by_block": r["dose_s"], "alphas": alphas}
+    axes[0].set_ylabel("fraction of answers switched to B's colour")
+    prov.update({"design": "vector = alpha * |s_L| * V_raw[colour of B] added on the listed patches at blocks 9, 10, 11 under the question about A; s_L = mean raw own-colour projection change of the non-referent (question about the other object − no question) at block L; y = fraction of items whose answer becomes B's colour among items whose baseline answer is A's colour",
+                 "palette": "blue = non-referent B, red = referent A (efficacy control), grey = random, purple = background",
+                 "not_excluded": "additive restoration is not a two-value replacement; zero switches is not zero probability change (ΔP ≈ 1e−5); MAE's measured dose is ≈ 0 so its add-back is near zero by construction",
+                 "registry": "X25 results and clarification (2026-09-13/14)"})
+    save(fig, out_dir, "functional_addback", prov, ncol=2)
+
+
+def fig_functional_dependence(out_dir):
+    """X24 B1 (appendix): block-11 own-colour alignment of object A and two-object accuracy
+    under the same eight interventions; original B1 estimator (in-sample directions,
+    parity cross-fit of the reference direction), not the X26 cross-fit."""
+    fig = plt.figure(figsize=(S["subplot_size"][0] * 3.6, S["subplot_size"][1] * 2.4))
+    gs = GridSpec(2, 2, figure=fig)
+    prov = {"B1": {}}
+    for j, (name, sub) in enumerate([("DINOv2", ""), ("SigLIP", "siglip")]):
+        rows = b1_cells(sub)
+        x = np.arange(len(rows))
+        labels = [DEP_LABELS[r["spec"]] for r in rows]
+        ax = fig.add_subplot(gs[0, j])
+        ax.bar(x - 0.2, [r["ref"] for r in rows], 0.4, color=C_A, label="object A, question about A (A is the referent)")
+        ax.bar(x + 0.2, [r["nonref"] for r in rows], 0.4, color=C_B, label="object A, question about B (A is the non-referent)")
+        ax.errorbar(x + 0.2, [r["nonref"] for r in rows],
+                    yerr=[[r["nonref"] - r["nonref_lo"] for r in rows], [r["nonref_hi"] - r["nonref"] for r in rows]],
+                    fmt="none", ecolor="k", lw=1)
+        for r, xi in zip(rows, x):
+            if "seeds" in r:
+                ax.scatter([xi + 0.2] * 5, r["seeds"], s=12, color="k", zorder=3)
+        ax.axhline(0, color="k", lw=0.8)
+        ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=S["tick_labelsize"] - 6)
+        ax.set_title(f"{name}: alignment of object A, block 11", fontsize=S["subplot_title_fontsize"])
+        if j == 0:
+            ax.set_ylabel("Δ alignment with own colour")
+        ax2 = fig.add_subplot(gs[1, j])
+        ax2.plot(x, [r["acc_c1"] for r in rows], **line_kwargs(label="accuracy, question about A", color=C_A))
+        ax2.plot(x, [r["acc_c2"] for r in rows], **line_kwargs(label="accuracy, question about B", color=C_B, linestyle="--"))
+        ax2.set_ylim(0, 1.05)
+        ax2.set_xticks(x); ax2.set_xticklabels(labels, fontsize=S["tick_labelsize"] - 6)
+        ax2.set_title(f"{name}: accuracy, same interventions", fontsize=S["subplot_title_fontsize"])
+        if j == 0:
+            ax2.set_ylabel("accuracy (324 images)")
+        prov["B1"][name] = {"rows": rows, "source_dirs": f"{ROOT}/{sub}/n2_int_<spec>/{{partA_attr_directions_normstd.json,behaviour.json}}"}
+    prov.update({"design": "object A fixed; alignment = unit-normalised own-colour projection change vs no question at block 11 (original B1 estimator, directions in-sample, reference direction cross-fit by pair-index parity); 'project out' removes (x·v)v on all patch tokens at the block output; random = isotropic unit vector, not energy-matched; mask = zero the cross-attention write at the listed blocks on the listed patches",
+                 "palette": "red = A is the referent, blue = A is the non-referent",
+                 "not_excluded": "removed energy of random vs reference direction not matched; X26 cross-fitting does not retroactively validate these folds",
+                 "registry": "X24 B1 results (2026-09-13)"})
+    save(fig, out_dir, "functional_dependence", prov, ncol=2)
+
+
+FIGS = {"attribute_alignment": fig_attribute_alignment, "functional_tests": fig_functional_tests, "gqa_grounding": fig_gqa_grounding,
+        "functional_referent_edit": fig_functional_referent_edit, "functional_addback": fig_functional_addback,
+        "functional_dependence": fig_functional_dependence}
 
 # ---------------------------------------------------------------- figure 4
 RSA_JSON = Path("outputs/analysis/conditional_rsa/clevr_dinov2_decoder1l_scratch/attr_query_direct/rsa_conditional_stats.json")
