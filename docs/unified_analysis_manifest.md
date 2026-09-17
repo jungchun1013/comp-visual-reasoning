@@ -33,7 +33,7 @@ scene-level caches have no "Question about B" condition.
 | **Variance partitioning** | same caches (no forward pass), 480 images | as above | same; seed 42 | same five + four raw backbones from `raw_backbone_probe/pooled_n1n2_v2` | dependent variable = the pooled block feature matrix; unique share = R²(full) − R²(without the factor), drop-one one-hot OLS with A and B attributes as factors (MAIN `variance_partitioning.py:74-100,126-145`) | `outputs/analysis/variance_partitioning/results.json`, `results_own_axis.json` | same as the row above; descriptive within-sample share, not a decomposition |
 | `object_count_v3` t-SNE | replot of `object_count_v2` features (style only) | — | — | — | — | `outputs/analysis/tsne/object_count_v3/` | not a separate experiment |
 | **Referent-role probe (X17, 219 scenes)** | `data/clevr_two_object_v2` (480; target always large), eligible when shapes differ, colours differ, no gray → 221, 2 empty masks → **219** (MAIN `reference_probe.py:48-57`, log) | scene-grouped split | same DINOv2 checkpoint, seed 42; logistic, one GroupShuffleSplit 80/20 | `What color is the {shape}?` both directions; `noca`; description; irrelevant | block → LayerNorm → mean over each object's patches (unpooled cache (12,219,2,2,768)) | `outputs/analysis/reference_probe/two_object_paired/` | **no**: different stimulus set (superseded), different filter; keep as a separate design, do not mix the 219 with the 324 |
-| **Workshop steered t-SNE / conditional RSA** | CLEVR v1.0 val; reference pool = first 500 unique val images with 3–5 objects in dataset order, query image excluded (MAIN `tsne_viz.py:331-350`, `conditional_rsa.py:200-218`) | — | same DINOv2 checkpoint; t-SNE cosine, perplexity 30, seed 42; RSA 72 queries / category | curated `attr_direct_queries.json` (q0 `What shape is the large cyan object?`), RSA: sampled from the 3 attr_query families | block → LayerNorm → mean over all patches | `outputs/analysis/tsne/clevr_dinov2_decoder1l_scratch/attr_direct/cache_q*.npz`, `outputs/analysis/conditional_rsa/` | **no**: natural scenes, no object masks, no paired conditions; complementary evidence |
+| **Workshop steered t-SNE / conditional RSA** | CLEVR v1.0 val; reference pool = first 500 unique val images with 3–5 objects in dataset order, query image excluded (MAIN `tsne_viz.py:331-350`, `conditional_rsa.py:200-218`) | — | same DINOv2 checkpoint; t-SNE cosine, perplexity 30, seed 42; RSA 72 queries / category | curated `attr_direct_queries.json` (q0 `What shape is the large cyan object?`), RSA: sampled from the 3 attr_query families | block → LayerNorm → mean over all patches | `outputs/analysis/tsne/clevr_dinov2_decoder1l_scratch/attr_direct/cache_q*.npz`, `outputs/analysis/conditional_rsa/` | **no**: synthetic CLEVR scenes with 3–5 objects, no object masks, no paired conditions; complementary evidence |
 | old `outputs/analysis/tsne/object_count/` | **v1 sets**: n1 `data/clevr_single_object` (500, 320×240), n2 `data/clevr_two_object` (480, 480×320) — verified by byte-comparing `attrs.json` with the dataset files | not paired | same DINOv2 | `noca, ca_object, ca_cube, ca_shape_object, ca_shape_large` | as `object_count_v2` | also `outputs/analysis/linear_probe_v2/object_count/` (fold-local PCA redo of these caches) | **no** (render mismatch between its n1 and n2); historical only |
 
 Correction to the registry (X18 note, "Old object_count runs … built on the defective v3/v2
@@ -46,12 +46,17 @@ and by the X17 referent probe. The old run stays historical either way.
 The attribute directions are estimated on the **1-object renders** (`n1`, no question) and
 evaluated on the **2-object renders** (`n2`) of the **same 324 pairs**: n1 image *i* is the
 2-object scene *i* with B removed, target placement identical. So the direction set and the
-evaluation set share the object instances (A of every pair), not the images. The
-per-value direction is a mean over ≥ 5 objects and every A contributes to its own value's
-direction; this is a mild within-sample bias in the level of the projection, not in the
-**condition contrasts** (the same direction is used for c0–c3, so the shared-instance term
-cancels in every difference reported below). Cross-fitting by pair (directions from the
-other half) is the clean version and is listed as an open item; it was not run here.
+evaluation set share the object instances (A of every pair), not the images. Every A
+contributes to its own value's direction. **Correction (2026-09-16, after Codex review):** the
+first version of this section claimed that the shared-instance term "cancels in every
+contrast". That has no mathematical guarantee: a contrast is `(unit(x_question) −
+unit(x_baseline)) · v`, and a direction `v` that carries information about this image can
+be correlated with the difference vector. The size and sign of the overlap effect were not
+tested in the first version. The sensitivity check is the pair-grouped cross-fit
+(`--crossfit-folds 5`, seed 42, directions from the other folds' 1-object no-question means,
+held-out pairs projected on them; `split.json` records the fold of every pair and the
+per-fold counts per value). Its results are in the registry (X26, v2); the intervals remain
+conditional on the fixed directions and the trained model.
 
 ## 4. What was computed from the existing caches (no new extraction)
 
@@ -90,10 +95,11 @@ logs `log_role_contrasts.txt` in each run directory. Results are recorded in
 
 ## 5. Not done / open
 
-- Scene-level recomputation on the 324-pair subset (variance share and t-SNE on the common
-  sample) — the caches allow it (`object_count_v2` row order = `pair_index`), not run; the
-  script `variance_partitioning.py` lives only in the main checkout.
-- Pair-wise cross-fit attribute directions (§3).
+- Done 2026-09-16 (v2): scene-level variance share and t-SNE on the 324-pair subset
+  (`outputs/analysis/variance_partitioning_324/`, `outputs/analysis/tsne/object_count_v3/n2_324/`);
+  pair-grouped cross-fit directions (`unified_role_contrasts_v2/`); see registry X26
+  corrections. Variance-share figures were not regenerated for the subset (plot code expects
+  the raw-backbone conditions).
 - Pooled scene vector and object means from one forward pass: the X21 cache keeps object
   patches + 64 background patches, not all 576, so the exact pooled mean cannot be rebuilt
   from it; the scene-level cache comes from a separate pass with the same checkpoint, the

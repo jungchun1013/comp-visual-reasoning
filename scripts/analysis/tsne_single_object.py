@@ -153,6 +153,13 @@ def minimal_referring_question(attrs, query_attr):
     raise ValueError(f"no distinguishing non-query attribute: {attrs}")
 
 
+def subset_rows(subset_labels):
+    """pair_index list of an object-level labels.json (X21): restricts a 480-row scene
+    cache to the same pairs as the object-level analysis (rows are pair_index)."""
+    with open(subset_labels) as f:
+        return [r["pair_index"] for r in json.load(f)]
+
+
 def run(args):
     apply_style()
     gca_layers = [1, 3, 5, 7, 9, 11]
@@ -176,6 +183,11 @@ def run(args):
             with open(Path(args.features_dir) / "attrs.json") as f:
                 attrs_list = json.load(f)
             print(f"Loaded cached features: {cache_file}")
+            if args.subset_labels:
+                rows = subset_rows(args.subset_labels)
+                all_feats = {l: v[rows] for l, v in all_feats.items()}
+                attrs_list = [attrs_list[i] for i in rows]
+                print(f"Restricted to {len(rows)} rows of {args.subset_labels}")
         else:
             if steervit is None:
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -266,11 +278,21 @@ def composite_last_layer(args):
               (n2, "noca", "2 objects\nno question"),
               (n2, "ca_color_refer", '2 objects\n"What color is\nthe {referent} object?"'),
               (n2, "ca_shape_refer", '2 objects\n"What shape is\nthe {referent} object?"')]
+    if args.composite_panels == "conditions":
+        # the four question conditions of the object-level analysis (no Question-about-B
+        # scene cache exists): 1 object / 2 objects no question, generic, question about A
+        panels = [(n1, "noca", "1 object\nno question"),
+                  (n2, "noca", "2 objects\nno question"),
+                  (n2, "ca_color_object", '2 objects\n"What color is\nthe object?"'),
+                  (n2, "ca_color_refer", '2 objects\n"What color is\nthe {referent} object?"')]
+    rows = subset_rows(args.subset_labels) if args.subset_labels else None
     fig, axes = make_tsne_grid(4, ncols=4, cell=args.cell)
     for ax, (d, cond, title) in zip(axes, panels):
         X = np.load(d / f"feats_{cond}.npz")["11"]
         with open(d / "attrs.json") as f:
             attrs = json.load(f)
+        if rows is not None:
+            X, attrs = X[rows], [attrs[i] for i in rows]
         emb = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(X)
         _pooled_scatter(ax, emb, attrs, edgecolor=args.edge_color, palette=args.palette,
                         small_size=args.small_size, large_size=args.large_size)
@@ -279,9 +301,10 @@ def composite_last_layer(args):
     finish_tsne_grid(fig, [], suptitle=None)
     fig.subplots_adjust(wspace=0.12)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out / "composite_block11.png", dpi=S["dpi"], bbox_inches="tight")
+    name = "composite_block11.png" if args.composite_panels == "refer" else "composite_block11_conditions.png"
+    fig.savefig(out / name, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved: {out / 'composite_block11.png'}")
+    print(f"Saved: {out / name}")
 
 
 if __name__ == "__main__":
@@ -320,6 +343,12 @@ if __name__ == "__main__":
                     help="Panel edge in inches (default TSNE_STYLE['cell'] = 2.8)")
     ap.add_argument("--features-dir-n2", default=None,
                     help="With --composite: cached 2-object features dir (n1 = --features-dir)")
+    ap.add_argument("--subset-labels", default=None,
+                    help="object-level labels.json (X21): keep only its pair_index rows of the "
+                         "cached features (requires --features-dir)")
+    ap.add_argument("--composite-panels", default="refer", choices=["refer", "conditions"],
+                    help="composite: colour/shape referring (refer) or the four question "
+                         "conditions of the object-level analysis (conditions)")
     ap.add_argument("--composite", action="store_true",
                     help="Block-11 row: n1 noca / n2 noca / n2 colour q / n2 shape q")
     args = ap.parse_args()

@@ -1612,6 +1612,19 @@ non-referent −0.13。shape 方向不可估:描述不含 shape 詞的配對必�
 未做:324 對子集上的場景層變異量份額與 t-SNE;按 pair 交叉擬合方向;同一次前向的 pooled 場景向量(X21 快取只有物件
 與 64 個背景 patch)。
 
+### 2026-09-16 — X26 更正與 v2:Codex 審查後的解讀修正、方向交叉擬合、self−other、324 對場景層
+
+Codex 獨立重算五組「問另一物件 − 一般問句」全部吻合,但退回五處解讀。更正(舊文保留,登記加有日期的更正節):
+(1)「方向與測試樣本重疊在相減時抵消」撤回,沒有這個保證;改做 pair 分組五折交叉擬合(seed 42,每折訓練集每個顏色值 ≥ 30)。
+held-out 結果與 in-sample 相差都在 0.022 以內、無變號:DINOv2 −0.227 → −0.216、SigLIP −0.433 → −0.429、Sup-ViT −0.168 → −0.163、
+MAE −0.049 → −0.049、DINOv2 shape −0.244 → −0.243。(2)「一般問句與問它一樣」縮成幅度接近(DINOv2 / SigLIP);Sup-ViT 有額外 referent
+增強 +0.059。(3)MAE 有較小的角色差異(self−other +0.043),只是沒有低於無問題基線。(4)H3 改成「被問屬性的角色對比較大」,
+未被問屬性中間層也有變化。(5)shape 只有「兩物件形狀不同」子群不存在,完整子群照報。
+v2 新增:直接的 self−other(DINOv2 +0.221、SigLIP +0.407、Sup-ViT +0.221、MAE +0.043)、切換的 difference-in-differences
+(colour +0.18、material 相異子群 +0.30)、跨 run 對帳(pair、物件屬性位置、mask、checkpoint 全同)、每個估計量的 pair ID。
+場景層在同一批 324 對:變異量份額與 480 相差 ≤ 0.03(問 A:A colour 0.546、B colour 0.006);t-SNE 四條件 composite。
+主文圖候選 `unified_role_contrasts_v2/role_contrasts_paper.png`。全部從快取、CPU,沒有新抽特徵或訓練。
+
 ### 2026-07-09 (Thu)
 - **E7 evidence completed**: new `scripts/analysis/add_object_plot.py` → `outputs/analysis/add_object/hallucination_bar.png` (grouped bars, 5 models × 4 attrs, aggregation-only/rerunnable). Existing-JSON version first, auto-refreshed after the flamingo rerun.
 - **Flamingo 8-ep E7 rerun (4 attrs, fixed protocol, last.pt)**: hallucination color 0.08 / material 0.59 / shape 0.52 / size 0.54, bait_share 0.83–1.00 (non-color); doubling training did not reduce hallucination → architecture (LLM-side fusion), not training budget. RESULTS.md §15.

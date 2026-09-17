@@ -1609,3 +1609,90 @@ observational analyses, S_correct for interventions" already states this rule.
 - **Not run (plan items left open)**: scene-level variance share / t-SNE restricted to the 324
   pairs; pair-wise cross-fit directions; a pooled scene vector from the same forward pass (the
   X21 cache holds object + 64 background patches only).
+
+#### X26 corrections and v2 results (2026-09-16, after the Codex review `writing/X26_REVIEW_AND_FOLLOWUP_CODEX_2026-09-16.md`)
+
+Codex re-derived the five "about the other object − generic" contrasts and intervals from the
+caches and confirmed them; the following interpretations of the entry above are withdrawn or
+narrowed. The old text stays as written.
+
+1. **"Shared-instance term cancels in every contrast" — withdrawn.** There is no such
+   guarantee (a contrast is `(unit(x_q) − unit(x_base)) · v`; an in-sample `v` can correlate
+   with the difference). The effect was untested. Sensitivity check now run: pair-grouped
+   5-fold cross-fit directions (seed 42; `unified_role_contrasts_v2/split.json`; every
+   training fold keeps ≥ 30 one-object examples per colour value, ≥ 82 per shape value).
+   Held-out results, block 11, mean of A and B, unit-normalised, old in-sample → cross-fit:
+   DINOv2 about other − generic −0.227 → **−0.216** [−0.224, −0.208], about other − none
+   −0.077 → −0.055, about it − generic +0.005 → +0.005; SigLIP −0.433 → −0.429; Sup-ViT
+   −0.168 → −0.163; MAE −0.049 → −0.049; DINOv2 shape run −0.244 → −0.243. No contrast
+   moves by more than 0.022 and no sign changes. Intervals are conditional on the fixed
+   directions and the single trained model (not on direction or training uncertainty).
+2. **"Generic question ≈ question about it" — narrowed.** About it − generic is +0.005
+   [+0.001, +0.009] (DINOv2), −0.022 [−0.026, −0.018] (SigLIP), **+0.059** [+0.055, +0.060]
+   (Sup-ViT): the magnitudes are close in DINOv2 / SigLIP, and Sup-ViT has an additional
+   referent increase; no equivalence test was run. The similar mean response of A and B under
+   the generic question does not exclude that the model selects a different default object per
+   image; nothing here shows both objects being bound at once or no selection.
+3. **MAE.** MAE has a smaller role contrast (about other − generic −0.049; self − other
+   +0.043), not none; what it lacks is the fall below the no-question baseline (about other −
+   none +0.051). Its unqueried-shape about other − generic is +0.030 [+0.026, +0.034], so the
+   colour/shape ratio is not an order of magnitude there.
+4. **H3 is preferential, not exclusive.** Unqueried-attribute role contrasts have intervals
+   excluding zero (DINOv2 shape about other − generic −0.014 [−0.017, −0.011]; self − other on
+   shape is −0.065 / −0.095 at blocks 5 / 7 before returning to +0.013 at 11). Supported
+   statement: at block 11 the queried-attribute role contrast is larger (|Δ| 0.16–0.43 vs
+   ≤ 0.03 for the three discriminative backbones); the block-11 statement does not cover the
+   middle blocks. "The question adds attribute information" is replaced by "the question
+   increases alignment with the measured attribute-value direction".
+5. **Shape switch.** The full same-description subsets are computable and reported (colour
+   vs shape, shape direction, n = 101: referent +0.314, generic +0.267, non-referent +0.259);
+   only the **differing-shape stratum** is empty (n = 0), so the shape direction cannot answer
+   how two different shape values compete. Shared-value and differing-value strata are now
+   reported side by side, not deleted.
+6. Manifest: the workshop t-SNE / RSA pool is synthetic CLEVR (3–5 objects), not natural
+   scenes; the switch figure now shows the mean of A and B with the differing-value stratum on
+   its own row; the first figure showed object A only.
+
+**v2 additions (`--role-contrasts --role-dir unified_role_contrasts_v2 --crossfit-folds 5`,
+in-sample and cross-fit files side by side; DINOv2 also `--attribute-switch`).**
+Direct self − other (about it − about the other object, per image, mean of A and B,
+cross-fit, queried attribute, block 11): DINOv2 +0.221 [+0.214, +0.228], SigLIP +0.407,
+Sup-ViT +0.221, MAE +0.043, DINOv2 shape +0.309; it opens at block 9 (DINOv2), 7 (SigLIP,
+Sup-ViT). Switch difference-in-differences `dd` = (self − other when asking d) − (self −
+other when asking the other attribute), cross-fit, block 11: colour (vs shape, n 101) +0.184
+[+0.171, +0.196]; colour (vs material, n 282) +0.167; material, differing stratum (n 141)
++0.295 [+0.279, +0.309] with non-referent −0.120; material (vs shape, differing n 31) +0.239;
+shape (shared-value pairs only) +0.055 / +0.041. Cross-run checks recorded in the JSON
+(`checks`): same pair list, same object attributes and positions, identical owner masks,
+same checkpoint for all three run pairs. Every estimator's valid pair indices are stored
+(`valid_pair_index`, `pair_index_same_description`, `pair_index_differing`). These are
+exploratory quantifications, not pre-registered hypotheses.
+
+**Scene-level analyses on the same 324 pairs (P3).** Reconciliation
+(`check_scene_questions`): `object_count_v2/n2/attrs.json` equals the dataset metadata; for
+all 324 pairs the scene-cache rows carry the same objects and filenames, and the scene
+`ca_color_refer` question string equals the object-level c1 (324/324); same checkpoint. No
+Question-about-B scene cache exists (not fabricated). `variance_partitioning.py
+--subset-labels --skip-raw` → `outputs/analysis/variance_partitioning_324/results.json`
+(figures not regenerated: the plot functions expect the raw-backbone keys). Unique variance
+share of the scene vector, block 11, 480 → 324: no question A colour 0.032 → 0.030, B
+colour 0.035 → 0.030; generic colour question 0.273 → 0.300 / 0.287 → 0.319; question about
+A 0.562 → 0.546 / 0.005 → 0.006; shape question about A 0.554 → 0.556 / 0.005 → 0.005.
+Descriptive within-sample shares; the subset changes nothing by more than 0.03. t-SNE on
+the 324 rows (perplexity 30, seed 42, each panel fitted separately, no cross-panel
+coordinate comparison): `outputs/analysis/tsne/object_count_v3/n2_324/` (no question /
+generic / question about A grids) and `composite_block11_conditions.png` (1 object, 2 objects
+no question, generic, question about A); the full-480 composite with the same four panels is
+`outputs/analysis/tsne/object_count_v3/composite_block11_conditions.png`. One-object scenes
+are the baseline in which the generic question is itself uniquely referring.
+
+**Manuscript figure candidate** `unified_role_contrasts_v2/role_contrasts_paper.png`
+(`--role-paper`, cross-fit JSONs): top row per model, the three question conditions − no
+question; bottom, block-11 about it − generic and about other − generic with intervals.
+Sentence adopted from the review: in the two-object colour analysis, referring questions
+produce a larger reduction in the non-referent's colour alignment than any additional
+increase in the referent's alignment, relative to a generic colour question; strongest in
+DINOv2, SigLIP and the supervised ViT; MAE shows a smaller role-dependent contrast without a
+decrease below the no-question baseline. This is a representational dependence on the
+referring expression; it is not evidence of information removal, of behavioural necessity,
+of completed retrieval, or of two serial stages.
