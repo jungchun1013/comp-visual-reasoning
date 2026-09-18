@@ -1897,7 +1897,70 @@ def _cr_obj_stats(tok, om_ref, V_own, V_unq, U):
     return out
 
 
-def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, labels_n1):
+def _cr_verify_n1_cache(npz_path, cache_n1, images_n1, owners_n1, state, args):
+    """Review item 3: the colour subspace is fitted on the cached n1 object means; verify that
+    the cache was produced by THIS checkpoint / preprocessing by re-extracting the decoder-input
+    object means (block 11, trunk.norm, owner == 1) of every n1 image and comparing with the
+    cache (float16).  Fails loudly on disagreement.  Records file identity and array hash."""
+    import hashlib
+    import os
+    steervit, device, tf = state["steervit"], state["device"], state["transform"]
+    prefix = steervit.vision_model.trunk.num_prefix_tokens
+    om_cache = cache_n1["obj_mean"][:, 0, NUM_LAYERS - 1].astype(np.float32)
+    st = os.stat(npz_path)
+    rec = {"file": str(npz_path), "size": st.st_size, "mtime": datetime_iso(st.st_mtime),
+           "obj_mean_sha256": hashlib.sha256(np.ascontiguousarray(cache_n1["obj_mean"]).tobytes()).hexdigest()}
+    if images_n1 is None:
+        rec["verified"] = False
+        rec["reason"] = "n1 images not supplied"
+        return rec
+    N, bs = len(images_n1), args.batch_size
+    # The cache was extracted by SparseExtractor under bfloat16 autocast; the experiment itself
+    # runs the encoder in float32.  Both fresh passes are compared: the bf16 pass is the identity
+    # check of the cache (same checkpoint, same preprocessing, same precision); the fp32 pass
+    # measures the precision gap between the fitted subspace's features and the edited features.
+    fresh = {"bf16_autocast": np.zeros_like(om_cache), "fp32": np.zeros_like(om_cache)}
+    with torch.no_grad():
+        for s in range(0, N, bs):
+            e = min(s + bs, N)
+            ims = torch.stack([tf(im) for im in images_n1[s:e]]).to(device)
+            for mode in fresh:
+                if mode == "bf16_autocast" and ims.is_cuda:
+                    with autocast(device_type="cuda", dtype=torch.bfloat16):
+                        feats = steervit.forward(ims, None)
+                    feats = feats.float()
+                else:
+                    feats = steervit.forward(ims, None)
+                feats = feats[:, prefix:, :]
+                for bi in range(e - s):
+                    sel = torch.from_numpy(owners_n1[s + bi] == 1).to(device)
+                    fresh[mode][s + bi] = feats[bi][sel].mean(0).float().cpu().numpy() if sel.any() else np.nan
+    for mode, arr in fresh.items():
+        ok = np.isfinite(arr).all(1)
+        diff = np.abs(arr[ok] - om_cache[ok])
+        rel = diff.max(1) / np.abs(om_cache[ok]).max(1)
+        cos = (arr[ok] * om_cache[ok]).sum(1) / (np.linalg.norm(arr[ok], axis=1) * np.linalg.norm(om_cache[ok], axis=1))
+        rec[mode] = {"n_compared": int(ok.sum()), "max_abs_diff": float(diff.max()), "max_rel_diff": float(rel.max()),
+                     "min_cosine": float(cos.min())}
+    rec.update({"n_images": int(N), "tolerance_rel_bf16": 1e-2,
+                "verified": bool(rec["bf16_autocast"]["max_rel_diff"] < 1e-2),
+                "note": "cache extracted under bf16 autocast (SparseExtractor); experiment forward is fp32; the "
+                        "fp32 entry is the precision gap between fitted subspace features and edited features"})
+    for mode in fresh:
+        r = rec[mode]
+        print(f"n1 cache check [{mode}]: {r['n_compared']} images, max abs diff {r['max_abs_diff']:.2e}, "
+              f"max rel diff {r['max_rel_diff']:.2e}, min cosine {r['min_cosine']:.5f}")
+    print(f"n1 cache verified (bf16 path): {rec['verified']}")
+    assert rec["verified"], "n1 cache does not match a fresh bf16 forward of this checkpoint; refusing to fit the subspace on it"
+    return rec
+
+
+def datetime_iso(ts):
+    from datetime import datetime
+    return datetime.fromtimestamp(ts).isoformat(timespec="seconds")
+
+
+def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, labels_n1, images_n1=None, owners_n1=None):
     import hashlib
     import subprocess
     import time
@@ -1906,7 +1969,8 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
     trunk, vocab = steervit.vision_model.trunk, model.vocab
     prefix = trunk.num_prefix_tokens
     pilot = int(args.colour_replace_pilot)
-    new_dir = out_dir / ("n2_colour_replace_pilot" if pilot else "n2_colour_replace")
+    new_dir = out_dir / (("n2_colour_replace_pilot" if pilot else "n2_colour_replace") + args.colour_replace_suffix)
+    assert not (new_dir / "per_image.jsonl").exists(), f"{new_dir} already holds a run; choose --colour-replace-suffix"
     new_dir.mkdir(exist_ok=True)
     doses = [float(d) for d in args.colour_replace_doses.split(",")]
     n_seeds = int(args.colour_replace_seeds)
@@ -1914,6 +1978,7 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
 
     # ---- colour subspace (5 folds by pair_index) and own-value directions (same folds) ----
     cache_n1 = load_sparse(out_dir / "n1", "c0")
+    cache_check = _cr_verify_n1_cache(out_dir / "n1" / "feats_c0.npz", cache_n1, images_n1, owners_n1, state, args)
     folds, fold_n1 = colour_subspace_folds(cache_n1, labels_n1)
     Vs, v_record = attribute_directions_crossfit(cache_n1, labels_n1, fold_n1)
     np.savez(new_dir / "subspace.npz", **{f"U_{k}": f["U"] for k, f in folds.items()},
@@ -1959,6 +2024,7 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
     fout = open(new_dir / "per_image.jsonl", "w")
     n_rows = 0
     invalid_total = {"edit": 0, "rot": 0, "rot_shared": 0, "rot_targeted": 0}
+    excluded_invalid = []          # (image, question) pairs dropped entirely because any variant had an invalid token
     for s in range(0, N, bs):
         e = min(s + bs, N)
         ims = imgs_t[s:e].to(device)
@@ -1987,6 +2053,7 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
                 x_full = rec_feats[c][bi]                                       # (P, D)
                 z_full = donor[bi]
                 variants = []                                                   # (name, role, dose, seed, patches)
+                pair_invalid = 0
                 variants.append(("clean", "none", 0.0, -1, x_full))
                 for role, oid in (("referent", ref_oid), ("nonreferent", 3 - ref_oid)):
                     m = (ow == oid).to(device)
@@ -2010,6 +2077,7 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
                     for lam in doses:
                         xl, theta, inv = replace_colour_coords(x, z, U, lam)
                         invalid_total["edit"] += int(inv.sum())
+                        pair_invalid += int(inv.sum())
                         st = _cr_obj_stats(xl, x, V_own, V_unq, U)
                         st["u_dist_to_donor"] = float((st["u_coords"] - st_donor["u_coords"]).norm())
                         st["theta_mean"], st["theta_max"] = float(theta.mean()), float(theta.max())
@@ -2023,11 +2091,17 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
                             for sd in range(n_seeds):
                                 xr, invr = matched_rotation(x, theta, sd, **kw)
                                 invalid_total[kind] += int(invr.sum())
+                                pair_invalid += int(invr.sum())
                                 st = _cr_obj_stats(xr, x, V_own, V_unq, U)
                                 st["u_dist_to_donor"] = float((st["u_coords"] - st_donor["u_coords"]).norm())
                                 st["n_invalid"] = int(invr.sum())
                                 full = x_full.clone(); full[idx] = xr
                                 variants.append((kind, role, lam, sd, full, {**meta_role, **st}))
+                if pair_invalid:
+                    excluded_invalid.append({"i": i, "pair_index": labels_n2[i]["pair_index"], "cond": c,
+                                             "n_invalid_tokens": pair_invalid,
+                                             "rule": "any invalid token in any variant -> the (image, question) pair is dropped from all conditions"})
+                    continue
                 # one decoder call per (image, question)
                 P_all = torch.stack([v[4] for v in variants])
                 with torch.no_grad():
@@ -2083,8 +2157,12 @@ def run_colour_replace(out_dir, args, state, images_n2, owners_n2, labels_n2, la
                 "own_value_directions": v_record, "doses": doses, "n_seeds": n_seeds,
                 "controls": ["sham (donor = recipient)", "rot: independent tangent per token",
                              "rot_shared: one tangent source per object", "rot_targeted: tangent ⊥ colour span"],
-                "invalid_counts": invalid_total, "n_rows": n_rows,
-                "h3": "not run: n2 has only colour questions (c1/c2/c3); no fixed-description other-attribute set",
+                "invalid_counts": invalid_total, "excluded_invalid_pairs": excluded_invalid, "n_rows": n_rows,
+                "n1_cache_check": cache_check,
+                "colour_class_balance_n1": {c: int(sum(r["target"]["color"] == c for r in labels_n1)) for c in COLORS},
+                "colour_majority_baseline_n1": float(max(sum(r["target"]["color"] == c for r in labels_n1) for c in COLORS) / len(labels_n1)),
+                "h3": "not run in this stage: shape/material question sets exist (outputs/analysis/patch_language_condition/{shape,material}, "
+                      "324 each; 101 / 282 keep the same description across both reference directions) but are not yet integrated or verified here",
                 "measurement_transform": "object mean of decoder-input tokens, unit-normalised, cosine with the "
                                          "fold's own-value direction (attribute_directions_crossfit, block 11)"}
     with open(new_dir / "manifest.json", "w") as f:
@@ -2174,22 +2252,41 @@ def summarise_colour_replace(new_dir, doses=None, n_seeds=None):
                 ent["edit_geometry"] = {k: _boot_family([img_val(i, k, "edit", role, lam) for i in imgs], F)
                                         for k in ("theta_mean", "theta_max", "edit_len_mean", "edit_len_max",
                                                   "obj_mean_disp", "patch_coherence", "n_tokens")}
-                # manipulation check (R3): own-colour cosine clean / donor / edited, restoration ratio rho
-                cos_c = np.array([np.nanmean([r["clean"]["own_cos"] for c in ("c1", "c2")
-                                              for r in by.get((i, c, "sham", role, 1.0), [])]) for i in imgs])
-                cos_d = np.array([np.nanmean([r["donor"]["own_cos"] for c in ("c1", "c2") for r in by.get((i, c, "sham", role, 1.0), [])]) for i in imgs])
-                cos_e = np.array([img_val(i, "own_cos", "edit", role, lam) for i in imgs])
-                gap = cos_d - cos_c
-                defined = np.abs(gap) > 0.01
-                rho = np.where(defined, (cos_e - cos_c) / np.where(defined, gap, 1.0), np.nan)
-                sign_ok = np.where(defined, np.sign(cos_e - cos_c) == np.sign(gap), np.nan)
+                # manipulation check (R3, review item 1): computed per (image, question) pair on the edited
+                # object, then aggregated within the image.  Pair success = change in the donor's direction
+                # AND edited closer to the donor than clean was (rules out overshoot past the donor).
+                pair = {}                                                     # (i, c) -> (cos_c, cos_d, cos_e)
+                for i in imgs:
+                    for c in ("c1", "c2"):
+                        sh = by.get((i, c, "sham", role, 1.0), [])
+                        ed = by.get((i, c, "edit", role, lam), [])
+                        if sh and ed:
+                            pair[(i, c)] = (sh[0]["clean"]["own_cos"], sh[0]["donor"]["own_cos"], ed[0]["own_cos"])
+                pc = np.array([v[0] for v in pair.values()]); pd = np.array([v[1] for v in pair.values()]); pe = np.array([v[2] for v in pair.values()])
+                pgap = pd - pc
+                pdef = np.abs(pgap) > 0.01
+                prho = np.where(pdef, (pe - pc) / np.where(pdef, pgap, 1.0), np.nan)
+                p_sign = np.sign(pe - pc) == np.sign(pgap)
+                p_closer = np.abs(pe - pd) < np.abs(pc - pd)
+                p_success = np.where(pdef, p_sign & p_closer, np.nan)
+                p_over = np.where(pdef, prho > 1.0, np.nan)                     # past the donor
+                p_farther = np.where(pdef, p_sign & ~p_closer, np.nan)          # right direction but farther than clean
+                pair_img = np.array([k[0] for k in pair])
+                def per_image(v):
+                    return np.array([np.nanmean(v[pair_img == i]) if (pair_img == i).any() else np.nan for i in imgs])
+                cos_c, cos_d, cos_e = per_image(pc), per_image(pd), per_image(pe)
+                rho, succ = per_image(prho), per_image(p_success)
                 rho_b = _boot_family(rho, F)
-                frac_sign = float(np.nanmean(sign_ok)) if defined.any() else float("nan")
+                frac_success = float(np.nanmean(p_success)) if pdef.any() else float("nan")
                 ent["manipulation"] = {
                     "own_cos_clean": _boot_family(cos_c, F), "own_cos_donor": _boot_family(cos_d, F),
                     "own_cos_edited": _boot_family(cos_e, F),
-                    "donor_minus_clean": _boot_family(gap, F), "edited_minus_clean": _boot_family(cos_e - cos_c, F),
-                    "rho": rho_b, "n_rho_defined": int(defined.sum()), "frac_sign_consistent": frac_sign,
+                    "donor_minus_clean": _boot_family(cos_d - cos_c, F), "edited_minus_clean": _boot_family(cos_e - cos_c, F),
+                    "rho": rho_b, "n_pairs": int(len(pair)), "n_pairs_rho_defined": int(pdef.sum()),
+                    "frac_pairs_success": frac_success,
+                    "frac_pairs_sign_consistent": float(np.nanmean(np.where(pdef, p_sign, np.nan))),
+                    "frac_pairs_overshoot_past_donor": float(np.nanmean(p_over)),
+                    "frac_pairs_farther_than_clean": float(np.nanmean(p_farther)),
                     "frac_images_change_negative": float(np.nanmean((cos_e - cos_c) < 0)),
                     "u_dist_to_donor_edited": _boot_family([img_val(i, "u_dist_to_donor", "edit", role, lam) for i in imgs], F),
                     "u_dist_to_donor_rot": _boot_family([img_val(i, "u_dist_to_donor", "rot", role, lam) for i in imgs], F),
@@ -2197,11 +2294,12 @@ def summarise_colour_replace(new_dir, doses=None, n_seeds=None):
                                                                           for r in by.get((i, c, "sham", role, 1.0), [])]) for i in imgs], F),
                                       "edited": _boot_family([img_val(i, f"unq_{a}_cos", "edit", role, lam) for i in imgs], F)}
                                   for a in ("shape", "material", "size")},
-                    "manipulation_ok": bool(rho_b["lo"] > 0.5 and frac_sign >= 0.8),
-                    "rule": "rho 95% family-bootstrap lower bound > 0.5 AND sign-consistent fraction >= 0.8 "
-                            "(rho defined where |donor − clean| > 0.01)"}
-                sub = defined & (rho >= 0.5)
-                ent["sensitivity_rho_ge_0.5"] = {
+                    "manipulation_ok": bool(rho_b["lo"] > 0.5 and frac_success >= 0.8),
+                    "rule": "rho (per-image mean of per-pair (edited − clean)/(donor − clean)) 95% family-bootstrap lower bound "
+                            "> 0.5 AND fraction of (image, question) pairs with sign-consistent change AND |edited − donor| < "
+                            "|clean − donor| >= 0.8; rho defined where |donor − clean| > 0.01; overshoot reported separately"}
+                sub = np.isfinite(succ) & (succ >= 1.0)                       # both question pairs of the image succeed
+                ent["sensitivity_all_pairs_success"] = {
                     "n": int(sub.sum()),
                     "T0_margin_edit_minus_clean": _boot_family(np.where(sub, dm_e, np.nan), F),
                     "T1_margin_edit_minus_rot": _boot_family(np.where(sub, D_role[(role, lam)], np.nan), F)}
@@ -2214,13 +2312,21 @@ def summarise_colour_replace(new_dir, doses=None, n_seeds=None):
             out["role_difference"][f"dose_{lam:g}"] = {
                 "D_ref_minus_D_nonref": _boot_family(D_role[("referent", lam)] - D_role[("nonreferent", lam)], F),
                 "definition": "D_role = (margin_edit − margin_clean) − mean_seeds(margin_rot − margin_clean), per image"}
-    out["decision_fields"] = {
-        role: {f"dose_{lam:g}": {
-            "manipulation_ok": out["roles"][role][f"dose_{lam:g}"].get("manipulation", {}).get("manipulation_ok"),
-            "T0_hi_below_0": out["roles"][role][f"dose_{lam:g}"]["T0_margin_edit_minus_clean"]["hi"] < 0,
-            "T1_rot_hi_below_0": out["roles"][role][f"dose_{lam:g}"]["controls"].get("rot", {}).get(
-                "T1_margin_edit_minus_control", {}).get("hi", float("nan")) < 0}
-            for lam in doses if lam > 0} for role in ("referent", "nonreferent")}
+    out["decision_fields"] = {}
+    for role in ("referent", "nonreferent"):
+        out["decision_fields"][role] = {}
+        for lam in doses:
+            if lam <= 0:
+                continue
+            ent = out["roles"][role][f"dose_{lam:g}"]
+            t1 = ent["controls"].get("rot", {})
+            d = {"manipulation_ok": ent.get("manipulation", {}).get("manipulation_ok"),
+                 "H1_T0_margin_hi_below_0": ent["T0_margin_edit_minus_clean"]["hi"] < 0,
+                 "H1_T1_margin_vs_rot_hi_below_0": t1.get("T1_margin_edit_minus_control", {}).get("hi", float("nan")) < 0,
+                 "H2_p_other_edit_minus_clean_lo_above_0": ent["p_other_edit_minus_clean"]["lo"] > 0,
+                 "H2_p_other_vs_rot_lo_above_0": t1.get("p_other_edit_minus_control", {}).get("lo", float("nan")) > 0,
+                 "primary_endpoint": "margin (H1)" if role == "referent" else "P(other colour) (H2)"}
+            out["decision_fields"][role][f"dose_{lam:g}"] = d
     with open(new_dir / "summary.json", "w") as f:
         json.dump(out, f, indent=1)
     for role in ("referent", "nonreferent"):
@@ -2235,7 +2341,7 @@ def summarise_colour_replace(new_dir, doses=None, n_seeds=None):
                   f"acc {ent['accuracy_edit']['mean']:.3f} | own-cos clean {mp['own_cos_clean']['mean']:+.3f} "
                   f"donor {mp['own_cos_donor']['mean']:+.3f} edited {mp['own_cos_edited']['mean']:+.3f} "
                   f"rho {mp['rho']['mean']:+.2f} [{mp['rho']['lo']:+.2f},{mp['rho']['hi']:+.2f}] "
-                  f"sign {mp['frac_sign_consistent']:.2f} ok={mp['manipulation_ok']}", flush=True)
+                  f"success {mp['frac_pairs_success']:.2f} over {mp['frac_pairs_overshoot_past_donor']:.2f} ok={mp['manipulation_ok']}", flush=True)
     for key, v in out["role_difference"].items():
         d = v["D_ref_minus_D_nonref"]
         print(f"role difference {key}: {d['mean']:+.3f} [{d['lo']:+.3f},{d['hi']:+.3f}]")
@@ -2269,7 +2375,7 @@ def plot_colour_replace(res, label, out_path, image=None, owner=None, question=N
         ms = [mp["own_cos_clean"], mp["own_cos_donor"], mp["own_cos_edited"]]
         m = np.array([q["mean"] for q in ms]); lo = np.array([q["lo"] for q in ms]); hi = np.array([q["hi"] for q in ms])
         ax.errorbar(xs + (r_i - 0.5) * 0.15, m, yerr=[m - lo, hi - m], fmt="o", color=role_col[role], markersize=5,
-                    lw=1, label=f"{role} (rho {mp['rho']['mean']:+.2f}, sign {mp['frac_sign_consistent']:.2f})")
+                    lw=1, label=f"{role} (rho {mp['rho']['mean']:+.2f}, pair success {mp['frac_pairs_success']:.2f})")
     ax.set_xticks(xs); ax.set_xticklabels(["clean\n(with question)", "donor\n(no question)", "edited\n(dose 1)"], fontsize=8)
     ax.set_ylabel("own-colour cosine of the object mean", fontsize=9)
     ax.set_title("manipulation check", fontsize=10)
@@ -7285,6 +7391,7 @@ def main():
                     help="--colour-replace: engineering pilot on the first N images (output n2_colour_replace_pilot/)")
     ap.add_argument("--colour-replace-doses", default="0,0.5,1")
     ap.add_argument("--colour-replace-seeds", type=int, default=10, help="--colour-replace: rotation-control seeds 0..n-1")
+    ap.add_argument("--colour-replace-suffix", default="", help="--colour-replace: output dir suffix (e.g. _v2); existing runs are never overwritten")
     ap.add_argument("--colour-replace-summarise", default=None,
                     help="recompute summary.json and the figure from an existing per_image.jsonl directory (no model)")
     ap.add_argument("--gqa-causal", action="store_true",
@@ -7391,8 +7498,9 @@ def main():
             return
         if args.colour_replace:
             ensure_model(state, args)
-            res = run_colour_replace(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"])
-            sub = out_dir / ("n2_colour_replace_pilot" if args.colour_replace_pilot else "n2_colour_replace")
+            res = run_colour_replace(out_dir, args, state, images["n2"], owners["n2"], labels["n2"], labels["n1"],
+                                     images["n1"], owners["n1"])
+            sub = out_dir / (("n2_colour_replace_pilot" if args.colour_replace_pilot else "n2_colour_replace") + args.colour_replace_suffix)
             plot_colour_replace(res, label, sub / "colour_replace.png", image=images["n2"][0], owner=owners["n2"][0],
                                 question=labels["n2"][0]["questions"]["c1"])
             return

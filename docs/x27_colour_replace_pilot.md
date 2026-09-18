@@ -79,3 +79,28 @@ The per-object statistics in `summary.json` (ρ, T0, T1, role difference) are pr
    before the first full run.
 3. Held-out colour discrimination of about 0.4 on 7 classes: to be reported as is; whether it
    changes the reading of the manipulation check is Codex's call.
+
+
+## 6. Post-pilot corrections and full run (2026-09-18)
+
+Reviewer items after the pilot, all implemented (15 unit tests pass, including the reviewer's
+counter-examples):
+
+| Item | Change |
+|---|---|
+| Overshoot counted as success | Manipulation rule now per (image, question) pair: change in the donor's direction AND \|edited − donor\| < \|clean − donor\|. Group `manipulation_ok` = ρ lower bound > 0.5 and pair success ≥ 0.8. `frac_pairs_overshoot_past_donor` and `frac_pairs_farther_than_clean` reported separately. Sensitivity subset = images whose both pairs succeed. |
+| Invalid tokens still decoded | Any invalid token in any variant drops the whole (image, question) pair from all conditions; the pair is listed in `manifest.excluded_invalid_pairs`. |
+| Cache not verified against the checkpoint | `_cr_verify_n1_cache`: all 324 n1 images re-forwarded under the cache's bf16 autocast (and in fp32), object means compared with `n1/feats_c0.npz`; array hash, size and mtime recorded; the run aborts if the bf16 pass disagrees (rel tol 1e-2). |
+| H2 judged on the margin | `decision_fields` carry H1 (margin) and H2 (P(other colour)) flags separately with the primary endpoint per role. |
+| Delivery note | H3 data exist (shape / material runs, 324 each; 101 / 282 with a fixed description) but are not yet integrated or verified here. Colour class balance (41–51 per class, majority baseline 0.157) in the manifest. |
+
+Full run: `--colour-replace --colour-replace-suffix _v2`, 324 images, 0 excluded, 0 invalid,
+83,592 rows per model. Outputs `outputs/analysis/patch_language_condition/n2_colour_replace_v2/`
+(DINOv2) and `.../siglip/n2_colour_replace_v2/` (SigLIP). The uncorrected first full run
+(`n2_colour_replace/`) is kept; its numbers are identical because only the rules changed.
+Cache check: bf16 max rel diff 4.7e-4 (DINOv2) / 4.5e-4 (SigLIP), min cosine 1.000; fp32
+gap 2.9 % / 2.6 % (precision difference between the fitted subspace's features and the
+edited features, disclosed).
+
+Results, adjudication and limits: registry section X27 (`docs/experiment_registry.md`) and
+JOURNAL 2026-09-18.

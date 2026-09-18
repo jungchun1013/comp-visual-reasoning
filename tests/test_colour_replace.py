@@ -176,9 +176,10 @@ def _row(i, cond, variant, role, dose, seed, margin, p_other, correct, own_cos, 
     return base
 
 
-def test_summary_signs_on_synthetic_rows(tmp_path):
+def _synthetic_rows(edited_cos=None):
     """Referent edit lowers the margin by 2 (rotations by 0.5); non-referent edit raises
-    P(other) but leaves the margin; edited own-cos reaches the donor (rho = 1)."""
+    P(other) but leaves the margin; edited own-cos = clean + lam (donor − clean) unless
+    `edited_cos(role, lam, clean, donor)` overrides it."""
     rows = []
     for i in range(12):
         for c in ("c1", "c2"):
@@ -191,15 +192,24 @@ def test_summary_signs_on_synthetic_rows(tmp_path):
                 for lam in (0.0, 0.5, 1.0):
                     dm = -2.0 * lam if role == "referent" else 0.0
                     po = 0.05 + (0.3 * lam if role == "nonreferent" else 0.0)
-                    rows.append(_row(i, c, "edit", role, lam, -1, 4.0 + dm, po, True, cl + lam * (dn - cl)))
+                    ce = cl + lam * (dn - cl) if edited_cos is None else edited_cos(role, lam, cl, dn)
+                    rows.append(_row(i, c, "edit", role, lam, -1, 4.0 + dm, po, True, ce))
                     if lam == 0:
                         continue
                     for kind in ("rot", "rot_shared", "rot_targeted"):
                         for sd in range(3):
                             rows.append(_row(i, c, kind, role, lam, sd, 4.0 - 0.5 * lam, 0.05, True, cl))
+    return rows
+
+
+def _write_rows(tmp_path, rows):
     with open(tmp_path / "per_image.jsonl", "w") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
+
+
+def test_summary_signs_on_synthetic_rows(tmp_path):
+    _write_rows(tmp_path, _synthetic_rows())
     out = summarise_colour_replace(tmp_path)
     ref = out["roles"]["referent"]["dose_1"]
     non = out["roles"]["nonreferent"]["dose_1"]
@@ -211,9 +221,60 @@ def test_summary_signs_on_synthetic_rows(tmp_path):
     assert abs(out["role_difference"]["dose_1"]["D_ref_minus_D_nonref"]["mean"] - (-1.5 - 0.5)) < 1e-9
     for role in ("referent", "nonreferent"):
         mp = out["roles"][role]["dose_1"]["manipulation"]
-        assert abs(mp["rho"]["mean"] - 1.0) < 1e-9 and mp["frac_sign_consistent"] == 1.0 and mp["manipulation_ok"]
+        assert abs(mp["rho"]["mean"] - 1.0) < 1e-9 and mp["frac_pairs_success"] == 1.0 and mp["manipulation_ok"]
+        assert mp["frac_pairs_overshoot_past_donor"] == 0.0 and mp["frac_pairs_farther_than_clean"] == 0.0
         mp5 = out["roles"][role]["dose_0.5"]["manipulation"]
         assert abs(mp5["rho"]["mean"] - 0.5) < 1e-9
-    assert out["decision_fields"]["referent"]["dose_1"] == {"manipulation_ok": True, "T0_hi_below_0": True,
-                                                            "T1_rot_hi_below_0": True}
-    assert out["decision_fields"]["nonreferent"]["dose_1"]["T0_hi_below_0"] is False
+    dref, dnon = out["decision_fields"]["referent"]["dose_1"], out["decision_fields"]["nonreferent"]["dose_1"]
+    assert dref["manipulation_ok"] and dref["H1_T0_margin_hi_below_0"] and dref["H1_T1_margin_vs_rot_hi_below_0"]
+    assert dref["primary_endpoint"].startswith("margin")
+    # H2 is judged on its own endpoint, P(other colour), not on the margin
+    assert dnon["H1_T0_margin_hi_below_0"] is False
+    assert dnon["H2_p_other_edit_minus_clean_lo_above_0"] and dnon["H2_p_other_vs_rot_lo_above_0"]
+    assert dnon["primary_endpoint"].startswith("P(other")
+
+
+def test_manipulation_rule_rejects_overshoot(tmp_path):
+    """Reviewer counter-example: clean 0.6, donor 0.4 → edited 0.0 gives rho = 3 with the right
+    sign, but the edited object is FARTHER from the donor than clean was; must not count as
+    success, and must be reported as overshoot."""
+    def over(role, lam, cl, dn):
+        return cl + 3.0 * lam * (dn - cl)            # rho = 3 at dose 1 (referent: 0.6 → −0.3; donor 0.3)
+    _write_rows(tmp_path, _synthetic_rows(over))
+    out = summarise_colour_replace(tmp_path)
+    mp = out["roles"]["referent"]["dose_1"]["manipulation"]
+    assert abs(mp["rho"]["mean"] - 3.0) < 1e-9
+    assert mp["frac_pairs_sign_consistent"] == 1.0
+    assert mp["frac_pairs_success"] == 0.0 and mp["frac_pairs_overshoot_past_donor"] == 1.0
+    assert mp["frac_pairs_farther_than_clean"] == 1.0
+    assert not mp["manipulation_ok"]
+    assert out["roles"]["referent"]["dose_1"]["sensitivity_all_pairs_success"]["n"] == 0
+    # mild overshoot (rho = 1.5: past the donor but still closer than clean) is success, flagged as overshoot
+    _write_rows(tmp_path, _synthetic_rows(lambda role, lam, cl, dn: cl + 1.5 * lam * (dn - cl)))
+    out = summarise_colour_replace(tmp_path)
+    mp = out["roles"]["referent"]["dose_1"]["manipulation"]
+    assert mp["frac_pairs_success"] == 1.0 and mp["frac_pairs_overshoot_past_donor"] == 1.0 and mp["manipulation_ok"]
+
+
+def test_manipulation_rule_is_per_pair_not_image_average(tmp_path):
+    """One question direction fails (overshoot) while the other succeeds: image-level averaging
+    of cosines would hide it; the pair-level success fraction must show 0.5."""
+    rows = _synthetic_rows()
+    for r in rows:
+        if r["variant"] == "edit" and r["role"] == "referent" and r["cond"] == "c2" and r["dose"] == 1.0:
+            r["own_cos"] = 0.6 + 3.0 * (0.3 - 0.6)
+    _write_rows(tmp_path, rows)
+    out = summarise_colour_replace(tmp_path)
+    mp = out["roles"]["referent"]["dose_1"]["manipulation"]
+    assert abs(mp["frac_pairs_success"] - 0.5) < 1e-9 and not mp["manipulation_ok"]
+    assert out["roles"]["referent"]["dose_1"]["sensitivity_all_pairs_success"]["n"] == 0
+
+
+def test_summary_tolerates_excluded_pairs(tmp_path):
+    """A dropped (image, question) pair (invalid-token rule) leaves the other pair of the image
+    in the analysis and does not break the summary."""
+    rows = [r for r in _synthetic_rows() if not (r["i"] == 3 and r["cond"] == "c2")]
+    _write_rows(tmp_path, rows)
+    out = summarise_colour_replace(tmp_path)
+    assert out["n_images"] == 12
+    assert out["roles"]["referent"]["dose_1"]["manipulation"]["n_pairs"] == 23

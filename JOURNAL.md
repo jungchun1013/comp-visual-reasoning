@@ -1740,3 +1740,22 @@ Question about A,附圖例與 n。(7)X18 附註就地加日期更正。全部 CP
 - 5/13: repo scaffolded from legacy SteerViT — Hydra config hierarchy, CLEVR/GQA data modules, classification+decoder heads, unified trainer/evaluator (per-type breakdown), text cache.
 - 5/14–16: `clevr_dinov2_decoder1l_scratch` naming + 16 epochs, multi-seed support, cls config, SigLIP backbone, back-patching script.
 - 5/24: MoT, Transfusion, supervised-ViT, GCA-scratch experiment configs.
+
+
+### 2026-09-18 — X27 顏色子空間置換(Codex 規格):兩個模型全量完成,H1 成立、H2 無效應、角色差異顯著
+
+- **做了什麼**:依 `writing/ATTRIBUTE_GEOMETRY_INTERVENTION_SPEC_CODEX_2026-09-17.md` 實作
+  `--colour-replace`(在送進 decoder 的最終 encoder patch 特徵上,只把一個物件的顏色子空間座標換回同影像無
+  問題時的座標;保 token norm 與子空間外方向;對照 = sham、三種同角度 rotation × 10 seeds、dose 0)。
+  Codex 審查四項(角色差異配對檢定、object-shared rotation、可執行的 manipulation 規則、H1 公式)與 pilot 後四項
+  修正(overshoot 不算成功、invalid token 整對排除、n1 cache 對本 checkpoint 重抽驗證、H2 用自己的終點)全部落實;
+  15 項單元測試通過。第一次全量在修正前跑完(`n2_colour_replace/`,數字相同,保留),修正後以 `_v2` 重跑。
+- **結果(dose 1,margin = logit(正確色) − logit(另一物件色))**:DINOv2 referent edit −0.102 [−0.134, −0.072],
+  扣 rotation 後 −0.094(97.5 %);non-referent −0.046,P(other) 不變。SigLIP referent −0.976 [−1.071, −0.879],
+  扣 rotation −0.943;non-referent 完全無變化。角色差異 DINOv2 −0.057 [−0.089, −0.027]、SigLIP −0.943。
+  兩模型 accuracy 不變、無 flip。manipulation 兩角色皆通過(ρ 0.87–1.08、pair success ≥ 0.96);referent edit
+  在 DINOv2 有 66 %、SigLIP 92 % 的 pair 略過 donor(overshoot),但幾乎沒有比 clean 更遠的。
+- **判定**:H1 在兩模型成立(介面層因果貢獻;效應只在 margin,accuracy 未動);H2 兩模型皆未偵測到效應;
+  referent edit 的效應大於 non-referent edit。限制:DINOv2 的 edit 同時把 shape 對齊從 0.025 拉到 0.132,
+  顏色專一性未建立;DINOv2 子空間 held-out 顏色辨識僅 0.39–0.46(SigLIP 0.94–0.97);機率飽和,只有 margin 敏感。
+- **登記**:registry X27(跑後補寫,設計凍結於規格與 commit 4f688ef);報告 `docs/x27_colour_replace_pilot.md` §6。

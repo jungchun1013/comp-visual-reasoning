@@ -1762,3 +1762,87 @@ two-object colour analysis the contrast with a generic question is dominated by 
 alignment in the non-referent, and this remains after pair-grouped cross-fitting of the attribute
 directions. Model differences and the MAE limitation are reported alongside; no claim of
 information deletion, behavioural necessity, completed retrieval, or fixed serial stages.
+
+
+### X27. Colour-subspace replacement at the decoder input — referent vs non-referent (Codex spec 2026-09-17)
+
+- **Origin**: Codex specification `writing/ATTRIBUTE_GEOMETRY_INTERVENTION_SPEC_CODEX_2026-09-17.md`
+  (one operation, one site, two object roles) after the audit of X24 B1
+  (`writing/B1_INTERVENTION_AUDIT_CODEX_2026-09-17.md`); four review items of 2026-09-17
+  (role-difference test, cross-patch sampling of the random control, executable
+  manipulation rule, explicit H1 formula) and four post-pilot corrections (overshoot,
+  invalid-token exclusion, cache verification, H2 endpoint). Implementer Claude.
+- **Registration status**: the design was frozen in the spec and in commit 4f688ef
+  (`docs/x27_colour_replace_pilot.md`, written before the full run); this registry
+  section was written after the full run (2026-09-18) and adds no prediction the spec
+  did not contain. Not an external preregistration.
+- **Question**: does the language-conditioned colour geometry of an object's final
+  encoder tokens influence the decoder's answer, and does it depend on the object's role?
+- **Hypotheses** (spec §2): H1 (primary) — returning the referent's colour-subspace
+  coordinates to their no-question values lowers the margin logit(correct colour) −
+  logit(other object's colour), beyond matched rotations. H2 (secondary) — the same edit on
+  the non-referent raises P(other object's colour), beyond matched rotations. H3 not run.
+- **Intervention**: on the final encoder patch features handed to `model.decoder`
+  (`first_token_logits` interface; `trunk.norm(block 11) == decoder input` asserted), for the
+  patch tokens of ONE object only, normalised colour-subspace coordinates replaced by the
+  same-image no-question donor's (dose 0.5 / 1); token norm and the direction outside the
+  subspace preserved (spec §6). Colour subspace: 5 folds by `pair_index`, centred colour
+  class means of the one-object no-question object means, SVD, rank 6 (7 classes; gray
+  excluded by the segmentation). Own-value directions for the manipulation check: the same
+  folds (`attribute_directions_crossfit`).
+- **Controls**: sham (donor = recipient); matched rotations with the edit's per-token angle
+  (same norm, same Euclidean edit length): independent tangent per token, one tangent source
+  per object (object-coherent), tangent outside the colour span; 10 seeds each; dose 0.
+- **Endpoints**: T0 = mean_i (margin_edit − margin_clean); T1 = mean_i [Δmargin_edit −
+  mean_seeds Δmargin_rot]; H1 supported iff T1 upper bound < 0 (97.5 %) and T0 upper bound
+  < 0. H2 on P(other colour): edit − clean and edit − rotation, lower bound > 0 (95 %).
+  Role difference D_ref − D_nonref, D = Δmargin_edit − mean_seeds Δmargin_rot, paired within
+  image. Manipulation rule per (image, question) pair: change in the donor's direction AND
+  |edited − donor| < |clean − donor|; group `manipulation_ok` = ρ lower bound > 0.5 and pair
+  success ≥ 0.8; overshoot past the donor reported separately. Statistics: two question
+  directions averaged within image, family bootstrap (family = `pair_index`), 2000
+  replicates, seed 42. Invalid tokens: the (image, question) pair is dropped from all
+  conditions (none occurred). Cache verification: n1 object means re-extracted under the
+  cache's bf16 autocast and compared (max rel diff 4.7e-4 / 4.5e-4; fp32 gap 2.9 % / 2.6 %
+  recorded).
+- **Runs**: `scripts/analysis/patch_language_condition.py --colour-replace --colour-replace-suffix _v2`
+  on `clevr_dinov2_decoder1l_scratch_s42` → `outputs/analysis/patch_language_condition/n2_colour_replace_v2/`
+  and `clevr_siglip_decoder1l_scratch_s42` → `.../siglip/n2_colour_replace_v2/` (manifest,
+  per_image.jsonl 83,592 rows each, subspace.npz, summary.json, colour_replace.png). The
+  first full run (`n2_colour_replace/`, same numbers, pre-correction rules) and the 8-image
+  pilot are kept unmodified. 324 images, 0 excluded, 0 invalid tokens.
+- **Results (2026-09-18, dose 1; margin in logits; intervals family bootstrap)**
+
+  | model | role | T0 edit − clean | T1 edit − rotation (indep.) | rotation − clean (indep. / shared) | P(other) edit − clean | acc clean → edit | manipulation |
+  |---|---|---|---|---|---|---|---|
+  | DINOv2 | referent | −0.102 [−0.134, −0.072] | −0.094 [−0.128, −0.064] (97.5 %) | −0.007 / −0.016 | +0.0000 [+0.0000, +0.0001] | 0.994 → 0.992 | ok; ρ 1.07, pair success 0.96, overshoot past donor 0.66, farther than clean 0.02 |
+  | DINOv2 | non-referent | −0.046 [−0.059, −0.033] | −0.037 [−0.050, −0.024] | −0.009 / −0.005 | −0.0000 [−0.0000, +0.0000] | 0.994 → 0.994 | ok; ρ 0.90, success 0.99, overshoot 0.12 |
+  | SigLIP | referent | −0.976 [−1.071, −0.879] | −0.943 [−1.037, −0.850] (97.5 %) | −0.033 / −0.066 | +0.0003 [+0.0000, +0.0007] | 1.000 → 0.998 | ok; ρ 1.08, success 1.00, overshoot 0.92, farther 0.00 |
+  | SigLIP | non-referent | −0.000 [−0.001, +0.000] | −0.000 [−0.000, +0.000] | −0.000 / −0.000 | +0.0000 | 1.000 → 1.000 | ok; ρ 0.87, success 0.99, overshoot 0.02 |
+
+  Role difference D_ref − D_nonref: DINOv2 −0.057 [−0.089, −0.027]; SigLIP −0.943 [−1.027,
+  −0.862]. Own-colour cosine clean → donor → edited: DINOv2 referent 0.246 → 0.083 → 0.076,
+  non-referent 0.020 → 0.083 → 0.076; SigLIP referent 0.467 → 0.271 → 0.258, non-referent
+  0.059 → 0.271 → 0.250. Held-out colour discrimination of the subspace (nearest projected
+  class mean, 7 classes, majority baseline 0.157): DINOv2 0.39–0.46, SigLIP 0.94–0.97.
+  Unqueried-attribute side effect of the referent edit (own-value cosine clean → edited):
+  DINOv2 shape 0.025 → 0.132, material 0.026 → 0.052, size 0.013 → 0.036; SigLIP shape
+  0.043 → 0.060, material 0.020 → 0.028, size 0.085 → 0.094. Flip to the other colour
+  among clean-correct pairs: 0 in every cell.
+- **Adjudication (spec §8 decision table)**
+  - H1, both models: manipulation succeeds and the margin change exceeds all three matched
+    rotations → supports a causal contribution of the referent's colour-subspace geometry to
+    the decoder output, under this intervention. The behavioural effect is a margin
+    reduction only: accuracy is unchanged (≤ 0.2 points) and no answer flips; in DINOv2 the
+    reduction is 0.10 logit, in SigLIP 0.98 logit.
+  - H2, both models: manipulation succeeds; P(other colour) does not change (DINOv2 margin
+    falls by 0.046, in the same direction as the referent edit, not towards the other
+    colour; SigLIP no change at all) → no detected contribution of the non-referent's colour
+    geometry under this edit; not a claim of dispensability.
+  - Role difference: the referent edit lowers the margin more than the non-referent edit in
+    both models (interval excludes 0).
+  - Limits: the edit also raises the unqueried shape alignment in DINOv2 (0.025 → 0.132), so
+    the edited quantity is not shown to be colour-specific; the DINOv2 subspace discriminates
+    colour at 0.4 held-out; probabilities are saturated (P(correct) ≈ 1), so the margin is the
+    only sensitive endpoint; the conclusion is interface-level (final encoder features), not
+    about how the geometry formed.
