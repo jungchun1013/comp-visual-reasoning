@@ -82,8 +82,8 @@ def fig_attribute_alignment(out_dir):
     prov = {"panels": []}
 
     def panel(ax, d, title, queried):
-        keys = {f"refvs0_target_{queried}_own": ("asked about this object (c1 − c0)", C_REF),
-                f"nonrefvs0_target_{queried}_own": ("asked about the other object (c2 − c0)", C_NONREF),
+        keys = {f"refvs0_target_{queried}_own": ("asked about the target (c1 − c0)", C_REF),
+                f"nonrefvs0_target_{queried}_own": ("asked about the distractor (c2 − c0)", C_NONREF),
                 f"c3vs0_target_{queried}_own": ("question without a unique referent (c3 − c0)", C_NONUNIQUE)}
         for k, (lab, col) in keys.items():
             band(ax, BLOCKS, d["delta"][k], col, lab)
@@ -110,7 +110,7 @@ def fig_attribute_alignment(out_dir):
         ax.set_ylabel("Δ alignment with own value")
     prov.update({
         "model": "clevr_<backbone>_decoder1l_scratch_s42 (DINOv2 root dir = clevr_dinov2_decoder1l_scratch_s42), best.pt",
-        "data": "paired two-object renders, 324 images, target object measured under c0 no question / c1 asked about it / c2 asked about the other object / c3 'What color is the object?'",
+        "data": "paired two-object renders, 324 images, target object measured under c0 no question / c1 asked about the target / c2 asked about the distractor / c3 'What color is the object?'",
         "feature": "mean of the object's patch tokens after trunk.norm, unit-normalised; attribute-value directions = unit(mean of 1-object means of that value − grand mean), estimated on the 1-object set (n1)",
         "statistic": "per-image paired difference of cosine alignment, mean with 95% bootstrap CI over images (B=1000)",
         "not_excluded": "rotation/redistribution of information; direction quality (DINOv2 late blocks: held-out colour classification 0.40–0.43); a change along one direction is not information removal",

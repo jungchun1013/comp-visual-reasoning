@@ -1789,3 +1789,10 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - Figure 5(`writing/figures/prototypes/role_alignment.pdf`)與 Figure 6(`attribute_switch.pdf`):legend 移到 panel 下方(`loc='lower center'`),條件名稱改為 "Query the attribute of the target / of the distractor / without specifying an object";Figure 6 的 y 軸標籤分兩行以免被裁掉。產圖程式 `writing/build_story_prototypes.py`(備份 `writing/backup/build_story_prototypes.py.bak-2026-09-19`),資料來源不變(`unified_role_contrasts_v2/*_crossfit_normstd.json`)。Figure 5 caption 同步加上 (target)/(distractor) 標示(備份 `ICLR_draft.tex.bak-2026-09-19-fig5cap`)。
 - Figure 2(五格 composite):`finish_tsne_grid` 新增 `legend_y` 參數(預設 0.016 不變);conditions composite 傳 0.16,legend 貼到 panel 正下方。重繪 `outputs/analysis/tsne/object_count_v3/n2_324/composite_block11_conditions_v3.png`,複製到 `writing/figures/object_count_324_composite_v3.png` 與 `docs/site/x26_scene_composite_324_v3.png`,閱讀頁與 site 重建。
 - 未動:site 上的 `x26_fig3_attribute_switch.png`(2026-09-17 的獨立副本,caption 仍寫 this object / the other object);`paper_figures.py` 的 GQA 主圖 legend("Question asks this object / the other object",Codex 未提交的新函式)。
+
+### 2026-09-19 — 角色用語統一為 target / distractor(使用者要求)
+
+- 所有圖表與稿子裡的 "this object / the other object / that object" 角色用語改為 target / distractor:`paper_figures.py`(attribute-alignment legend、GQA 主圖 panel C legend)、`patch_language_condition.py`(`ROLE_CONTRASTS`、`ROLE_LEGEND`、role bar 標籤)、`plot_gqa_schematic.py`(線與 bar 名稱、panel c 標題)、`writing/ICLR_draft.tex` 十二句(X27 margin 定義中的 "the other object's color" → "the distractor's color" 等;備份 `ICLR_draft.tex.bak-2026-09-19-rolewords`)。
+- Figure 8(`writing/figures/gqa_main.pdf`)以 `paper_figures.py --only gqa_main` 重產(舊檔備份 `writing/backup/figures-2026-09-19/`),閱讀頁重建。
+- Site 首頁已由 Codex 於 10:40 改為導向 `paper_preview.html` 的轉址頁,舊實驗頁封存為 `experiments_deprecated_2026-09-19.html`;其中的舊 caption 不再更新。
+- 提交範圍:`paper_figures.py` 的 GQA 主圖 legend 修改位於 Codex 尚未提交的 `fig_gqa_main` 內,隨 Codex 的改動一起留在工作區未提交;其餘改動已提交。
