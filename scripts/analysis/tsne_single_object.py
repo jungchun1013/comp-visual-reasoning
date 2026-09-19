@@ -279,14 +279,17 @@ def composite_last_layer(args):
               (n2, "ca_color_refer", '2 objects\n"What color is\nthe {referent} object?"'),
               (n2, "ca_shape_refer", '2 objects\n"What shape is\nthe {referent} object?"')]
     if args.composite_panels == "conditions":
-        # the four question conditions of the object-level analysis (no Question-about-B
-        # scene cache exists): 1 object / 2 objects no question, generic, question about A
-        panels = [(n1, "noca", "1 object\nNo question"),
-                  (n2, "noca", "2 objects\nNo question"),
-                  (n2, "ca_color_object", "2 objects\nGeneric colour question"),
-                  (n2, "ca_color_refer", "2 objects\nQuestion about A")]
+        # the question conditions of the object-level analysis (no Question-about-B scene
+        # cache exists): 1 object / 2 objects no question, then the three questions with
+        # their wording ({target} = the minimal referring description of A, e.g. "the large
+        # object"); user request 2026-09-19
+        panels = [(n1, "noca", "1 object\nNo question\n"),
+                  (n2, "noca", "2 objects\nNo question\n"),
+                  (n2, "ca_color_object", "2 objects\nWhat color is\nthe object?"),
+                  (n2, "ca_color_refer", "2 objects\nWhat color is\nthe {target}?"),
+                  (n2, "ca_shape_refer", "2 objects\nWhat shape is\nthe {target}?")]
     rows = subset_rows(args.subset_labels) if args.subset_labels else None
-    fig, axes = make_tsne_grid(4, ncols=4, cell=args.cell)
+    fig, axes = make_tsne_grid(len(panels), ncols=len(panels), cell=args.cell)
     for ax, (d, cond, title) in zip(axes, panels):
         X = np.load(d / f"feats_{cond}.npz")["11"]
         with open(d / "attrs.json") as f:
@@ -307,7 +310,7 @@ def composite_last_layer(args):
         finish_tsne_grid(fig, [], suptitle=None)
     fig.subplots_adjust(wspace=0.12)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
-    name = "composite_block11.png" if args.composite_panels == "refer" else "composite_block11_conditions_v2.png"
+    name = "composite_block11.png" if args.composite_panels == "refer" else "composite_block11_conditions_v3.png"
     fig.savefig(out / name, dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)
     print(f"Saved: {out / name}")

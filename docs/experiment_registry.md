@@ -1832,17 +1832,24 @@ information deletion, behavioural necessity, completed retrieval, or fixed seria
 - **Adjudication (spec §8 decision table)**
   - H1, both models: manipulation succeeds and the margin change exceeds all three matched
     rotations → supports a causal contribution of the referent's colour-subspace geometry to
-    the decoder output, under this intervention. The behavioural effect is a margin
-    reduction only: accuracy is unchanged (≤ 0.2 points) and no answer flips; in DINOv2 the
-    reduction is 0.10 logit, in SigLIP 0.98 logit.
-  - H2, both models: manipulation succeeds; P(other colour) does not change (DINOv2 margin
-    falls by 0.046, in the same direction as the referent edit, not towards the other
-    colour; SigLIP no change at all) → no detected contribution of the non-referent's colour
-    geometry under this edit; not a claim of dispensability.
+    the decoder output, under this intervention. The principal behavioural effect is a margin
+    reduction: 0.10 logit in DINOv2 and 0.98 logit in SigLIP. Each model also has one
+    clean-correct question switch to an answer other than either object's colour; accuracy
+    falls by 1/648 (0.154 percentage points). No clean-correct answer switches to the
+    non-referent's colour.
+  - H2, both models: manipulation succeeds but the specified increase in P(other colour)
+    beyond the independent rotation control is not supported. DINOv2's change versus clean
+    is -1.052e-6 (95 % interval [-9.578e-6, 4.484e-6]); its margin decreases by 0.046,
+    which reduces correct-versus-other support even though P(other) does not detectably
+    increase. SigLIP's P(other) increases by 6.743e-9 (95 % interval [3.452e-9, 1.192e-8]),
+    but not detectably beyond the rotation control. Neither model changes accuracy under
+    the non-referent edit. These findings do not establish exact zero effects or dispensability.
   - Role difference: the referent edit lowers the margin more than the non-referent edit in
     both models (interval excludes 0).
   - Limits: the edit also raises the unqueried shape alignment in DINOv2 (0.025 → 0.132), so
     the edited quantity is not shown to be colour-specific; the DINOv2 subspace discriminates
-    colour at 0.4 held-out; probabilities are saturated (P(correct) ≈ 1), so the margin is the
-    only sensitive endpoint; the conclusion is interface-level (final encoder features), not
+    colour at 0.4 held-out; probabilities are saturated (P(correct) ≈ 1), and the margin
+    shows clearer changes than answer accuracy; the conclusion is interface-level (final encoder features), not
     about how the geometry formed.
+
+2026-09-19 (Figure 2 update, user request): composite v3 `outputs/analysis/tsne/object_count_v3/{n2_324/,}composite_block11_conditions_v3.png` — five panels (1 object / 2 objects no question; "What color is the object?"; "What color is the {target}?"; "What shape is the {target}?", the last from the `ca_shape_refer` cache of `object_count_v2/n2`), same style and caches as v2; 324 version copied to `writing/figures/object_count_324_composite_v3.png` and referenced by `fig:object_tsne_composite` (TeX backup `writing/backup/ICLR_draft.tex.bak-2026-09-19-fig2`). v2 files kept.
