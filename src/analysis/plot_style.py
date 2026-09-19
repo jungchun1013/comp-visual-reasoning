@@ -124,8 +124,12 @@ def make_tsne_grid(n_panels: int, ncols: int = 3, cell: float = None):
     return fig, np.atleast_1d(axes).flatten()
 
 
-def finish_tsne_grid(fig, handles, suptitle: str = None, ncol: int = None):
-    """Legacy t-SNE finish: tight grid spacing, fig.legend below, frameless."""
+def finish_tsne_grid(fig, handles, suptitle: str = None, ncol: int = None,
+                     legend_y: float = 0.016):
+    """Legacy t-SNE finish: tight grid spacing, fig.legend below, frameless.
+
+    legend_y: figure-fraction height of the legend's top edge (raise it when the
+    square axes leave empty space below the panels, e.g. a one-row grid)."""
     if suptitle:
         fig.suptitle(suptitle, fontsize=S["suptitle_fontsize"])
     fig.subplots_adjust(hspace=0.05, wspace=0.05, top=0.90, bottom=0.00)
@@ -134,7 +138,7 @@ def finish_tsne_grid(fig, handles, suptitle: str = None, ncol: int = None):
     if ncol is None:
         ncol = min(len(handles), 5)
     fig.legend(handles=handles, loc="upper center",
-               bbox_to_anchor=(0.5, 0.016), ncol=ncol,
+               bbox_to_anchor=(0.5, legend_y), ncol=ncol,
                fontsize=S["legend_fontsize"], frameon=False)
 
 # ---------------------------------------------------------------------------

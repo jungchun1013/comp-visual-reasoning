@@ -1783,3 +1783,9 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - 提醒:`clevr_dinov2_gca_scratch_s43`(無 v2)只跑到 epoch 5(0.4839),附錄用的是 `_v2_s43`;`concat_decoder1l_scratch_s42/stdout.log` 是別的 run 的 log(0.9437),s42 正確來源是頂層 `clevr_dinov2_concat_decoder_scratch_s42.log`。
 - Classifier readout 的 pooling 由 backbone 決定(`model.py`:cls 若有 CLS token,否則 mean):DINOv2、Sup-ViT、MAE 用 CLS,SigLIP 用 mean。
 - 稿子:Table 1 兩組(concat / cross-attn decoder),Attribute + Overall 兩欄,無 n、無 seed 標記;正文恢復四個比較問題各一句;附錄「mean ± SD」改為 mean,learned text 註明單一 run。備份 `writing/backup/ICLR_draft.tex.bak-2026-09-19-tab1c`。
+
+### 2026-09-19 — Figure 2/5/6 legend 調整(使用者要求)
+
+- Figure 5(`writing/figures/prototypes/role_alignment.pdf`)與 Figure 6(`attribute_switch.pdf`):legend 移到 panel 下方(`loc='lower center'`),條件名稱改為 "Query the attribute of the target / of the distractor / without specifying an object";Figure 6 的 y 軸標籤分兩行以免被裁掉。產圖程式 `writing/build_story_prototypes.py`(備份 `writing/backup/build_story_prototypes.py.bak-2026-09-19`),資料來源不變(`unified_role_contrasts_v2/*_crossfit_normstd.json`)。Figure 5 caption 同步加上 (target)/(distractor) 標示(備份 `ICLR_draft.tex.bak-2026-09-19-fig5cap`)。
+- Figure 2(五格 composite):`finish_tsne_grid` 新增 `legend_y` 參數(預設 0.016 不變);conditions composite 傳 0.16,legend 貼到 panel 正下方。重繪 `outputs/analysis/tsne/object_count_v3/n2_324/composite_block11_conditions_v3.png`,複製到 `writing/figures/object_count_324_composite_v3.png` 與 `docs/site/x26_scene_composite_324_v3.png`,閱讀頁與 site 重建。
+- 未動:site 上的 `x26_fig3_attribute_switch.png`(2026-09-17 的獨立副本,caption 仍寫 this object / the other object);`paper_figures.py` 的 GQA 主圖 legend("Question asks this object / the other object",Codex 未提交的新函式)。

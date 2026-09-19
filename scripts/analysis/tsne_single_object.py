@@ -309,7 +309,9 @@ def composite_last_layer(args):
         top, rest = hs[:8], hs[8:]
         rest = rest + [None] * (len(top) - len(rest))
         ordered = [h for pair in zip(top, rest) for h in pair if h is not None]
-        finish_tsne_grid(fig, ordered, suptitle=None, ncol=8)
+        # one-row grid: the square axes leave empty space below the panels, so the
+        # legend is anchored higher than the default to sit close to the plots.
+        finish_tsne_grid(fig, ordered, suptitle=None, ncol=8, legend_y=0.16)
     else:
         finish_tsne_grid(fig, [], suptitle=None)
     fig.subplots_adjust(wspace=0.12)
