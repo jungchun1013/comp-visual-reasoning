@@ -283,11 +283,11 @@ def composite_last_layer(args):
         # cache exists): 1 object / 2 objects no question, then the three questions with
         # their wording ({target} = the minimal referring description of A, e.g. "the large
         # object"); user request 2026-09-19
-        panels = [(n1, "noca", "1 object\nNo question\n"),
-                  (n2, "noca", "2 objects\nNo question\n"),
-                  (n2, "ca_color_object", "2 objects\nWhat color is\nthe object?"),
-                  (n2, "ca_color_refer", "2 objects\nWhat color is\nthe {target}?"),
-                  (n2, "ca_shape_refer", "2 objects\nWhat shape is\nthe {target}?")]
+        panels = [(n1, "noca", "1 object\nNo question"),
+                  (n2, "noca", "2 objects\nNo question"),
+                  (n2, "ca_color_object", "2 objects\nWhat color is the object?"),
+                  (n2, "ca_color_refer", "2 objects\nWhat color is the {target}?"),
+                  (n2, "ca_shape_refer", "2 objects\nWhat shape is the {target}?")]
     rows = subset_rows(args.subset_labels) if args.subset_labels else None
     fig, axes = make_tsne_grid(len(panels), ncols=len(panels), cell=args.cell)
     for ax, (d, cond, title) in zip(axes, panels):
@@ -299,13 +299,17 @@ def composite_last_layer(args):
         emb = TSNE(n_components=2, perplexity=30, random_state=42).fit_transform(X)
         _pooled_scatter(ax, emb, attrs, edgecolor=args.edge_color, palette=args.palette,
                         small_size=args.small_size, large_size=args.large_size)
-        ax.set_title(title, fontsize=S["subplot_title_fontsize"])
+        ax.set_title(title, fontsize=S["subplot_title_fontsize"] - (3 if args.composite_panels == "conditions" else 0))
         style_tsne_ax(ax)
-        if args.composite_panels == "conditions":
-            ax.text(0.02, 0.02, f"n = {len(attrs)}", transform=ax.transAxes, fontsize=9, ha="left", va="bottom")
     if args.composite_panels == "conditions":
         from dino_attribute_tsne import attribute_legend_handles
-        finish_tsne_grid(fig, attribute_legend_handles(), suptitle=None, ncol=7)
+        # legend: 8 per row, first row the eight colours, second row shape / size / material.
+        # fig.legend fills column-major, so the two rows are interleaved handle by handle.
+        hs = attribute_legend_handles()
+        top, rest = hs[:8], hs[8:]
+        rest = rest + [None] * (len(top) - len(rest))
+        ordered = [h for pair in zip(top, rest) for h in pair if h is not None]
+        finish_tsne_grid(fig, ordered, suptitle=None, ncol=8)
     else:
         finish_tsne_grid(fig, [], suptitle=None)
     fig.subplots_adjust(wspace=0.12)
