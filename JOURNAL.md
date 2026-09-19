@@ -1759,3 +1759,27 @@ Question about A,附圖例與 n。(7)X18 附註就地加日期更正。全部 CP
   referent edit 的效應大於 non-referent edit。限制:DINOv2 的 edit 同時把 shape 對齊從 0.025 拉到 0.132,
   顏色專一性未建立;DINOv2 子空間 held-out 顏色辨識僅 0.39–0.46(SigLIP 0.94–0.97);機率飽和,只有 margin 敏感。
 - **登記**:registry X27(跑後補寫,設計凍結於規格與 commit 4f688ef);報告 `docs/x27_colour_replace_pilot.md` §6。
+
+#### 2026-09-18 — Codex independent verification and correction to the preceding X27 entry
+
+The preceding phrases "accuracy 不變、無 flip", "完全無變化", and "只有 margin 敏感"
+are too strong. In each model, the referent dose-1 edit changes one clean-correct answer
+to an answer other than either object's colour: accuracy decreases by 1/648, or 0.154
+percentage points. No clean-correct answer changes to the non-referent's colour. SigLIP's
+non-referent P(other) change is positive but tiny (6.743e-9), and does not exceed the
+independent rotation control by the specified interval criterion. H2 is unsupported;
+this is not evidence for exact zero effect. DINOv2's non-referent margin decrease does
+reduce correct-versus-other support, despite no detected P(other) increase. Severe
+overshoot fails the revised manipulation rule; mild overshoot can still pass if closer
+to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
+
+### 2026-09-19 — learned-text v2 seed 43 啟動
+
+- 依使用者指示補第二個 seed:`clevr_dinov2_learned_text_decoder1l_v2_s43`,指令 `+experiment=clevr_dinov2_learned_text_decoder1l wandb.name=clevr_dinov2_learned_text_decoder1l_v2 seed=43`,GPU 0,啟動 2026-09-19 07:26,log 在 run 目錄 `train.log`,pid 記於 `launch_pid.txt`。程式版本含 `7f2d8e4` 修正(branch `worktree-patch-pca-cluster`,commit 0f0bd96)。s42 v2 參考:16 epochs,best val 0.8044,2026-09-13 完成。預估 26 小時。
+
+### 2026-09-19 — Table 1 重整(Codex 提案 + 使用者要求):兩組依 decoder、加 Query-attribute 欄、無 seed 標記
+
+- 從各 run 的訓練 log 最後一次 validation breakdown 採收 query-attribute 準確率(`qtype/query_attribute`),不需重新評估;script 在 job tmp `harvest_qtype.py`,結果 `qtype_harvest.json`。三 seed 平均:DINOv2 concat 99.1/92.5、SigLIP 99.2/93.5、Sup-ViT 94.3/85.2、MAE 91.2/76.1、no visual CA 52.0/50.6、CLS classifier 97.0/89.4;cross-attn decoder s42 98.7/91.0;learned text v2 s42 85.1/80.4;scratch ViT overall 52.6(s42 52.77、v2_s43 53.73、s44 51.18)但 attribute 只有 s44(45.7),s42 與 v2_s43 無 breakdown log,待 GPU 空時用 `scripts/evaluate.py` 補。
+- 提醒:`clevr_dinov2_gca_scratch_s43`(無 v2)只跑到 epoch 5(0.4839),附錄用的是 `_v2_s43`;`concat_decoder1l_scratch_s42/stdout.log` 是別的 run 的 log(0.9437),s42 正確來源是頂層 `clevr_dinov2_concat_decoder_scratch_s42.log`。
+- Classifier readout 的 pooling 由 backbone 決定(`model.py`:cls 若有 CLS token,否則 mean):DINOv2、Sup-ViT、MAE 用 CLS,SigLIP 用 mean。
+- 稿子:Table 1 兩組(concat / cross-attn decoder),Attribute + Overall 兩欄,無 n、無 seed 標記;正文恢復四個比較問題各一句;附錄「mean ± SD」改為 mean,learned text 註明單一 run。備份 `writing/backup/ICLR_draft.tex.bak-2026-09-19-tab1c`。
