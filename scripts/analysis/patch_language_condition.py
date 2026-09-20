@@ -897,22 +897,23 @@ def plot_attr_directions(res, label, out_path, gca_layers):
 
 ROLE_CONDITIONS = {"c0": "No question", "c3": "Generic attribute question",
                    "c1": "Question about A", "c2": "Question about B"}
-ROLE_CONTRASTS = {"about_it": ("about the target", "no question"),
-                  "about_other": ("about the distractor", "no question"),
+ROLE_CONTRASTS = {"about_it": ("as referent", "no question"),
+                  "about_other": ("as non-referent", "no question"),
                   "generic": ("generic question", "no question"),
-                  "about_other_vs_generic": ("about the distractor", "generic question"),
-                  "about_it_vs_generic": ("about the target", "generic question"),
-                  "self_minus_other": ("about the target", "about the distractor")}
+                  "about_other_vs_generic": ("as non-referent", "generic question"),
+                  "about_it_vs_generic": ("as referent", "generic question"),
+                  "self_minus_other": ("as referent", "as non-referent")}
 ROLE_COLOR = {"about_it": "#d62728", "about_other": "#1f77b4", "generic": "#7f7f7f",
               "about_other_vs_generic": "#9467bd", "about_it_vs_generic": "#ff7f0e",
               "self_minus_other": "#2ca02c"}
-# Legend text and line style for the three question conditions (user wording, 2026-09-17):
-# the plotted object is the target when the question queries it, the distractor when the
-# question queries the other object.  Solid = an object is named; long dash = none named.
+# Legend text and line style for the three question conditions (author correction 2026-09-20:
+# roles referent / non-referent; identities object A / B).  The plotted object is the referent
+# when the question selects it, the non-referent when it selects the other object.
+# Solid = an object is selected; long dash = none selected.
 GENERIC_LS = (0, (6, 3))
-ROLE_LEGEND = {"about_it": ("Query the attribute of the target", "-"),
-               "about_other": ("Query the attribute of the distractor", "-"),
-               "generic": ("Query the attribute without specifying an object", GENERIC_LS)}
+ROLE_LEGEND = {"about_it": ("Measured object is the referent", "-"),
+               "about_other": ("Measured object is the non-referent", "-"),
+               "generic": ("Generic question (no object selected)", GENERIC_LS)}
 
 
 def pair_folds(labels, n_folds=5, seed=42):
@@ -1072,8 +1073,8 @@ def plot_role_paper(results, out_path, gca_layers):
         _layers_axis(ax, gca_layers)
     ax = fig.add_subplot(gs[1, :])
     w = 0.36
-    for k, (name, lab_bar) in enumerate((("about_it_vs_generic", "query the target − query without specifying an object"),
-                                         ("about_other_vs_generic", "query the distractor − query without specifying an object"))):
+    for k, (name, lab_bar) in enumerate((("about_it_vs_generic", "as referent − generic question"),
+                                         ("about_other_vs_generic", "as non-referent − generic question"))):
         vals = [results[lab]["delta"][f"both_{q}_{name}"][NUM_LAYERS - 1] for lab in labels]
         m = np.array([v["mean"] for v in vals]); lo = np.array([v["lo"] for v in vals]); hi = np.array([v["hi"] for v in vals])
         pos = np.arange(len(labels)) + (k - 0.5) * w

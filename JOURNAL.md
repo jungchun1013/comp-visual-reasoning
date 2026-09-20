@@ -1796,3 +1796,10 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - Figure 8(`writing/figures/gqa_main.pdf`)以 `paper_figures.py --only gqa_main` 重產(舊檔備份 `writing/backup/figures-2026-09-19/`),閱讀頁重建。
 - Site 首頁已由 Codex 於 10:40 改為導向 `paper_preview.html` 的轉址頁,舊實驗頁封存為 `experiments_deprecated_2026-09-19.html`;其中的舊 caption 不再更新。
 - 提交範圍:`paper_figures.py` 的 GQA 主圖 legend 修改位於 Codex 尚未提交的 `fig_gqa_main` 內,隨 Codex 的改動一起留在工作區未提交;其餘改動已提交。
+
+### 2026-09-20 — Figure 7 重畫(Codex 規格 2026-09-19)+ 角色用語改回 referent / non-referent(作者更正 2026-09-20)
+
+- 新主圖 `writing/figures/colour_subspace_replacement_v2.pdf`:A 操作示意(cohort 第一張 render `obj_0060.png`,Q1/Q2 實際問句,A/B 框來自 owner mask,座標草圖標 schematic);B referent edit 的 replacement − independent rotation 配對 margin 差,97.5 % image bootstrap;C non-referent edit 的 P(non-referent colour) 兩個配對差(vs unedited、beyond rotation),95 %。全部由 `per_image.jsonl` 逐 pair 重算(先平均 10 個 rotation seeds,再 c1/c2 平均,image 為 resampling unit,2000 次,seed 42,`_boot_family`),並斷言與 `summary.json` 一致到 1e-9。產圖 `paper_figures.py::fig_colour_replace_v2`;交付筆記 `writing/figure_notes/FIGURE7_DELIVERY_NOTE_CLAUDE_2026-09-20.md`,provenance 同目錄。
+- 數值:B DINOv2 −0.094 [−0.128, −0.064]、SigLIP −0.943 [−1.037, −0.850];C DINOv2 −1.1e-6 / −2.7e-6(區間含 0)、SigLIP +6.7e-9 [3.5e-9, 1.2e-8](vs unedited,區間不含 0 但 < 2e-8)/ −3.5e-9(beyond rotation,含 0);accuracy 644→643、648→647,無轉答 non-referent colour。
+- 舊主圖(cosine 操作檢核 + 三種 rotation 對照)移到附錄 `fig:colour_subspace_replacement_appendix`,檔案不變;draft 主圖 caption 重寫,附錄兩處引用,中文導讀同步;閱讀頁重建。
+- 作者更正:`FIGURE_REQUEST_TO_CLAUDE.md` 頁首(2026-09-20)規定角色用 referent / non-referent、固定身分用 object A / B,撤回前一天的 target / distractor。Codex 已改稿子(01:54);本次同步 Figure 5/6 legend(`build_story_prototypes.py`:"Measured object is the referent / non-referent"、"Generic question (no object selected)")、`patch_language_condition.py` 的 ROLE_CONTRASTS / ROLE_LEGEND / bar 標籤("as referent"、"as non-referent")、`paper_figures.py` 的 attribute-alignment 與 GQA 主圖 legend("Object is the referent / non-referent")、`plot_gqa_schematic.py`;Figure 5/6/8 重產,閱讀頁重建。

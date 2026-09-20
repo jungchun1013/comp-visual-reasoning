@@ -97,9 +97,9 @@ def main():
     ax.axhline(0, color="k", lw=1)
     ax.axvspan(6.5, 11.5, color=C_GREY, alpha=0.30, zorder=0)
     ax.plot(range(12), ref, color=C_T, lw=S["linewidth"], marker=S["marker"],
-            ms=S["markersize"], label="target")
+            ms=S["markersize"], label="referent")
     ax.plot(range(12), nonref, color=C_D, lw=S["linewidth"], marker=S["marker"],
-            ms=S["markersize"], label="distractor")
+            ms=S["markersize"], label="non-referent")
     ax.annotate("nothing happens\nfor six blocks", xy=(3, -0.15), xytext=(0.4, -2.4),
                 fontsize=S["tick_labelsize"] - 1, color="0.35",
                 arrowprops=dict(arrowstyle="->", color="0.45", lw=1.5))
@@ -113,8 +113,8 @@ def main():
 
     # (c) what the decoder reads
     ax = fig.add_subplot(gs[0, 2])
-    ax.set_title("c  The decoder then reads the target", fontsize=S["subplot_title_fontsize"], loc="left")
-    names = ["target", "distractor", "background"]
+    ax.set_title("c  The decoder then reads the referent", fontsize=S["subplot_title_fontsize"], loc="left")
+    names = ["referent", "non-referent", "background"]
     vals = [mass["T"]["mean"] if isinstance(mass["T"], dict) else mass["T"],
             mass["D"]["mean"] if isinstance(mass["D"], dict) else mass["D"],
             mass["bg_b"]["mean"] if isinstance(mass["bg_b"], dict) else mass["bg_b"]]

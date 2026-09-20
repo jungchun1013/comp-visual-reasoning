@@ -82,8 +82,8 @@ def fig_attribute_alignment(out_dir):
     prov = {"panels": []}
 
     def panel(ax, d, title, queried):
-        keys = {f"refvs0_target_{queried}_own": ("asked about the target (c1 − c0)", C_REF),
-                f"nonrefvs0_target_{queried}_own": ("asked about the distractor (c2 − c0)", C_NONREF),
+        keys = {f"refvs0_target_{queried}_own": ("as referent (c1 − c0)", C_REF),
+                f"nonrefvs0_target_{queried}_own": ("as non-referent (c2 − c0)", C_NONREF),
                 f"c3vs0_target_{queried}_own": ("question without a unique referent (c3 − c0)", C_NONUNIQUE)}
         for k, (lab, col) in keys.items():
             band(ax, BLOCKS, d["delta"][k], col, lab)
@@ -110,7 +110,7 @@ def fig_attribute_alignment(out_dir):
         ax.set_ylabel("Δ alignment with own value")
     prov.update({
         "model": "clevr_<backbone>_decoder1l_scratch_s42 (DINOv2 root dir = clevr_dinov2_decoder1l_scratch_s42), best.pt",
-        "data": "paired two-object renders, 324 images, target object measured under c0 no question / c1 asked about the target / c2 asked about the distractor / c3 'What color is the object?'",
+        "data": "paired two-object renders, 324 images, object A measured under c0 no question / c1 as referent / c2 as non-referent / c3 'What color is the object?'",
         "feature": "mean of the object's patch tokens after trunk.norm, unit-normalised; attribute-value directions = unit(mean of 1-object means of that value − grand mean), estimated on the 1-object set (n1)",
         "statistic": "per-image paired difference of cosine alignment, mean with 95% bootstrap CI over images (B=1000)",
         "not_excluded": "rotation/redistribution of information; direction quality (DINOv2 late blocks: held-out colour classification 0.40–0.43); a change along one direction is not information removal",
@@ -494,6 +494,205 @@ def fig_rsa_direct(out_dir):
 
 
 FIGS["rsa_direct"] = fig_rsa_direct
+
+
+# ---------------------------------------------------------------- figure 7 (2026-09-19 spec)
+def fig_colour_replace_v2(out_dir, example_index=0):
+    """Figure 7 (Codex spec 2026-09-19): A operation schematic on an analysed render,
+    B referent edit paired margin contrast vs independent rotation (97.5 % CI),
+    C non-referent edit paired change in P(non-referent colour) (95 % CI).
+    Every interval is recomputed from per_image.jsonl with the family bootstrap of the
+    original analysis (pair average c1/c2 within image, image = family, 2000 draws, seed 42);
+    nothing is derived from aggregate interval endpoints."""
+    import hashlib
+    from PIL import Image
+    from patch_language_condition import _boot_family          # the verified bootstrap
+    LAM, KIND = 1.0, "rot"                                      # complete replacement; independent tangent per patch
+    MODELS = (("DINOv2", ""), ("SigLIP", "siglip"))
+    C_MODEL = {"DINOv2": _tab10[0], "SigLIP": _tab10[1]}
+    prov = {"experiment": "X27 colour-subspace replacement, complete replacement (lambda = 1)",
+            "control": "rot: independent random tangent per patch, matched per-patch angle and vector norm, seeds 0-9 averaged per image-question pair",
+            "bootstrap": "per image-question pair -> mean over the two question directions of the same image -> image as resampling unit, "
+                         "2000 replicates, numpy RandomState seed 42 (patch_language_condition._boot_family)",
+            "levels": {"B": 0.975, "C": 0.95}, "models": {}, "panels": {}}
+    stats = {}
+    for model, sub in MODELS:
+        path = ROOT / sub / "n2_colour_replace_v2"
+        manifest = json.loads((path / "manifest.json").read_text())
+        summary = json.loads((path / "summary.json").read_text())
+        rows = [json.loads(l) for l in open(path / "per_image.jsonl")]
+        by = {}
+        for r in rows:
+            by.setdefault((r["i"], r["cond"], r["variant"], r["role"], r["dose"]), []).append(r)
+        imgs = sorted({r["i"] for r in rows})
+        fam = np.array([by[(i, "c1", "clean", "none", 0.0)][0]["pair_index"] for i in imgs])
+        assert len(imgs) == 324 and not any(manifest["invalid_counts"].values()) and not manifest["excluded"]
+
+        def pair_contrasts(role):
+            """Per image: mean over c1/c2 of the per-pair paired contrasts."""
+            dm, dm_ctrl, dp, dp_ctrl, n_pairs, seeds_used = [], [], [], [], 0, set()
+            for i in imgs:
+                v_dm, v_dmc, v_dp, v_dpc = [], [], [], []
+                for c in ("c1", "c2"):
+                    cl = by[(i, c, "clean", "none", 0.0)][0]
+                    ed = by[(i, c, "edit", role, LAM)][0]
+                    rots = by[(i, c, KIND, role, LAM)]
+                    seeds_used |= {r["seed"] for r in rots}
+                    m_rot = np.mean([r["margin"] for r in rots]); p_rot = np.mean([r["p_other"] for r in rots])
+                    v_dm.append(ed["margin"] - cl["margin"]); v_dmc.append((ed["margin"] - cl["margin"]) - (m_rot - cl["margin"]))
+                    v_dp.append(ed["p_other"] - cl["p_other"]); v_dpc.append((ed["p_other"] - cl["p_other"]) - (p_rot - cl["p_other"]))
+                    n_pairs += 1
+                dm.append(np.mean(v_dm)); dm_ctrl.append(np.mean(v_dmc)); dp.append(np.mean(v_dp)); dp_ctrl.append(np.mean(v_dpc))
+            return (np.array(dm), np.array(dm_ctrl), np.array(dp), np.array(dp_ctrl), n_pairs, sorted(seeds_used))
+
+        def accuracy(role):
+            n_ok_clean = n_ok_edit = n_flip_other = n_cc = 0
+            for i in imgs:
+                for c in ("c1", "c2"):
+                    cl = by[(i, c, "clean", "none", 0.0)][0]; ed = by[(i, c, "edit", role, LAM)][0]
+                    n_ok_clean += int(cl["is_correct"]); n_ok_edit += int(ed["is_correct"])
+                    if cl["is_correct"]:
+                        n_cc += 1; n_flip_other += int(ed["argmax"] == cl["other_id"])
+            return {"correct_unedited": n_ok_clean, "correct_edited": n_ok_edit, "n_questions": 2 * len(imgs),
+                    "switches_to_non_referent_colour_among_unedited_correct": n_flip_other, "unedited_correct": n_cc}
+
+        dm_r, dmc_r, _, _, n_pairs, seeds = pair_contrasts("referent")
+        _, _, dp_n, dpc_n, _, _ = pair_contrasts("nonreferent")
+        B = _boot_family(dmc_r, fam, level=0.975)
+        B0 = _boot_family(dm_r, fam, level=0.975)
+        C1 = _boot_family(dp_n, fam, level=0.95)
+        C2 = _boot_family(dpc_n, fam, level=0.95)
+        # cross-check against the verified summary.json of the run (same estimator, must agree)
+        s_ref = summary["roles"]["referent"]["dose_1"]; s_non = summary["roles"]["nonreferent"]["dose_1"]
+        checks = {"B_vs_summary_T1": s_ref["controls"][KIND]["T1_margin_edit_minus_control"],
+                  "C1_vs_summary": s_non["p_other_edit_minus_clean"],
+                  "C2_vs_summary": s_non["controls"][KIND]["p_other_edit_minus_control"]}
+        for name, (mine, ref) in {"B": (B, checks["B_vs_summary_T1"]), "C1": (C1, checks["C1_vs_summary"]),
+                                  "C2": (C2, checks["C2_vs_summary"])}.items():
+            for k in ("mean", "lo", "hi"):
+                assert abs(mine[k] - ref[k]) <= 1e-9 * max(1.0, abs(ref[k])), (model, name, k, mine[k], ref[k])
+        stats[model] = {"B": B, "B_edit_minus_unedited": B0, "C1": C1, "C2": C2,
+                        "accuracy_referent": accuracy("referent"), "accuracy_nonreferent": accuracy("nonreferent")}
+        prov["models"][model] = {
+            "source_dir": str(path), "per_image_sha256": hashlib.sha256((path / "per_image.jsonl").read_bytes()).hexdigest(),
+            "summary_sha256": hashlib.sha256((path / "summary.json").read_bytes()).hexdigest(),
+            "checkpoint": manifest["checkpoint"], "checkpoint_sha256": manifest["checkpoint_sha256"],
+            "analysis_git_head": manifest["git_head"], "n_images": len(imgs), "n_image_question_pairs": n_pairs,
+            "rotation_seeds": seeds, "record_keys_used": ["margin", "p_other", "is_correct", "argmax", "other_id", "pair_index"],
+            "cross_check_summary_json": "B, C1, C2 equal the summary.json fields T1_margin_edit_minus_control (rot), "
+                                        "p_other_edit_minus_clean and p_other_edit_minus_control (rot) to 1e-9",
+            **stats[model]}
+
+    # ---- example render for panel A (from the analysed cohort; boxes from the patch-owner masks)
+    labels = json.load(open(ROOT / "n2" / "labels.json"))
+    owner = np.load(ROOT / "n2" / "owner.npy")
+    ex = labels[example_index]
+    img = Image.open(Path("data/clevr_object_count/n2/images") / ex["filename"]).convert("RGB")
+    W, H = img.size
+    g = int(np.sqrt(owner.shape[1]))
+    grid = owner[example_index].reshape(g, g)
+    boxes = {}
+    for oid in (1, 2):
+        rr, cc = np.where(grid == oid)
+        boxes[oid] = (cc.min() * W / g, rr.min() * H / g, (cc.max() + 1 - cc.min()) * W / g, (rr.max() + 1 - rr.min()) * H / g)
+    prov["panels"]["A"] = {"example": {"pair_index": ex["pair_index"], "filename": ex["filename"], "questions": ex["questions"],
+                                       "object_A": ex["target"], "object_B": ex["distractors"][0],
+                                       "boxes_xywh_from_owner_mask": {str(k): [float(x) for x in v] for k, v in boxes.items()}},
+                           "note": "real render from the analysed cohort; the coordinate sketch is a schematic, not measured activations"}
+
+    # ---- figure
+    apply_style()
+    fig = plt.figure(figsize=(14.0, 5.0))
+    gs = GridSpec(1, 3, figure=fig, width_ratios=[1.5, 1.0, 1.05], wspace=0.55)
+    gsA = gs[0].subgridspec(2, 1, height_ratios=[1.0, 1.15], hspace=0.42)
+    axI = fig.add_subplot(gsA[0]); axS = fig.add_subplot(gsA[1]); axB = fig.add_subplot(gs[1]); axC = fig.add_subplot(gs[2])
+    C_A, C_B = "#c43c39", "#2878b5"
+    axI.imshow(img); axI.set_xticks([]); axI.set_yticks([])
+    for oid, col, name in ((1, C_A, "A"), (2, C_B, "B")):
+        x, y, w, h = boxes[oid]
+        axI.add_patch(Rectangle((x, y), w, h, fill=False, edgecolor=col, lw=2))
+        axI.text(x + 2, y - 4, name, color="white", fontsize=10, weight="bold", va="bottom",
+                 bbox=dict(facecolor=col, pad=1.5, lw=0))
+    axI.set_title("A  Intervention at the encoder–decoder interface", fontsize=11, loc="left")
+    axI.set_xlabel(f'Q1: "{ex["questions"]["c1"]}"  (referent A, non-referent B)\n'
+                   f'Q2: "{ex["questions"]["c2"]}"  (referent B, non-referent A)', fontsize=8)
+    # schematic: two separate branches, one object edited per branch; the coordinate sketch is labelled schematic
+    axS.axis("off"); axS.set_xlim(0, 1); axS.set_ylim(0, 1)
+    axS.text(0.0, 0.99, "One object's patch tokens are edited per question (two branches):", fontsize=7.8, va="top")
+    for y, txt, col in ((0.80, "edit the referent", C_A), (0.62, "edit the non-referent", C_B)):
+        axS.add_patch(Rectangle((0.0, y - 0.07), 0.36, 0.14, facecolor="white", edgecolor=col, lw=1.4))
+        axS.text(0.18, y, txt, ha="center", va="center", fontsize=8, color=col)
+        axS.annotate("", xy=(0.45, y), xytext=(0.37, y), arrowprops=dict(arrowstyle="->", color="0.3", lw=1.1))
+    axS.text(0.47, 0.71, "color-subspace coordinates of its tokens:\nwith question → no question (λ = 1)\npatch norm kept; remaining\ncoordinates rescaled",
+             fontsize=7.6, va="center", linespacing=1.25)
+    axS.add_patch(Rectangle((0.0, 0.02), 0.40, 0.44, facecolor="#f4f4f4", edgecolor="0.7", lw=0.8))
+    axS.text(0.20, 0.445, "color subspace (schematic)", fontsize=6.8, ha="center", va="top", color="0.35")
+    axS.annotate("", xy=(0.38, 0.07), xytext=(0.04, 0.07), arrowprops=dict(arrowstyle="->", color="0.4", lw=0.9))
+    axS.annotate("", xy=(0.04, 0.40), xytext=(0.04, 0.07), arrowprops=dict(arrowstyle="->", color="0.4", lw=0.9))
+    axS.plot([0.30], [0.26], "o", color="0.15", ms=5); axS.text(0.30, 0.295, "with question", fontsize=6.8, ha="center", va="bottom")
+    axS.plot([0.12], [0.13], "o", color="0.15", ms=5, mfc="white"); axS.text(0.155, 0.13, "no question", fontsize=6.8, ha="left", va="center")
+    axS.annotate("", xy=(0.135, 0.145), xytext=(0.285, 0.245), arrowprops=dict(arrowstyle="->", color="#333333", lw=1.4))
+    axS.text(0.47, 0.24, "control: rotate the same tokens by the\nsame per-token angle in a random\ndirection, same vector norm (10 seeds)",
+             fontsize=7.6, va="center", color="0.25", linespacing=1.25)
+
+    # panel B
+    xs = np.arange(len(MODELS))
+    for k, (model, _) in enumerate(MODELS):
+        b = stats[model]["B"]
+        axB.errorbar([k], [b["mean"]], yerr=[[b["mean"] - b["lo"]], [b["hi"] - b["mean"]]], fmt="o", color=C_MODEL[model],
+                     capsize=4, markersize=6, linewidth=1.4)
+        axB.text(k + 0.08, b["mean"], f'{b["mean"]:.3f}\n[{b["lo"]:.3f}, {b["hi"]:.3f}]', fontsize=8, va="center")
+    axB.axhline(0, color="0.4", lw=0.9)
+    axB.set_xticks(xs, [m for m, _ in MODELS]); axB.set_xlim(-0.5, len(MODELS) - 0.2)
+    axB.set_ylabel("Replacement − random rotation\n(logit margin, correct − non-referent color)", fontsize=9)
+    axB.set_title("B  Referent edit: correct-answer margin", fontsize=11, loc="left")
+    lo_all = min(stats[m]["B"]["lo"] for m, _ in MODELS)
+    axB.set_ylim(lo_all * 1.18, max(0.08, -lo_all * 0.12))
+
+    # panel C: two paired contrasts per model, annotated above (vs unedited) and below (beyond rotation)
+    off = {"C1": -0.16, "C2": 0.16}
+    lab = {"C1": "replacement − unedited", "C2": "(replacement − unedited) − (rotation − unedited)"}
+    mk = {"C1": "o", "C2": "s"}
+    hi_all = max(stats[m][k]["hi"] for m, _ in MODELS for k in ("C1", "C2")); lo_c = min(stats[m][k]["lo"] for m, _ in MODELS for k in ("C1", "C2"))
+    span = max(hi_all, -lo_c, 1e-12)
+    for k, (model, _) in enumerate(MODELS):
+        for key in ("C1", "C2"):
+            c = stats[model][key]
+            axC.errorbar([k + off[key]], [c["mean"]], yerr=[[c["mean"] - c["lo"]], [c["hi"] - c["mean"]]], fmt=mk[key],
+                         color=C_MODEL[model], mfc=C_MODEL[model] if key == "C1" else "white", capsize=4, markersize=6, linewidth=1.4)
+            txt = f'{c["mean"]:.1e}\n[{c["lo"]:.1e}, {c["hi"]:.1e}]'
+            if key == "C1":
+                axC.text(k + off[key], c["hi"] + 0.04 * span, txt, fontsize=6.6, ha="center", va="bottom")
+            else:
+                axC.text(k + off[key], c["lo"] - 0.04 * span, txt, fontsize=6.6, ha="center", va="top")
+    axC.axhline(0, color="0.4", lw=0.9)
+    axC.set_xticks(xs, [m for m, _ in MODELS]); axC.set_xlim(-0.55, len(MODELS) - 0.45)
+    axC.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
+    axC.set_ylabel("Change in P(non-referent color)\n(softmax over the full answer vocabulary)", fontsize=9)
+    axC.set_title("C  Non-referent edit: probability of its color", fontsize=11, loc="left")
+    axC.set_ylim(min(lo_c, 0) - 0.45 * span, hi_all + 0.55 * span)
+    handles = [Line2D([], [], marker="o", color="0.3", ls="", label=lab["C1"]),
+               Line2D([], [], marker="s", color="0.3", mfc="white", ls="", label=lab["C2"])]
+    axC.legend(handles=handles, loc="upper left", fontsize=7.2, frameon=False, handletextpad=0.4)
+    for ax in (axB, axC):
+        ax.grid(axis="y", alpha=0.15); ax.spines[["top", "right"]].set_visible(False); ax.tick_params(labelsize=9.5)
+    acc = {m: stats[m]["accuracy_referent"] for m, _ in MODELS}
+    foot = " · ".join(f'{m}: correct {a["correct_unedited"]} → {a["correct_edited"]} of {a["n_questions"]} questions, '
+                      f'{a["switches_to_non_referent_colour_among_unedited_correct"]} switch to the non-referent color' for m, a in acc.items())
+    prov["panels"]["B"] = {m: stats[m]["B"] for m, _ in MODELS}
+    prov["panels"]["C"] = {m: {"replacement_minus_unedited": stats[m]["C1"], "beyond_rotation": stats[m]["C2"]} for m, _ in MODELS}
+    prov["accuracy_referent_edit"] = acc
+    prov["accuracy_nonreferent_edit"] = {m: stats[m]["accuracy_nonreferent"] for m, _ in MODELS}
+    fig.text(0.5, -0.02, "Referent edit, accuracy — " + foot, ha="center", fontsize=8.5, color="0.25")
+    for ext in ("pdf", "png"):
+        fig.savefig(out_dir / f"colour_subspace_replacement_v2.{ext}", dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    (out_dir / "colour_subspace_replacement_v2_provenance.json").write_text(json.dumps(prov, indent=2) + "\n")
+    print(f"Saved colour_subspace_replacement_v2 (pdf, png, provenance) to {out_dir}")
+    print(json.dumps({m: {"B": stats[m]["B"], "C1": stats[m]["C1"], "C2": stats[m]["C2"], "acc": acc[m]} for m, _ in MODELS}, indent=1))
+
+
+FIGS["colour_subspace_replacement_v2"] = fig_colour_replace_v2
 
 
 if __name__ == "__main__":
