@@ -1810,3 +1810,9 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - 程式:`writing/build_story_prototypes.py`(備份 `.bak-2026-09-21`,新增 `frame()`),`paper_figures.py::fig_colour_replace_v2` layout 段。Figure 7 數值與 provenance 不變(同一份 per_image 重算)。
 - Draft:Figure 7 caption 的 (A)/(B)/(C) 改為 Left / Middle / Right,"Points" 改 "Bars";中文導讀同步(備份 `ICLR_draft.tex.bak-2026-09-21-fig7cap`)。閱讀頁重建。
 - 未動:正文與其他 caption 仍用 "block"(57 處);圖軸已改 "layer",兩者是否統一待使用者決定。
+
+### 2026-09-21 — layer 軸統一:"ViT layer" + 奇數 layer 淺色標線;Figure 9 套用統一款式
+
+- 所有 layer 軸改標 "ViT layer"(原 "block" / "ViT block" / "Block (zero-based)"),並加上 Figure 4 那種奇數(cross-attention)layer 的淺色虛線(`mark_gca_layers` 樣式:gray、"--"、0.8、alpha 0.15):Figure 4(`paper_figures.py::fig_rsa_direct`,draft 用的是這個兩格版,不是 `figure_notes/plot_rsa_for_paper.py` 的三格版)、Figure 5/6(`build_story_prototypes.py` 新增 `layer_lines()`)、Figure 9(`fig_gqa_main`)、附錄 `gqa_grounding`、`functional_referent_edit`、`object_encoding`(`figure_notes/plot_object_encoding.py`)。舊 PDF 備份在 `writing/backup/figures-2026-09-21/`。
+- Figure 9 同時套用 5/6/7 的款式:紅 = referent / Q1 的物件、藍 = non-referent / Q2 的物件,四邊粗框,去掉 A/B/C 與面板標題(原 "Cosine to own-attribute direction" 等),線圖不加圓點,legend "Measured object is the referent / non-referent"。數值來源不變。
+- 閱讀頁重建。Figure 4 的 "Binding / Retrieval" 標題與 caption 一致,未動。

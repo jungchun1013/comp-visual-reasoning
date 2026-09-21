@@ -90,7 +90,7 @@ def fig_attribute_alignment(out_dir):
         ax.axhline(0, color="k", lw=0.8)
         mark_gca_layers(ax)
         ax.set_title(title, fontsize=S["subplot_title_fontsize"])
-        ax.set_xlabel("block")
+        ax.set_xlabel("ViT layer")
         ax.set_xticks(BLOCKS[1::2])
         return {"title": title, "n_images": d["n_images"], "queried": queried,
                 "keys": list(keys), "y": "cosine(unit object-mean, unit own-value direction) minus no-question value"}
@@ -264,7 +264,7 @@ def fig_gqa_grounding(out_dir, example_idx=(0, 3)):
     band(ax, BLOCKS, x23["h1"]["per_block"]["nonref"], C_NONREF, "non-referent object (c1 − c2)")
     ax.axhline(0, color="k", lw=0.8); mark_gca_layers(ax)
     ax.set_title("Direct: per-image object − background direction\n(184 questions / 148 images, c1 acc 0.679)", fontsize=S["tick_labelsize"])
-    ax.set_ylabel("projection change"); ax.set_xlabel("block")
+    ax.set_ylabel("projection change"); ax.set_xlabel("ViT layer")
 
     cf = load("x23_gqa_spatial_h2/h4_marker_crossfit.json")
     ax = fig.add_subplot(gs[1, 2:4])
@@ -273,7 +273,7 @@ def fig_gqa_grounding(out_dir, example_idx=(0, 3)):
     ax.axhline(0, color="k", lw=0.8); mark_gca_layers(ax)
     wm = cf["window_mean"]["T_minus_D"]
     ax.set_title(f"Spatial: direction estimated on direct pairs, cross-fit\n(35 q / 27 images; T − D b9–11 = {wm['mean']:+.2f} [{wm['lo']:+.2f}, {wm['hi']:+.2f}])", fontsize=S["tick_labelsize"])
-    ax.set_ylabel("projection (c1 − c2)"); ax.set_xlabel("block")
+    ax.set_ylabel("projection (c1 − c2)"); ax.set_xlabel("ViT layer")
 
     r2 = load("x24_gqa_attr/attr_decomposition.json")
     ax = fig.add_subplot(gs[1, 4:6])
@@ -282,7 +282,7 @@ def fig_gqa_grounding(out_dir, example_idx=(0, 3)):
     band(ax, BLOCKS, pr["nonref_queried"]["series"], C_NONREF, "non-referent, queried attribute (c1 − c0)")
     ax.axhline(0, color="k", lw=0.8); mark_gca_layers(ax)
     ax.set_title(f"Direct: alignment with own value of the queried attribute\n({pr['ref_queried']['n']} object-role rows / {pr['ref_queried']['n_images']} images; pool {r2['pool_n']} objects)", fontsize=S["tick_labelsize"])
-    ax.set_ylabel("Δ alignment"); ax.set_xlabel("block")
+    ax.set_ylabel("Δ alignment"); ax.set_xlabel("ViT layer")
 
     inj = load("x23_gqa_direct_inject/marker_injection.json")
     ax = fig.add_subplot(gs[2, 0:6])
@@ -367,7 +367,7 @@ def fig_functional_referent_edit(out_dir, alpha=1.0):
                     **line_kwargs(label=lab, color=col, linestyle=ls))
         mark_gca_layers(ax)
         ax.set_title(f"{name} (n = {n})", fontsize=S["subplot_title_fontsize"])
-        ax.set_xlabel("block where the vector is added"); ax.set_xticks(BLOCKS[1::2]); ax.set_ylim(-0.02, 1.02)
+        ax.set_xlabel("ViT layer where the vector is added"); ax.set_xticks(BLOCKS[1::2]); ax.set_ylim(-0.02, 1.02)
         prov["models"][name] = {"source": str(ROOT / sub / "intervention_results.json"), "n_baseline_correct": n,
                                 "baseline_accuracy": r["baseline_accuracy"], "variants": r["variants"], "alphas": r["alphas"]}
     axes[0].set_ylabel("fraction of answers switched to the injected colour")
@@ -484,7 +484,7 @@ def fig_rsa_direct(out_dir):
             ax.fill_between(BLOCKS, m - sem, m + sem, color=col, alpha=S["std_alpha"] * alpha, linewidth=0)
         mark_gca_layers(ax)
         ax.set_title(title, fontsize=S["subplot_title_fontsize"])
-        ax.set_xlabel("block"); ax.set_xticks(BLOCKS[1::2]); ax.set_ylim(0, 0.85)
+        ax.set_xlabel("ViT layer"); ax.set_xticks(BLOCKS[1::2]); ax.set_ylim(0, 0.85)
         prov["panels"].append({"title": title, "condition_index": cond, "subset_condition_index": sub, "historical_name": row["name"],
                                "block11_with": row["per_layer"]["11"]["mean"], "block11_without": ctrl[0]["per_layer"]["11"]["mean"],
                                "band": "± SEM = std / sqrt(n) over per-query Spearman rho, n = 72"})
