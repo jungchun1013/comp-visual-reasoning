@@ -600,20 +600,21 @@ def fig_colour_replace_v2(out_dir, example_index=0):
                                        "boxes_xywh_from_owner_mask": {str(k): [float(x) for x in v] for k, v in boxes.items()}},
                            "note": "real render from the analysed cohort; the coordinate sketch is a schematic, not measured activations"}
 
-    # ---- figure
+    # ---- figure (style unified with Figures 5/6, user 2026-09-21: red = referent, blue = non-referent,
+    # thick four-sided frame, no panel letters, no title on the schematic, bars instead of markers)
     apply_style()
+    plt.rcParams.update({"font.size": 10, "pdf.fonttype": 42})
+    C_A, C_B, FRAME_LW = "#b34444", "#28699a", 1.2
     fig = plt.figure(figsize=(14.0, 5.0))
-    gs = GridSpec(1, 3, figure=fig, width_ratios=[1.5, 1.0, 1.05], wspace=0.55)
+    gs = GridSpec(1, 3, figure=fig, width_ratios=[1.5, 1.0, 1.05], wspace=0.5)
     gsA = gs[0].subgridspec(2, 1, height_ratios=[1.0, 1.15], hspace=0.42)
     axI = fig.add_subplot(gsA[0]); axS = fig.add_subplot(gsA[1]); axB = fig.add_subplot(gs[1]); axC = fig.add_subplot(gs[2])
-    C_A, C_B = "#c43c39", "#2878b5"
     axI.imshow(img); axI.set_xticks([]); axI.set_yticks([])
     for oid, col, name in ((1, C_A, "A"), (2, C_B, "B")):
         x, y, w, h = boxes[oid]
         axI.add_patch(Rectangle((x, y), w, h, fill=False, edgecolor=col, lw=2))
         axI.text(x + 2, y - 4, name, color="white", fontsize=10, weight="bold", va="bottom",
                  bbox=dict(facecolor=col, pad=1.5, lw=0))
-    axI.set_title("A  Intervention at the encoder–decoder interface", fontsize=11, loc="left")
     axI.set_xlabel(f'Q1: "{ex["questions"]["c1"]}"  (referent A, non-referent B)\n'
                    f'Q2: "{ex["questions"]["c2"]}"  (referent B, non-referent A)', fontsize=8)
     # schematic: two separate branches, one object edited per branch; the coordinate sketch is labelled schematic
@@ -635,55 +636,52 @@ def fig_colour_replace_v2(out_dir, example_index=0):
     axS.text(0.47, 0.24, "control: rotate the same tokens by the\nsame per-token angle in a random\ndirection, same vector norm (10 seeds)",
              fontsize=7.6, va="center", color="0.25", linespacing=1.25)
 
-    # panel B
+    # panel B (referent, red): bars with intervals, values written under the interval
     xs = np.arange(len(MODELS))
+    ekw = dict(capsize=4, ecolor="0.15", elinewidth=1.2, capthick=1.2)
+    lo_all = min(stats[m]["B"]["lo"] for m, _ in MODELS)
     for k, (model, _) in enumerate(MODELS):
         b = stats[model]["B"]
-        axB.errorbar([k], [b["mean"]], yerr=[[b["mean"] - b["lo"]], [b["hi"] - b["mean"]]], fmt="o", color=C_MODEL[model],
-                     capsize=4, markersize=6, linewidth=1.4)
-        axB.text(k + 0.08, b["mean"], f'{b["mean"]:.3f}\n[{b["lo"]:.3f}, {b["hi"]:.3f}]', fontsize=8, va="center")
-    axB.axhline(0, color="0.4", lw=0.9)
-    axB.set_xticks(xs, [m for m, _ in MODELS]); axB.set_xlim(-0.5, len(MODELS) - 0.2)
-    axB.set_ylabel("Replacement − random rotation\n(logit margin, correct − non-referent color)", fontsize=9)
-    axB.set_title("B  Referent edit: correct-answer margin", fontsize=11, loc="left")
-    lo_all = min(stats[m]["B"]["lo"] for m, _ in MODELS)
-    axB.set_ylim(lo_all * 1.18, max(0.08, -lo_all * 0.12))
+        axB.bar([k], [b["mean"]], width=0.5, color=C_A, yerr=[[b["mean"] - b["lo"]], [b["hi"] - b["mean"]]], error_kw=ekw)
+        axB.text(k, b["lo"] + 0.03 * lo_all, f'{b["mean"]:.3f}\n[{b["lo"]:.3f}, {b["hi"]:.3f}]', fontsize=8, ha="center", va="top")
+    axB.set_ylabel("Logit margin: replacement − random rotation", fontsize=10)
+    axB.set_title("Referent edit: correct-answer margin", fontsize=11, loc="left")
+    axB.set_ylim(lo_all * 1.30, max(0.06, -lo_all * 0.08))
 
-    # panel C: two paired contrasts per model, annotated above (vs unedited) and below (beyond rotation)
-    off = {"C1": -0.16, "C2": 0.16}
-    lab = {"C1": "replacement − unedited", "C2": "(replacement − unedited) − (rotation − unedited)"}
-    mk = {"C1": "o", "C2": "s"}
+    # panel C (non-referent, blue): two paired contrasts per model, filled = vs unedited, open = beyond rotation
+    off = {"C1": -0.19, "C2": 0.19}
     hi_all = max(stats[m][k]["hi"] for m, _ in MODELS for k in ("C1", "C2")); lo_c = min(stats[m][k]["lo"] for m, _ in MODELS for k in ("C1", "C2"))
     span = max(hi_all, -lo_c, 1e-12)
     for k, (model, _) in enumerate(MODELS):
         for key in ("C1", "C2"):
             c = stats[model][key]
-            axC.errorbar([k + off[key]], [c["mean"]], yerr=[[c["mean"] - c["lo"]], [c["hi"] - c["mean"]]], fmt=mk[key],
-                         color=C_MODEL[model], mfc=C_MODEL[model] if key == "C1" else "white", capsize=4, markersize=6, linewidth=1.4)
+            axC.bar([k + off[key]], [c["mean"]], width=0.34, color=C_B if key == "C1" else "white", edgecolor=C_B, lw=1.2,
+                    yerr=[[c["mean"] - c["lo"]], [c["hi"] - c["mean"]]], error_kw=ekw)
             txt = f'{c["mean"]:.1e}\n[{c["lo"]:.1e}, {c["hi"]:.1e}]'
             if key == "C1":
                 axC.text(k + off[key], c["hi"] + 0.04 * span, txt, fontsize=6.6, ha="center", va="bottom")
             else:
                 axC.text(k + off[key], c["lo"] - 0.04 * span, txt, fontsize=6.6, ha="center", va="top")
-    axC.axhline(0, color="0.4", lw=0.9)
-    axC.set_xticks(xs, [m for m, _ in MODELS]); axC.set_xlim(-0.55, len(MODELS) - 0.45)
     axC.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
-    axC.set_ylabel("Change in P(non-referent color)\n(softmax over the full answer vocabulary)", fontsize=9)
-    axC.set_title("C  Non-referent edit: probability of its color", fontsize=11, loc="left")
-    axC.set_ylim(min(lo_c, 0) - 0.45 * span, hi_all + 0.55 * span)
-    handles = [Line2D([], [], marker="o", color="0.3", ls="", label=lab["C1"]),
-               Line2D([], [], marker="s", color="0.3", mfc="white", ls="", label=lab["C2"])]
-    axC.legend(handles=handles, loc="upper left", fontsize=7.2, frameon=False, handletextpad=0.4)
+    axC.set_ylabel("Change in P(non-referent color)", fontsize=10)
+    axC.set_title("Non-referent edit: probability of its color", fontsize=11, loc="left")
+    axC.set_ylim(min(lo_c, 0) - 0.45 * span, hi_all + 0.45 * span)
     for ax in (axB, axC):
-        ax.grid(axis="y", alpha=0.15); ax.spines[["top", "right"]].set_visible(False); ax.tick_params(labelsize=9.5)
+        ax.axhline(0, color="#aaaaaa", lw=0.7)
+        ax.set_xticks(xs, [m for m, _ in MODELS]); ax.set_xlim(-0.6, len(MODELS) - 0.4)
+        ax.tick_params(labelsize=10)
+    for ax in (axI, axB, axC):
+        for sp in ax.spines.values():
+            sp.set_visible(True); sp.set_linewidth(FRAME_LW)
+    handles = [Patch(facecolor=C_A, label="referent edit: replacement − random rotation"),
+               Patch(facecolor=C_B, label="non-referent edit: replacement − unedited"),
+               Patch(facecolor="white", edgecolor=C_B, lw=1.2, label="non-referent edit: beyond random rotation")]
+    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.06))
     acc = {m: stats[m]["accuracy_referent"] for m, _ in MODELS}
-    foot = " · ".join(f'{m}: correct {a["correct_unedited"]} → {a["correct_edited"]} of {a["n_questions"]} questions, '
-                      f'{a["switches_to_non_referent_colour_among_unedited_correct"]} switch to the non-referent color' for m, a in acc.items())
     prov["panels"]["B"] = {m: stats[m]["B"] for m, _ in MODELS}
     prov["panels"]["C"] = {m: {"replacement_minus_unedited": stats[m]["C1"], "beyond_rotation": stats[m]["C2"]} for m, _ in MODELS}
     prov["accuracy_referent_edit"] = acc
     prov["accuracy_nonreferent_edit"] = {m: stats[m]["accuracy_nonreferent"] for m, _ in MODELS}
-    fig.text(0.5, -0.02, "Referent edit, accuracy — " + foot, ha="center", fontsize=8.5, color="0.25")
     for ext in ("pdf", "png"):
         fig.savefig(out_dir / f"colour_subspace_replacement_v2.{ext}", dpi=S["dpi"], bbox_inches="tight")
     plt.close(fig)

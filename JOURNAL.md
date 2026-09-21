@@ -1803,3 +1803,10 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - 數值:B DINOv2 −0.094 [−0.128, −0.064]、SigLIP −0.943 [−1.037, −0.850];C DINOv2 −1.1e-6 / −2.7e-6(區間含 0)、SigLIP +6.7e-9 [3.5e-9, 1.2e-8](vs unedited,區間不含 0 但 < 2e-8)/ −3.5e-9(beyond rotation,含 0);accuracy 644→643、648→647,無轉答 non-referent colour。
 - 舊主圖(cosine 操作檢核 + 三種 rotation 對照)移到附錄 `fig:colour_subspace_replacement_appendix`,檔案不變;draft 主圖 caption 重寫,附錄兩處引用,中文導讀同步;閱讀頁重建。
 - 作者更正:`FIGURE_REQUEST_TO_CLAUDE.md` 頁首(2026-09-20)規定角色用 referent / non-referent、固定身分用 object A / B,撤回前一天的 target / distractor。Codex 已改稿子(01:54);本次同步 Figure 5/6 legend(`build_story_prototypes.py`:"Measured object is the referent / non-referent"、"Generic question (no object selected)")、`patch_language_condition.py` 的 ROLE_CONTRASTS / ROLE_LEGEND / bar 標籤("as referent"、"as non-referent")、`paper_figures.py` 的 attribute-alignment 與 GQA 主圖 legend("Object is the referent / non-referent")、`plot_gqa_schematic.py`;Figure 5/6/8 重產,閱讀頁重建。
+
+### 2026-09-21 — Figure 5/6/7 款式統一(使用者要求)
+
+- 三張圖同款:紅 = referent、藍 = non-referent(`#b34444` / `#28699a`);四邊外框粗線 1.2;x 軸 "ViT layer"(原 "ViT block");Figure 7 去掉 A/B/C 面板字母與示意圖標題,中、右格同款長條圖 + 區間(不用圓點),y 軸單行標籤,圖例移到圖下方(與 5/6 相同),accuracy 一行移出圖(caption 已載)。
+- 程式:`writing/build_story_prototypes.py`(備份 `.bak-2026-09-21`,新增 `frame()`),`paper_figures.py::fig_colour_replace_v2` layout 段。Figure 7 數值與 provenance 不變(同一份 per_image 重算)。
+- Draft:Figure 7 caption 的 (A)/(B)/(C) 改為 Left / Middle / Right,"Points" 改 "Bars";中文導讀同步(備份 `ICLR_draft.tex.bak-2026-09-21-fig7cap`)。閱讀頁重建。
+- 未動:正文與其他 caption 仍用 "block"(57 處);圖軸已改 "layer",兩者是否統一待使用者決定。
