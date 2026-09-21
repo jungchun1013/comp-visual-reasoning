@@ -497,8 +497,8 @@ FIGS["rsa_direct"] = fig_rsa_direct
 
 
 # ---------------------------------------------------------------- figure 7 (2026-09-19 spec)
-def fig_colour_replace_v2(out_dir, example_index=0):
-    """Figure 7 (Codex spec 2026-09-19): A operation schematic on an analysed render,
+def _colour_replace_data(example_index=0):
+    """Data shared by the colour-replacement figures (v2, v3). Codex spec 2026-09-19: A operation schematic on an analysed render,
     B referent edit paired margin contrast vs independent rotation (97.5 % CI),
     C non-referent edit paired change in P(non-referent colour) (95 % CI).
     Every interval is recomputed from per_image.jsonl with the family bootstrap of the
@@ -600,6 +600,13 @@ def fig_colour_replace_v2(out_dir, example_index=0):
                                        "boxes_xywh_from_owner_mask": {str(k): [float(x) for x in v] for k, v in boxes.items()}},
                            "note": "real render from the analysed cohort; the coordinate sketch is a schematic, not measured activations"}
 
+    return {"stats": stats, "prov": prov, "MODELS": MODELS, "ex": ex, "img": img, "boxes": boxes}
+
+
+def fig_colour_replace_v2(out_dir, example_index=0):
+    """v2 layout (three panels in a row), kept for the record; v3 is the manuscript figure."""
+    d = _colour_replace_data(example_index)
+    stats, prov, MODELS, ex, img, boxes = (d[k] for k in ("stats", "prov", "MODELS", "ex", "img", "boxes"))
     # ---- figure (style unified with Figures 5/6, user 2026-09-21: red = referent, blue = non-referent,
     # thick four-sided frame, no panel letters, no title on the schematic, bars instead of markers)
     apply_style()
@@ -691,6 +698,130 @@ def fig_colour_replace_v2(out_dir, example_index=0):
 
 
 FIGS["colour_subspace_replacement_v2"] = fig_colour_replace_v2
+
+
+def fig_colour_replace_v3(out_dir, example_index=0):
+    """Figure 8 (Codex redesign note 2026-09-21): top = operation flow on a real cohort render
+    (with-question vs no-question patch representations of the same image; which component is
+    replaced; matched random perturbation), bottom left = referent edit as horizontal point +
+    97.5 % interval, bottom right = non-referent edit as a compact table (C2, 95 %).
+    Designed at the ICLR text width (5.5 in) so printed text is >= 9 pt."""
+    d = _colour_replace_data(example_index)
+    stats, prov, MODELS, ex, img, boxes = (d[k] for k in ("stats", "prov", "MODELS", "ex", "img", "boxes"))
+    prov["panels"]["A"]["note"] = "real render from the analysed cohort; the flow diagram is a conceptual schematic, not measured vectors"
+    prov["layout"] = "v3: top operation flow; bottom left referent margin (point + 97.5 % interval); bottom right non-referent table (C2, 95 %)"
+    from matplotlib.patches import FancyBboxPatch
+    apply_style()
+    # Designed at 7.2 in wide; printed at the ICLR text width (5.5 in, scale 0.76) the fonts below give
+    # ~9 pt body text and ~11 pt panel titles. The flow is laid out top-down so boxes can be wide.
+    plt.rcParams.update({"font.size": 11.5, "pdf.fonttype": 42})
+    C_A, C_B, FRAME_LW = "#b34444", "#28699a", 1.4
+    F_BOX, F_NOTE, F_TITLE, F_TICK = 11.8, 11.0, 14.0, 11.5
+    fig = plt.figure(figsize=(7.2, 9.6))
+    gs = GridSpec(2, 2, figure=fig, height_ratios=[1.55, 1.0], width_ratios=[1.0, 1.1], hspace=0.34, wspace=0.40)
+    gsT = gs[0, :].subgridspec(1, 2, width_ratios=[0.27, 0.73], wspace=0.05)
+    axI = fig.add_subplot(gsT[0]); axF = fig.add_subplot(gsT[1])
+    axB = fig.add_subplot(gs[1, 0]); axC = fig.add_subplot(gs[1, 1])
+
+    # ---- top left: the real example under the single question shown
+    axI.imshow(img); axI.set_xticks([]); axI.set_yticks([])
+    for oid, col, name in ((1, C_A, "A"), (2, C_B, "B")):
+        x, y, w, h = boxes[oid]
+        axI.add_patch(Rectangle((x, y), w, h, fill=False, edgecolor=col, lw=2.0))
+        axI.text(x + 2, y - 3, name, color="white", fontsize=F_BOX, weight="bold", va="bottom", bbox=dict(facecolor=col, pad=1.2, lw=0))
+    q = ex["questions"]["c1"]
+    axI.set_title('"' + q.replace(" is the ", "\nis the ") + '"', fontsize=F_BOX, pad=5, linespacing=1.1)
+    axI.set_xlabel("A = referent\nB = non-referent", fontsize=F_BOX, labelpad=5, linespacing=1.1)
+    for sp in axI.spines.values():
+        sp.set_visible(True); sp.set_linewidth(FRAME_LW)
+
+    # ---- top right: operation flow, top-down (conceptual schematic)
+    axF.axis("off"); axF.set_xlim(0, 1); axF.set_ylim(0, 1)
+    def box(x, y, w, h, text, ec="0.2", fc="white", ls="-", fs=F_BOX, color="black", lw=1.2, note=None):
+        axF.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.006", facecolor=fc, edgecolor=ec, lw=lw, linestyle=ls))
+        if note is None:
+            axF.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=fs, color=color, linespacing=1.15)
+        else:
+            axF.text(x + w / 2, y + h * 0.66, text, ha="center", va="center", fontsize=fs, color=color)
+            axF.text(x + w / 2, y + h * 0.27, note, ha="center", va="center", fontsize=F_NOTE - 1.8, color="0.35")
+    def arrow(x0, y0, x1, y1, color="0.25", lw=1.3):
+        axF.annotate("", xy=(x1, y1), xytext=(x0, y0), arrowprops=dict(arrowstyle="-|>", color=color, lw=lw, shrinkA=0, shrinkB=0))
+    # row 1: the two representations of the same image
+    axF.text(0.50, 0.975, "The same image, processed", ha="center", va="bottom", fontsize=F_NOTE, color="0.35")
+    box(0.00, 0.80, 0.48, 0.16, "with the question", fc="#fbf1f1", ec=C_A, note="edited patch representations")
+    box(0.52, 0.80, 0.48, 0.16, "without the question", fc="#f0f4f8", ec=C_B, note="source of the replacement")
+    # row 2: one edited patch = colour-related component + remaining component; decoder to the right
+    axF.text(0.32, 0.655, "one patch of the edited object", ha="center", va="bottom", fontsize=F_NOTE, color="0.35")
+    axF.add_patch(Rectangle((0.02, 0.50), 0.30, 0.14, facecolor="#f3d6d6", edgecolor="0.2", lw=1.2))
+    axF.add_patch(Rectangle((0.32, 0.50), 0.30, 0.14, facecolor="#ececec", edgecolor="0.2", lw=1.2))
+    axF.text(0.17, 0.57, "Color-related\ncomponent", ha="center", va="center", fontsize=F_BOX, linespacing=1.12)
+    axF.text(0.47, 0.57, "Remaining\ncomponent", ha="center", va="center", fontsize=F_BOX, linespacing=1.12)
+    arrow(0.10, 0.80, 0.10, 0.645)
+    arrow(0.60, 0.80, 0.25, 0.645, color=C_B, lw=1.8)
+    axF.text(0.50, 0.735, "same patch's color-related\ncomponent replaces it", ha="left", va="center", fontsize=F_NOTE, color=C_B, linespacing=1.1)
+    box(0.70, 0.50, 0.28, 0.14, "Decoder →\nanswer scores")
+    arrow(0.62, 0.57, 0.70, 0.57)
+    axF.text(0.50, 0.475, "patch norm preserved; remaining component rescaled", ha="center", va="top", fontsize=F_NOTE, color="0.25")
+    # row 3: the matched control and the two separate runs
+    axF.text(0.295, 0.335, "control", ha="center", va="bottom", fontsize=F_NOTE, color="0.35")
+    box(0.00, 0.10, 0.59, 0.23, "Matched random perturbation:\nsame patches, same norm,\nsame turning angle (10 seeds)", ec="0.45", ls="--", fs=F_NOTE, color="0.2")
+    axF.text(0.81, 0.235, "Edit referent (A) and\nedit non-referent (B):\nseparate runs", ha="center", va="center", fontsize=F_NOTE, color="0.15", linespacing=1.15)
+    axF.text(0.81, 0.02, "conceptual schematic,\nnot measured vectors", ha="center", va="bottom", fontsize=F_NOTE - 1.5, color="0.45", style="italic", linespacing=1.05)
+
+    # ---- bottom left: referent edit, horizontal point + interval
+    ys = {"DINOv2": 1.0, "SigLIP": 0.0}
+    lo_all = min(stats[m]["B"]["lo"] for m, _ in MODELS)
+    for model, _ in MODELS:
+        b = stats[model]["B"]
+        axB.errorbar([b["mean"]], [ys[model]], xerr=[[b["mean"] - b["lo"]], [b["hi"] - b["mean"]]], fmt="o", color=C_A,
+                     markersize=7, capsize=5, elinewidth=1.5, capthick=1.5)
+        axB.text(b["mean"], ys[model] + 0.17, f'{b["mean"]:.3f}', ha="center", va="bottom", fontsize=F_BOX)
+    axB.axvline(0, color="0.35", lw=1.0)
+    axB.set_yticks([1.0, 0.0], ["DINOv2", "SigLIP"], fontsize=F_TICK)
+    axB.set_ylim(-0.75, 1.75); axB.set_xlim(lo_all * 1.22, max(0.12, -lo_all * 0.14))
+    axB.tick_params(axis="x", labelsize=F_TICK)
+    axB.set_xlabel("Margin difference:\nreplacement − random control", fontsize=F_BOX, linespacing=1.1)
+    axB.text(lo_all * 1.18, -0.52, "← less support for\nthe correct color", ha="left", va="center", fontsize=F_NOTE - 1.5, color="0.3", linespacing=1.05)
+    axB.set_title("Referent edit: is the correct\ncolor supported less?", fontsize=F_TITLE, loc="left", linespacing=1.1)
+    axB.grid(axis="x", alpha=0.15)
+    for sp in axB.spines.values():
+        sp.set_visible(True); sp.set_linewidth(FRAME_LW)
+    acc = {m: stats[m]["accuracy_referent"] for m, _ in MODELS}
+    acc_line = "Correct answers: " + "; ".join(f'{a["correct_unedited"]}→{a["correct_edited"]} / {a["n_questions"]} ({m})' for m, a in acc.items())
+    axB.text(0.0, -0.46, acc_line + "\nmargin = logit(correct color) − logit(other object's color)",
+             transform=axB.transAxes, ha="left", va="top", fontsize=F_NOTE - 1.5, color="0.2", linespacing=1.25)
+
+    # ---- bottom right: non-referent edit, compact table (C2, relative to the matched control)
+    def sci(v):
+        m, e = f"{v:.1e}".split("e")
+        return f"{m}e{int(e)}"
+    axC.axis("off")
+    axC.set_title("Non-referent edit: is its color\nanswered more often?", fontsize=F_TITLE, loc="left", linespacing=1.1)
+    rows = [[m, sci(stats[m]["C2"]["mean"]), f'[{sci(stats[m]["C2"]["lo"])}, {sci(stats[m]["C2"]["hi"])}]'] for m, _ in MODELS]
+    axC.text(0.03, 0.95, "ΔP(non-referent's color):\nreplacement − random control", ha="left", va="top", fontsize=F_NOTE, color="0.2", transform=axC.transAxes, linespacing=1.15)
+    tbl = axC.table(cellText=rows, colLabels=["Model", "Mean", "95% interval"], loc="center", cellLoc="center", colLoc="center",
+                    colWidths=[0.24, 0.26, 0.50], bbox=[0.03, 0.33, 0.95, 0.42])
+    tbl.auto_set_font_size(False); tbl.set_fontsize(F_NOTE - 1)
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor("0.6"); cell.set_linewidth(0.8)
+        if r == 0:
+            cell.set_text_props(weight="bold"); cell.set_facecolor("#f0f4f8")
+    axC.text(0.03, 0.22, "Neither interval excludes zero", ha="left", va="top", fontsize=F_NOTE, color=C_B, transform=axC.transAxes)
+    axC.text(0.03, 0.09, "vs. the unedited model: see caption", ha="left", va="top", fontsize=F_NOTE - 1.5, color="0.35", transform=axC.transAxes)
+    axC.add_patch(Rectangle((0, 0), 1, 1, transform=axC.transAxes, fill=False, edgecolor="0.15", lw=FRAME_LW, clip_on=False))
+
+    prov["panels"]["B"] = {m: stats[m]["B"] for m, _ in MODELS}
+    prov["panels"]["C"] = {m: {"replacement_minus_unedited": stats[m]["C1"], "beyond_rotation": stats[m]["C2"]} for m, _ in MODELS}
+    prov["accuracy_referent_edit"] = acc
+    prov["accuracy_nonreferent_edit"] = {m: stats[m]["accuracy_nonreferent"] for m, _ in MODELS}
+    for ext in ("pdf", "png"):
+        fig.savefig(out_dir / f"colour_subspace_replacement_v3.{ext}", dpi=S["dpi"], bbox_inches="tight")
+    plt.close(fig)
+    (out_dir / "colour_subspace_replacement_v3_provenance.json").write_text(json.dumps(prov, indent=2) + "\n")
+    print(f"Saved colour_subspace_replacement_v3 (pdf, png, provenance) to {out_dir}")
+
+
+FIGS["colour_subspace_replacement_v3"] = fig_colour_replace_v3
 
 
 if __name__ == "__main__":

@@ -1816,3 +1816,10 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - 所有 layer 軸改標 "ViT layer"(原 "block" / "ViT block" / "Block (zero-based)"),並加上 Figure 4 那種奇數(cross-attention)layer 的淺色虛線(`mark_gca_layers` 樣式:gray、"--"、0.8、alpha 0.15):Figure 4(`paper_figures.py::fig_rsa_direct`,draft 用的是這個兩格版,不是 `figure_notes/plot_rsa_for_paper.py` 的三格版)、Figure 5/6(`build_story_prototypes.py` 新增 `layer_lines()`)、Figure 9(`fig_gqa_main`)、附錄 `gqa_grounding`、`functional_referent_edit`、`object_encoding`(`figure_notes/plot_object_encoding.py`)。舊 PDF 備份在 `writing/backup/figures-2026-09-21/`。
 - Figure 9 同時套用 5/6/7 的款式:紅 = referent / Q1 的物件、藍 = non-referent / Q2 的物件,四邊粗框,去掉 A/B/C 與面板標題(原 "Cosine to own-attribute direction" 等),線圖不加圓點,legend "Measured object is the referent / non-referent"。數值來源不變。
 - 閱讀頁重建。Figure 4 的 "Binding / Retrieval" 標題與 caption 一致,未動。
+
+### 2026-09-21 — Figure 8 重畫 v3(Codex `figure_notes/FIGURE8_REDESIGN_CLAUDE.md`)
+
+- 版型改為「上方操作流程、下方結果」:上方用 cohort 真實 render(`obj_0060.png`)、單一問句 "What color is the cube?"(A referent、B non-referent),同圖有問題/無問題兩組 patch representations,一個 patch 拆成 color-related component + remaining component,只把前者換成同 patch 無問題版本(patch norm 保留、remaining component rescaled)→ decoder;對照框 "matched random perturbation: same patches, same norm, same turning angle (10 seeds)";註明 separate runs 與 conceptual schematic;移除座標草圖。
+- 下左:referent edit 的 margin difference(replacement − random control)水平點 + 97.5 % 區間,附 accuracy 計數與 margin 定義;下右:non-referent edit 的 ΔP(non-referent's color) 相對 random control 數值表(95 %),註 "Neither interval excludes zero";C1 留在 caption。數值與 v2 相同(共用 `_colour_replace_data`,仍斷言與 `summary.json` 一致)。
+- 產圖 `paper_figures.py::fig_colour_replace_v3`(v2 拆成 data helper + layout);交付 `writing/figures/colour_subspace_replacement_v3.{pdf,png}`、provenance 與 `figure_notes/FIGURE8_DELIVERY_NOTE_CLAUDE_2026-09-21.md`。
+- Draft:圖路徑、caption、中文導讀同步(備份 `ICLR_draft.tex.bak-2026-09-21-fig8v3`);閱讀頁重建;`ICLR_draft.pdf` 以 pdflatex/bibtex 重編(舊 PDF 備份 `writing/backup/pdf-2026-09-21/`),Figure 8 頁面轉圖檢視實際尺寸。面板不加 A/B/C(使用者 2026-09-21 指示),與 Codex 筆記的「A/B/C 標號醒目」不同,caption 用 top / bottom left / bottom right。
