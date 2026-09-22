@@ -79,6 +79,9 @@ FILL_COLORS = [
     np.array(_tab10[1][:3]),   # orange — object grounding
 ]
 ANSWER_MATCH_COLOR = np.array(_tab10[3][:3])  # red
+# Two-stage steered plot: description match is drawn in cyan (tab10[9]),
+# the same cyan as ATTR_VALUE_COLORS["color"]["cyan"] in plot_style.
+TWO_STAGE_BINDING_COLOR = np.array(_tab10[9][:3])
 ANCHOR_FILL_COLORS = [
     np.array(_tab10[6][:3]),   # pink   — anchor binding
     np.array(_tab10[4][:3]),   # purple — anchor grounding
@@ -475,7 +478,7 @@ def _plot_steered_axes(ax, emb, labels, db_shapes, query_pt, fill_colors):
         point_colors = np.tile(gray, (N, 1))
         has_binding = labels[:, 0]
         answer_mask = labels[:, 2] & has_binding
-        point_colors[has_binding] = fill_colors[0]
+        point_colors[has_binding] = TWO_STAGE_BINDING_COLOR
         point_colors[answer_mask] = ANSWER_MATCH_COLOR
         edge = STEERED_STYLE["edge"]
         small = STEERED_STYLE["small"] or 8
@@ -533,19 +536,19 @@ def plot_steered_tsne(embeddings, labels, db_shapes, show_layers, query_emb,
     role_prefix = f"{role} " if role else ""
     if STEERED_STYLE["two_stage"]:
         edge = STEERED_STYLE["edge"] or "none"
+        # Legend (user, 2026-09-22): two entries only; scenes matching neither
+        # predicate stay grey without a legend entry.
         handles = [
-            Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,
-                   markeredgecolor=edge, markersize=7, label="None"),
             Line2D([0], [0], marker="o", color="w",
-                   markerfacecolor=tuple(fill_colors[0]), markeredgecolor=edge,
-                   markersize=7, label=f"{role_prefix}Binding"),
+                   markerfacecolor=tuple(TWO_STAGE_BINDING_COLOR), markeredgecolor=edge,
+                   markersize=7, label=f"{role_prefix}Description match (Binding)"),
             Line2D([0], [0], marker="o", color="w",
                    markerfacecolor=tuple(ANSWER_MATCH_COLOR), markeredgecolor=edge,
-                   markersize=9, label="Retrieval (answer agreement)"),
+                   markersize=9, label="Answer match (Retrieval)"),
         ]
         q_short = question[:65] + "..." if len(question) > 65 else question
         title = f"[{role}] {q_short}  →  {answer}" if role else f"{q_short}  →  {answer}"
-        _finish_plot(fig, title, handles, output_path, ncol_legend=3)
+        _finish_plot(fig, title, handles, output_path, ncol_legend=2)
         return
     handles = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor=gray_rgba,

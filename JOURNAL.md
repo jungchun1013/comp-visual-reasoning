@@ -1823,3 +1823,9 @@ to the donor. See `docs/x27_colour_replace_pilot.md` §7 for verification scope.
 - 下左:referent edit 的 margin difference(replacement − random control)水平點 + 97.5 % 區間,附 accuracy 計數與 margin 定義;下右:non-referent edit 的 ΔP(non-referent's color) 相對 random control 數值表(95 %),註 "Neither interval excludes zero";C1 留在 caption。數值與 v2 相同(共用 `_colour_replace_data`,仍斷言與 `summary.json` 一致)。
 - 產圖 `paper_figures.py::fig_colour_replace_v3`(v2 拆成 data helper + layout);交付 `writing/figures/colour_subspace_replacement_v3.{pdf,png}`、provenance 與 `figure_notes/FIGURE8_DELIVERY_NOTE_CLAUDE_2026-09-21.md`。
 - Draft:圖路徑、caption、中文導讀同步(備份 `ICLR_draft.tex.bak-2026-09-21-fig8v3`);閱讀頁重建;`ICLR_draft.pdf` 以 pdflatex/bibtex 重編(舊 PDF 備份 `writing/backup/pdf-2026-09-21/`),Figure 8 頁面轉圖檢視實際尺寸。面板不加 A/B/C(使用者 2026-09-21 指示),與 Codex 筆記的「A/B/C 標號醒目」不同,caption 用 top / bottom left / bottom right。
+
+### 2026-09-22 — Figure 3(t-SNE)圖例改為 Binding / Retrieval 兩項
+
+- 使用者指示:legend 改成 Description match (Binding)(cyan)與 Answer match (Retrieval);None 與 Object grounding 不再出現。`tsne_viz.py` two-stage 模式:description-match 點色改為 tab10 cyan(與 `plot_style.ATTR_VALUE_COLORS["color"]["cyan"]` 同色),legend 只剩兩項、兩欄;非 two-stage 模式與其他圖不動。
+- 從 `outputs/analysis/tsne/clevr_dinov2_decoder1l_scratch/attr_direct/cache_q0.npz`(q0 "What shape is the large cyan object?" → sphere,500 reference scenes,t-SNE seed 42、perplexity 30)以 `--replot --two-stage --cell 4 --edge-color "#101010" --small-size 30 --large-size 60` 在 job tmp 重畫(cache 用 symlink,outputs 下不寫入);點的位置與 2026-09-16 的 `tsne_steered_q0_two_stage.png` 相同。交付 `writing/figures/tsne_steered_q0_two_stage.png`,取代 workshop 匯出的 `tsne5.png`(檔案保留)。
+- Draft(備份 `backup/ICLR_draft.tex.bak-2026-09-22-fig3`):Figure 3 圖路徑換新檔;caption 的圖例句改為描述 Description match (Binding) / Answer match (Retrieval) / 灰點三者的定義,問句 "thing" 改成與圖一致的 "object";其餘 caption 不動。閱讀頁重建;`ICLR_draft.pdf` 重編(舊 PDF 備份 `writing/backup/pdf-2026-09-22/`),Figure 3 在第 7 頁,已轉圖檢視。
